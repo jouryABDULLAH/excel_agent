@@ -3,3 +3,6 @@
 __pycache__/
 *.bak
 *.writing
+.claude
+*.egg-info/
+excel_agent-bundle.md
