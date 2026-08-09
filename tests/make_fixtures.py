@@ -156,6 +156,34 @@ def formulas_last_row_overwritten(directory: Path) -> Path:
     return _save(book, directory, "formulas_last_row_overwritten.xlsx")
 
 
+def formulas_all_the_way_down(directory: Path) -> Path:
+    """A calculated column with a formula in every row, including the last.
+
+    The shape a sheet is expected to have: Total is a formula in rows 2 to 6,
+    so it is recognised as calculated and a row added at the bottom picks the
+    formula up. The variant above is what happens when that expectation is
+    broken, and the two are read very differently.
+    """
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "Sales"
+
+    sheet.append(["Product", "Units", "Unit Price", "Total"])
+    for row, (product, units, price) in enumerate(
+        [
+            ("Laptop Stand", 12, 24.5),
+            ("USB-C Hub", 30, 18.0),
+            ("Monitor Arm", 7, 89.99),
+            ("Keyboard", 40, 55.0),
+            ("Webcam", 18, 42.0),
+        ],
+        start=2,
+    ):
+        sheet.append([product, units, price, f"=B{row}*C{row}"])
+
+    return _save(book, directory, "formulas_all_the_way_down.xlsx")
+
+
 def blank_rows_inside(directory: Path) -> Path:
     """Data split by a blank row in the middle.
 
