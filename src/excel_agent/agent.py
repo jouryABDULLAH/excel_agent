@@ -17,8 +17,6 @@ from excel_agent.tools import TOOLS
 
 
 RECURSION_LIMIT = MAX_TURNS * 2 + 1
-
-
 TEMPERATURE = 0.3
 
 # Stands in for the answer when the agent runs out of steps before giving one.
@@ -30,6 +28,10 @@ GAVE_UP = (
 
 def build_agent():
     """Build the agent from the model, the tools and the system prompt.
+
+    Tool calls are asked for one at a time. Two of them running at once would
+    be two writes to the same file at once, and the second would be working
+    from the sheet as it looked before the first one saved.
     """
     model = ChatGroq(
         model=MODEL,
