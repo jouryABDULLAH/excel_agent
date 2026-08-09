@@ -29,6 +29,20 @@ def describe(values: dict) -> str:
     )
 
 
+def holds_a_formula(cell) -> bool:
+    """Whether a cell works its value out rather than holding one."""
+    return isinstance(cell.value, str) and cell.value.startswith("=")
+
+
+def formula_refusal(names: list[str]) -> str:
+    """The standard explanation for declining to write over a calculation."""
+    return (
+        f"{', '.join(names)} is worked out by a formula in the "
+        "sheet, so it cannot be set directly. Change the columns it "
+        "is calculated from instead, and leave it out of values."
+    )
+
+
 def column_names(columns: list[int], headers: dict[str, int]) -> list[str]:
     """Turn column numbers back into column names for the confirmation message.
 
@@ -57,6 +71,10 @@ def modify_sheet(
         values: Column name mapped to new value. Only the columns listed here are
             changed, and columns you leave out keep their current value. Pass
             null as a value to clear a cell. Ignored for remove.
+            A cell the sheet works out for itself cannot be set, whether it is
+            a whole calculated column or one formula partway down a column.
+            inspect_sheet shows such a cell as its formula. Change the columns
+            the formula reads from instead, and leave it out of values.
 
     Returns:
         A sentence saying what changed, or an explanation of why nothing was
@@ -123,15 +141,30 @@ def apply_change(
                 f"The sheet has: {', '.join(headers)}."
             )
 
-
+    # A calculated column is protected differently depending on the action,
+    # because the two are about to write to different places.
+    if action == "add":
+        assert values is not None
+        # The new row copies its formulas from the last row, so the question
+        # is which columns that row calculates.
         calculated = formula_columns(sheet, header_row, last_row)
         blocked = [name for name in values if headers[name] in calculated]
         if blocked:
-            return (
-                f"{', '.join(blocked)} is worked out by a formula in the "
-                "sheet, so it cannot be set directly. Change the columns it "
-                "is calculated from instead, and leave it out of values."
-            )
+            return formula_refusal(blocked)
+
+    if action == "edit":
+        assert values is not None and row is not None
+        # One row is being written to, so the cells of that row are what to
+        # look at. Asking the column instead would miss a formula partway down
+        # a column whose last row holds a number someone typed over it, and
+        # the formula would be replaced without a word about it.
+        blocked = [
+            name
+            for name in values
+            if holds_a_formula(sheet.cell(row=row, column=headers[name]))
+        ]
+        if blocked:
+            return formula_refusal(blocked)
 
     if action == "add":
         assert values is not None
@@ -163,7 +196,10 @@ def apply_change(
     if action == "edit":
         assert values is not None and row is not None
         for name, value in values.items():
-            sheet.cell(row=row, column=headers[name], value=value)
+            # Assigned rather than handed to cell(value=...), which reads None
+            # as "no value was given" and leaves the cell as it was. Clearing a
+            # cell is something this tool offers, so it has to mean it.
+            sheet.cell(row=row, column=headers[name]).value = value
         save(book)
         return f"Updated row {row}: {describe(values)}."
 

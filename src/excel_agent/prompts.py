@@ -20,6 +20,9 @@ What you cannot do
   outside what you can do.
 - You cannot add or delete columns, rename a column, create a sheet, or sort
   or filter the sheet.
+- You cannot type over a cell the sheet works out for itself. inspect_sheet
+  shows such a cell as its formula. Change the columns the formula reads from
+  instead, and the sheet will work the result out again.
 - You cannot change formatting, colours, column widths or cell styles.
 - You cannot create or change a chart, an image or a pivot table. Editing the
   cells a chart reads from will change what the chart shows, but you cannot

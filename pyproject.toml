@@ -23,6 +23,9 @@ dev = [
 [project.scripts]
 excel-agent = "excel_agent.cli:main"
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"

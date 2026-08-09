@@ -4,6 +4,8 @@ Reads a line of text from the user, passes it to the agent, prints the
 answer, and repeats.
 """
 
+import argparse
+
 from excel_agent.agent import answer_of, ask, build_agent, tool_calls_in
 from excel_agent.config import MODEL, WORKBOOK_PATH
 from excel_agent.tools.inspect import inspect_sheet
@@ -20,7 +22,7 @@ Type what you want done to the sheet, in your own words.
 
 
 def run_turn(agent, question: str, history: list, show_tools: bool) -> list:
-    """Recieves the user's question and print the answer. Returns the new history."""
+    """Receives the user's question and prints the answer. Returns the new history."""
     already_said = len(history)
     history = ask(agent, question, history)
 
@@ -32,11 +34,34 @@ def run_turn(agent, question: str, history: list, show_tools: bool) -> list:
     return history
 
 
+def read_arguments() -> argparse.Namespace:
+    """Read the command line, for both excel-agent and python -m excel_agent."""
+    parser = argparse.ArgumentParser(
+        prog="excel-agent",
+        description="Change an Excel sheet by saying what you want in your own words.",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help=(
+            "let errors out with their traceback instead of printing a one "
+            "line summary and carrying on"
+        ),
+    )
+    return parser.parse_args()
+
+
 def main() -> None:
     """Talk to the agent until the user leaves."""
+    debug = read_arguments().debug
+
     try:
         agent = build_agent()
     except RuntimeError as e:
+        # A missing API key explains itself, so the message is enough. Under
+        # --debug the traceback is the point, so it is let through.
+        if debug:
+            raise
         print(e)
         return
 
@@ -81,6 +106,12 @@ def main() -> None:
         except KeyboardInterrupt:
             print("\nStopped. The sheet may have been part way through a change.")
         except Exception as e:
+            # One bad turn should not end the session, so the loop keeps going
+            # and the user can try again. Under --debug it stops instead, with
+            # the traceback, because a summary is no use when the thing you
+            # are looking at is the bug.
+            if debug:
+                raise
             print(f"That went wrong: {e}")
 
 
