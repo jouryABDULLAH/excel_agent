@@ -9,3 +9,4 @@ excel_agent-bundle.md
 *.sh
 /data
 data/sample.xlsx
+backups/

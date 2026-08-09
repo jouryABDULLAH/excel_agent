@@ -16,7 +16,65 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
-WORKBOOK_PATH = PROJECT_ROOT / "data" / "sample.xlsx"
+# Every workbook the agent may open lives here. Nothing outside this folder is
+# reachable, which is what makes it safe to let a name arrive from the model.
+DATA_DIR = PROJECT_ROOT / "data"
+
+WORKBOOK_PATH = DATA_DIR / "sample.xlsx"
+
+# Backups are kept away from the data folder so they cannot be mistaken for
+# workbooks to work on.
+BACKUP_DIR = PROJECT_ROOT / "backups"
+
+# Max backups to keep per file. Older ones are deleted as new ones are
+# taken.
+BACKUP_KEEP = 3
+
+WORKBOOK_SUFFIX = ".xlsx"
+
+# lists files
+def workbook_names() -> list[str]:
+    """The workbooks that can be worked on, in alphabetical order."""
+    if not DATA_DIR.is_dir():
+        return []
+    return sorted(path.name for path in DATA_DIR.glob(f"*{WORKBOOK_SUFFIX}"))
+
+
+# name -> file PATH
+def resolve_workbook(name: str | None = None) -> Path:
+    """Turn the name of a workbook into the path of a file to open.
+
+    Names arrive from the model, so only a plain file name is accepted: one
+    carrying a folder of its own could otherwise reach anywhere on the disk.
+    The suffix is optional, because "sales" is what a person would say.
+
+    Returns the default workbook when given nothing. Raises ValueError, with
+    a message worth showing to the model, when the name reaches nowhere.
+    """
+    if not name:
+        return WORKBOOK_PATH
+
+    wanted = name.strip()
+    if wanted != Path(wanted).name or wanted in (".", ".."):
+        raise ValueError(
+            f'"{name}" is not a workbook name. Give the name of a file in the '
+            "data folder."
+        )
+
+    if not wanted.lower().endswith(WORKBOOK_SUFFIX):
+        wanted += WORKBOOK_SUFFIX
+
+    # Matched against the folder listing rather than by asking the file system
+    # whether the file is there. Windows would open "SAMPLE.XLSX" happily and
+    # hand back a path spelled the way it was asked for, which would then show
+    # up in messages and in the names of backup files. Going through the
+    # listing returns the name the file really has, on every platform.
+    for candidate in workbook_names():
+        if candidate.lower() == wanted.lower():
+            return DATA_DIR / candidate
+
+    available = ", ".join(workbook_names()) or "no workbooks at all"
+    raise ValueError(f'There is no workbook called "{name}". The folder has: {available}.')
 
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 

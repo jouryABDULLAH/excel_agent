@@ -35,7 +35,12 @@ def test_the_whole_sheet_is_read_with_its_real_row_numbers(tmp_path, use_workboo
 
     answer = inspect_sheet.invoke({})
 
-    assert "Sheet: Sales (5 rows of data, column names in row 1)" in answer
+    # The workbook is named alongside the sheet, so two tables read in one
+    # conversation cannot be mistaken for one another.
+    assert (
+        "Sheet: Sales in clean_table.xlsx (5 rows of data, column names in row 1)"
+        in answer
+    )
     assert "| row | ID | Product | Region | Units | Unit Price |" in answer
     # Row 2 in the table is row 2 in Excel, which is what modify_sheet needs.
     assert "| 2 | 1001 | Laptop Stand | EU | 12 | 24.5 |" in answer
@@ -337,7 +342,78 @@ def test_an_action_that_is_not_one_of_the_three_changes_nothing(tmp_path, use_wo
     # Called underneath the tool on purpose: the tool's own argument checking
     # rejects anything but add, edit and remove before the function runs, so
     # this last line of defence cannot be reached through .invoke.
-    answer = apply_change("sort", row=2, values=None)
+    answer = apply_change("sort", row=2, values=None, path=path)
 
     assert 'Unknown action "sort"' in answer
+    assert digest(path) == before
+
+
+# Choosing a workbook
+
+
+def test_a_workbook_can_be_named(tmp_path, use_workbook):
+    use_workbook(make_fixtures.clean_table(tmp_path))
+    make_fixtures.blank_rows_inside(tmp_path)
+
+    # Both files sit in the same folder, so naming one is the only way to read
+    # anything but the default.
+    answer = inspect_sheet.invoke({"workbook": "blank_rows_inside"})
+
+    assert "in blank_rows_inside.xlsx" in answer
+    assert "Headset" in answer
+
+
+def test_a_named_workbook_is_the_one_that_gets_changed(tmp_path, use_workbook):
+    default = use_workbook(make_fixtures.clean_table(tmp_path))
+    named = make_fixtures.blank_rows_inside(tmp_path)
+    untouched = digest(default)
+
+    answer = modify_sheet.invoke(
+        {"action": "edit", "row": 2, "values": {"Product": "Standing Desk"},
+         "workbook": "blank_rows_inside.xlsx"}
+    )
+
+    assert "Updated row 2" in answer
+    assert sheet_of(named)["B2"].value == "Standing Desk"
+    # The default workbook was not the one named, so it was not written to.
+    assert digest(default) == untouched
+
+
+def test_leaving_the_workbook_out_uses_the_one_being_worked_on(tmp_path, use_workbook):
+    default = use_workbook(make_fixtures.clean_table(tmp_path))
+    other = make_fixtures.blank_rows_inside(tmp_path)
+    untouched = digest(other)
+
+    modify_sheet.invoke({"action": "edit", "row": 2, "values": {"Product": "Standing Desk"}})
+
+    assert sheet_of(default)["B2"].value == "Standing Desk"
+    assert digest(other) == untouched
+
+
+def test_a_workbook_that_does_not_exist_is_named_along_with_the_ones_that_do(
+    tmp_path, use_workbook
+):
+    path = use_workbook(make_fixtures.clean_table(tmp_path))
+    before = digest(path)
+
+    answer = modify_sheet.invoke(
+        {"action": "remove", "row": 2, "workbook": "invoices"}
+    )
+
+    assert 'There is no workbook called "invoices"' in answer
+    assert "clean_table.xlsx" in answer
+    assert digest(path) == before
+
+
+def test_a_name_reaching_outside_the_data_folder_is_refused(tmp_path, use_workbook):
+    path = use_workbook(make_fixtures.clean_table(tmp_path))
+    before = digest(path)
+
+    # A name arrives from the model, so one carrying a folder of its own must
+    # not be followed wherever it points.
+    answer = modify_sheet.invoke(
+        {"action": "remove", "row": 2, "workbook": "../../secrets.xlsx"}
+    )
+
+    assert "is not a workbook name" in answer
     assert digest(path) == before

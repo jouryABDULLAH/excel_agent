@@ -6,9 +6,12 @@ backup is taken before the file is touched.
 
 from typing import Literal
 
+from pathlib import Path
+
 from langchain_core.tools import tool
 from openpyxl.utils import get_column_letter
 
+from excel_agent.config import resolve_workbook
 from excel_agent.workbook import (
     WRITE_LOCK,
     copy_row_formulas,
@@ -58,6 +61,7 @@ def modify_sheet(
     action: Literal["add", "edit", "remove"],
     row: int | None = None,
     values: dict[str, str | int | float | None] | None = None,
+    workbook: str | None = None,
 ) -> str:
     """Add, edit or remove a row in the sheet.
 
@@ -75,6 +79,11 @@ def modify_sheet(
             a whole calculated column or one formula partway down a column.
             inspect_sheet shows such a cell as its formula. Change the columns
             the formula reads from instead, and leave it out of values.
+        workbook: Which workbook to change, by file name. Leave this out to
+            change the one being worked on, which is what you normally want.
+            Name a workbook only when the user named a file, and read it with
+            inspect_sheet first: row numbers from one workbook mean nothing in
+            another.
 
     Returns:
         A sentence saying what changed, or an explanation of why nothing was
@@ -89,22 +98,28 @@ def modify_sheet(
     """
 
   
+    try:
+        path = resolve_workbook(workbook)
+    except ValueError as explanation:
+        return str(explanation)
+
     with WRITE_LOCK:
-        return apply_change(action, row, values)
+        return apply_change(action, row, values, path)
 
 
 def apply_change(
     action: str,
     row: int | None,
     values: dict[str, str | int | float | None] | None,
+    path: Path,
 ) -> str:
     """Do the work of modify_sheet, with the write lock already held."""
-    book = load_book()
+    book = load_book(path)
 
     # the file contains one sheet
     sheet = book.active
     if sheet is None:
-        return "The workbook has no sheets."
+        return f"{path.name} has no sheets."
 
     header_row = find_header_row(sheet)
     headers = header_map(sheet, header_row)
@@ -184,7 +199,7 @@ def apply_change(
                 skip={headers[name] for name in values},
             )
 
-        save(book)
+        save(book, path)
 
         message = f"Added row {new_row} with {describe(values)}."
         if copied:
@@ -200,13 +215,13 @@ def apply_change(
             # as "no value was given" and leaves the cell as it was. Clearing a
             # cell is something this tool offers, so it has to mean it.
             sheet.cell(row=row, column=headers[name]).value = value
-        save(book)
+        save(book, path)
         return f"Updated row {row}: {describe(values)}."
 
     if action == "remove":
         assert row is not None
         sheet.delete_rows(row)
-        save(book)
+        save(book, path)
         return (
             f"Removed row {row}. The rows below it have shifted up by one, so "
             "any row numbers you read earlier are now out of date. Call "
@@ -248,7 +263,9 @@ def main() -> None:
         )
     )
 
-    sheet = load_book().active
+    # The same workbook the tool calls above reached for, since none of them
+    # names one.
+    sheet = load_book(resolve_workbook()).active
     assert sheet is not None
     added_row = last_data_row(sheet, find_header_row(sheet))
 

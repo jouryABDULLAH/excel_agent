@@ -12,14 +12,17 @@ import hashlib
 
 import make_fixtures
 import pytest
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 
+from excel_agent import workbook as workbook_module
 from excel_agent.workbook import (
     DEFAULT_HEADER_ROW,
     backup_once,
+    backups_of,
     find_header_row,
     formula_columns,
     header_map,
+    is_blank,
     last_data_row,
     load_book,
     load_values,
@@ -97,6 +100,82 @@ def test_a_sheet_with_no_header_reads_its_first_row_as_one(tmp_path):
     ]
 
 
+# Cells that look empty
+#
+# These sheets are built in memory and never saved, because openpyxl drops an
+# empty string on the way out to a file: write "" and read it back and it is
+# None again. An empty string only ever arrives from a file written by Excel
+# or by another program, which is the case being pinned down here.
+
+
+def sheet_of_rows(rows):
+    """An unsaved sheet holding the given rows, exactly as written."""
+    book = Workbook()
+    sheet = book.active
+    for row in rows:
+        sheet.append(row)
+    return sheet
+
+
+def test_nothing_at_all_and_nothing_worth_reading_are_the_same_thing():
+    assert is_blank(None)
+    assert is_blank("")
+    assert is_blank("   ")
+
+    # A zero is a value someone meant, and so is False.
+    assert not is_blank(0)
+    assert not is_blank(False)
+    assert not is_blank("EU")
+
+
+def test_a_row_of_empty_strings_is_not_taken_for_the_header():
+    sheet = sheet_of_rows(
+        [
+            ["", "  "],
+            ["ID", "Product"],
+            [1001, "Laptop Stand"],
+        ]
+    )
+
+    # Two filled cells, both text, something underneath it: a row of empty
+    # strings passes every test a header row is put through, and would be
+    # adopted as one if blank meant only None.
+    assert find_header_row(sheet) == 2
+    assert header_map(sheet, 2) == {"ID": 1, "Product": 2}
+
+
+def test_an_empty_string_does_not_name_a_column():
+    sheet = sheet_of_rows(
+        [
+            ["ID", "", "Region"],
+            [1001, "ignored", "EU"],
+        ]
+    )
+
+    # A column called "" is one nothing could ask for by name, and it would
+    # sit in the middle of every table read from the sheet.
+    assert header_map(sheet, 1) == {"ID": 1, "Region": 3}
+
+
+def test_a_row_cleared_to_empty_strings_is_not_the_end_of_the_data():
+    sheet = sheet_of_rows(
+        [
+            ["ID", "Product"],
+            [1001, "Laptop Stand"],
+            [1002, "USB-C Hub"],
+            ["", ""],
+            ["  ", ""],
+        ]
+    )
+
+    # Clearing a row and deleting it are different things to do, but afterwards
+    # the sheet cannot tell them apart and neither can the model: the table
+    # shows an empty row either way. So a row cleared to empty strings is
+    # passed over exactly like one cleared to nothing, and the next row added
+    # takes its place rather than landing below it.
+    assert last_data_row(sheet, header_row=1) == 3
+
+
 # Finding the last row of data
 
 
@@ -153,17 +232,24 @@ def test_a_sheet_with_no_data_has_no_calculated_columns(tmp_path):
 # Backing up
 
 
-def test_the_first_backup_copies_the_file(tmp_path):
+def test_the_first_backup_copies_the_file_into_the_backups_folder(tmp_path):
     path = make_fixtures.clean_table(tmp_path)
     before = digest(path)
 
     backup = backup_once(path)
 
-    assert backup == path.with_suffix(".xlsx.bak")
+    assert backup.parent == workbook_module.BACKUP_DIR
+    # Named for the workbook and the moment, and still a workbook, so it can
+    # be opened by double clicking it.
+    assert backup.name.startswith("clean_table-")
+    assert backup.suffix == ".xlsx"
     assert digest(backup) == before
+    # The workbook's own folder is left alone, which is what stops a backup
+    # being mistaken for something to work on.
+    assert list(tmp_path.glob("*.bak")) == []
 
 
-def test_a_second_backup_in_the_same_session_is_not_taken(tmp_path):
+def test_a_second_backup_of_the_same_workbook_is_not_taken(tmp_path):
     path = make_fixtures.clean_table(tmp_path)
     backup = backup_once(path)
 
@@ -176,7 +262,56 @@ def test_a_second_backup_in_the_same_session_is_not_taken(tmp_path):
 
     assert backup_once(path) is None
     assert digest(backup) == first
-    assert len(list(tmp_path.glob("*.bak"))) == 1
+    assert backups_of(path) == [backup]
+
+
+def test_each_workbook_is_backed_up_in_its_own_right(tmp_path):
+    sales = make_fixtures.clean_table(tmp_path)
+    stock = make_fixtures.one_column(tmp_path)
+
+    # Backing up once is per workbook, not per session, or the second file
+    # written to in a session would never be copied at all.
+    assert backup_once(sales) is not None
+    assert backup_once(stock) is not None
+
+    assert len(backups_of(sales)) == 1
+    assert len(backups_of(stock)) == 1
+
+
+def test_only_the_most_recent_backups_are_kept(tmp_path):
+    path = make_fixtures.clean_table(tmp_path)
+
+    # Stood in for by hand, because backups are stamped to the second and a
+    # test cannot wait around for the clock to move on.
+    workbook_module.BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    older = []
+    for moment in range(1, 6):
+        stale = workbook_module.BACKUP_DIR / f"clean_table-20200101-00000{moment}.xlsx"
+        stale.write_bytes(b"an older backup")
+        older.append(stale)
+
+    kept = backup_once(path)
+
+    assert len(backups_of(path)) == 3
+    # The newest survive, and the one just taken is the newest of all.
+    assert backups_of(path) == [older[3], older[4], kept]
+    assert not older[0].exists()
+
+
+def test_backups_of_one_workbook_are_not_counted_as_another_s(tmp_path):
+    path = make_fixtures.clean_table(tmp_path)
+
+    workbook_module.BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    # A workbook can be named after a backup, stamp and all. Its backups carry
+    # a second stamp, and matching on the stamp exactly is what keeps the two
+    # sets apart when the older ones are cleared out.
+    impostor = workbook_module.BACKUP_DIR / "clean_table-20200101-000001-20200202-000002.xlsx"
+    impostor.write_bytes(b"a backup of a differently named workbook")
+
+    backup_once(path)
+
+    assert impostor not in backups_of(path)
+    assert impostor.exists()
 
 
 # Saving
