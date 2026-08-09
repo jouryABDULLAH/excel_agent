@@ -4,14 +4,16 @@ Builds the model, gives it the tools from the tools package, and runs the
 loop that lets it call them until it has an answer.
 """
 
+from pathlib import Path
 from shutil import copyfile
+from tempfile import TemporaryDirectory
 
 from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_groq import ChatGroq
 from langgraph.errors import GraphRecursionError
 
-from excel_agent.config import MAX_TURNS, MODEL, WORKBOOK_PATH, require_api_key
+from excel_agent.config import MAX_TURNS, MODEL, require_api_key, resolve_workbook
 from excel_agent.prompts import SYSTEM_PROMPT
 from excel_agent.tools import TOOLS
 
@@ -138,21 +140,25 @@ def main() -> None:
     start from the same data. It does make one Groq request per turn, plus
     one per tool call, so it is not free.
     """
-    snapshot = WORKBOOK_PATH.with_suffix(".before_cases.xlsx")
-    copyfile(WORKBOOK_PATH, snapshot)
+    path = resolve_workbook()
 
-    try:
-        agent = build_agent()
-        for label, prompts in CASES:
-            print(f"=== {label} ===")
-            run_case(agent, prompts)
-            print()
-    finally:
-        # Runs even if a case raises, so a crash cannot leave the sheet in a
-        # half changed state.
-        copyfile(snapshot, WORKBOOK_PATH)
-        snapshot.unlink()
-        print("The sheet has been put back to how it was before these cases ran.")
+    # Kept outside the data folder. A copy left beside the workbook would be a
+    # workbook itself, and would show up as one more file to choose between.
+    with TemporaryDirectory() as folder:
+        snapshot = Path(folder) / path.name
+        copyfile(path, snapshot)
+
+        try:
+            agent = build_agent()
+            for label, prompts in CASES:
+                print(f"=== {label} ===")
+                run_case(agent, prompts)
+                print()
+        finally:
+            # Runs even if a case raises, so a crash cannot leave the sheet in
+            # a half changed state.
+            copyfile(snapshot, path)
+            print("The sheet has been put back to how it was before these cases ran.")
 
 
 if __name__ == "__main__":

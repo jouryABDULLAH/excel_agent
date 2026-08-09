@@ -88,7 +88,9 @@ def main() -> None:
             continue
 
         if question == "/sheet":
-            print(inspect_sheet.invoke({}))
+            # Named rather than left out, so the workbook the banner promised
+            # is the one shown, whatever the tool would have picked by itself.
+            print(inspect_sheet.invoke({"workbook": WORKBOOK_PATH.name}))
             continue
 
         if question == "/tools":

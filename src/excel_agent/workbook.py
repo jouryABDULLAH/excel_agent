@@ -5,7 +5,9 @@ tools do not have to repeat them.
 """
 
 import os
+import re
 import threading
+from datetime import datetime
 from pathlib import Path
 from shutil import copyfile
 
@@ -13,7 +15,7 @@ import pandas as pd
 from openpyxl import load_workbook
 from openpyxl.formula.translate import Translator
 
-from excel_agent.config import WORKBOOK_PATH
+from excel_agent.config import BACKUP_DIR, BACKUP_KEEP
 
 WRITE_LOCK = threading.RLock()
 
@@ -23,11 +25,17 @@ DEFAULT_HEADER_ROW = 1
 
 HEADER_SEARCH_DEPTH = 10
 
-# Backup once in a session
-_backup_state = {"taken": False}
+# What a backup is called: the workbook's name, when it was taken, and the
+# real suffix, so a backup opens by double clicking like any other workbook.
+STAMP_FORMAT = "%Y%m%d-%H%M%S"
+STAMP_PATTERN = re.compile(r"-\d{8}-\d{6}")
+
+# The workbooks backed up so far this session, so each one is copied once
+# however many times it is written to.
+_backed_up: set[Path] = set()
 
 
-def load_values(path: Path = WORKBOOK_PATH):
+def load_values(path: Path):
     """Open the workbook with formula results in place of the formulas.
 
     Used for reading values. The returned workbook is tagged as read only,
@@ -39,9 +47,26 @@ def load_values(path: Path = WORKBOOK_PATH):
     return book
 
 
-def load_book(path: Path = WORKBOOK_PATH):
+def load_book(path: Path):
     """Open the workbook for editing, with the formulas kept as formulas."""
     return load_workbook(path)
+
+
+def is_blank(value) -> bool:
+    """Whether a cell holds nothing worth reading.
+
+    A cell that was never filled in reads as None, but one emptied by Excel or
+    by another program can come back as an empty string instead, and a cell
+    holding nothing but spaces looks empty to anyone reading the sheet. All
+    three are the same thing, and treating them differently would mean a row
+    cleared one way behaved differently from a row cleared the other, while
+    looking identical in the table the model is shown.
+
+    A zero is not blank. Neither is False. Both are values someone meant.
+    """
+    if value is None:
+        return True
+    return isinstance(value, str) and not value.strip()
 
 
 def find_header_row(sheet, search_depth: int = HEADER_SEARCH_DEPTH) -> int:
@@ -55,7 +80,7 @@ def find_header_row(sheet, search_depth: int = HEADER_SEARCH_DEPTH) -> int:
     Falls back to DEFAULT_HEADER_ROW when no row near the top looks like one.
     """
     for row in range(1, min(search_depth, sheet.max_row) + 1):
-        filled = [cell.value for cell in sheet[row] if cell.value is not None]
+        filled = [cell.value for cell in sheet[row] if not is_blank(cell.value)]
 
         if len(filled) < 2:
             continue
@@ -63,7 +88,7 @@ def find_header_row(sheet, search_depth: int = HEADER_SEARCH_DEPTH) -> int:
             continue
         if row >= sheet.max_row:
             continue
-        if not any(cell.value is not None for cell in sheet[row + 1]):
+        if all(is_blank(cell.value) for cell in sheet[row + 1]):
             continue
 
         return row
@@ -78,11 +103,15 @@ def header_map(sheet, header_row: int) -> dict[str, int]:
     column moving in the file does not break the tools. Names are stripped,
     because a header typed as "Total " would otherwise only match when the
     trailing space is included.
+
+    A cell with nothing in it names no column, so it is left out. Keeping it
+    would put a column called "" in the map, which nothing could ask for by
+    name and which would sit in the middle of every table read from the sheet.
     """
     return {
         str(cell.value).strip(): cell.column
         for cell in sheet[header_row]
-        if cell.value is not None
+        if not is_blank(cell.value)
     }
 
 
@@ -93,9 +122,14 @@ def last_data_row(sheet, header_row: int) -> int:
     well past its contents reports far more rows than it has. Walking back up
     from there finds the last row with something in it, and returns the
     header row itself when the sheet holds no data at all.
+
+    A row someone emptied is not the end of the data, whichever way it was
+    emptied. That means a row cleared to empty strings is passed over exactly
+    like one cleared to nothing at all, and the next row added takes its place
+    rather than landing underneath it.
     """
     for row in range(sheet.max_row, header_row, -1):
-        if any(cell.value is not None for cell in sheet[row]):
+        if any(not is_blank(cell.value) for cell in sheet[row]):
             return row
 
     return header_row
@@ -153,23 +187,56 @@ def copy_row_formulas(
     return copied
 
 
-def backup_once(path: Path = WORKBOOK_PATH) -> Path | None:
-    """Copy the workbook next to itself the first time it is called.
+def backups_of(path: Path) -> list[Path]:
+    """Every backup taken of one workbook, oldest first.
 
-    Returns the backup path, or None if a backup was already taken this
-    session. This runs before the first write so a bad edit is recoverable.
+    Found by name: the workbook's own name, then a stamp of the date and time.
+    The stamp is matched exactly rather than with a wildcard, so the backups
+    of "sales.xlsx" are not confused with those of "sales-20260101-090000.xlsx"
+    and deleted in its place when the older ones are cleared out.
+    """
+
+    # no backups taken yet
+    if not BACKUP_DIR.is_dir():
+        return []
+
+    found = [
+        backup
+        for backup in BACKUP_DIR.glob(f"{path.stem}-*{path.suffix}")
+        if STAMP_PATTERN.fullmatch(backup.stem[len(path.stem) :])
+    ]
+    # The stamp reads year first, so sorting by name sorts by age.
+    return sorted(found)
+
+
+def backup_once(path: Path) -> Path | None:
+    """Copy a workbook into the backups folder the first time it is written to.
+
+    Returns the backup path, or None if this workbook was already backed up
+    this session. Backing up once means the copy is of the file as it was
+    found, rather than of a change made a moment ago.
+
+    The oldest backups of that workbook are deleted once there are more than
+    config.BACKUP_KEEP of them, so the folder does not grow forever.
     """
     with WRITE_LOCK:
-        if _backup_state["taken"]:
+        path = path.resolve()
+        if path in _backed_up:
             return None
 
-        backup_path = path.with_suffix(path.suffix + ".bak")
+        BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime(STAMP_FORMAT)
+        backup_path = BACKUP_DIR / f"{path.stem}-{stamp}{path.suffix}"
         copyfile(path, backup_path)
-        _backup_state["taken"] = True
+        _backed_up.add(path)
+
+        for old in backups_of(path)[:-BACKUP_KEEP]:
+            old.unlink()
+
         return backup_path
 
 
-def save(book, path: Path = WORKBOOK_PATH) -> None:
+def save(book, path: Path) -> None:
     """Save an editable workbook, taking a backup first.
 
     Raises ValueError if given a workbook came from load_values, since
