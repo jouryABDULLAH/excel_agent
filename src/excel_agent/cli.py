@@ -7,7 +7,7 @@ answer, and repeats.
 import argparse
 
 from excel_agent.agent import answer_of, ask, build_agent, new_thread, tool_calls_in
-from excel_agent.config import MODEL, WORKBOOK_PATH
+from excel_agent.config import MODEL, WORKBOOK_PATH, use_utf8_output
 from excel_agent.tools.inspect import inspect_sheet
 
 HELP = """\
@@ -57,6 +57,7 @@ def read_arguments() -> argparse.Namespace:
 
 def main() -> None:
     """Talk to the agent until the user leaves."""
+    use_utf8_output()
     debug = read_arguments().debug
 
     try:

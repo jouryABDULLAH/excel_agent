@@ -1,9 +1,9 @@
 """Tool for summarising a sheet.
 
 Answers questions about a whole column - how many, how much, what range, what
-appears most - without the model reading every row and counting by eye.
+appears most - without the model reading every row and counting.
 
-Reading only: nothing here writes to the file.
+Read-only tool: nothing here writes to the file.
 """
 
 from collections import Counter

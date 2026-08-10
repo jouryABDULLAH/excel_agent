@@ -15,7 +15,13 @@ from langchain_groq import ChatGroq
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.errors import GraphRecursionError
 
-from excel_agent.config import MAX_TURNS, MODEL, require_api_key, resolve_workbook
+from excel_agent.config import (
+    MAX_TURNS,
+    MODEL,
+    require_api_key,
+    resolve_workbook,
+    use_utf8_output,
+)
 from excel_agent.prompts import SYSTEM_PROMPT
 from excel_agent.tools import TOOLS
 
@@ -116,13 +122,11 @@ CASES = [
     ("something it cannot do", ["Make the header row bold and blue."]),
     ("something else it cannot do", ["Sort the sheet by units, largest first."]),
     ("adding a column", ["Add a Profit column to the sheet."]),
+    ("drawing a chart", ["Draw me a bar chart of units by product."]),
     ("a column it must not delete", ["Delete the Units column."]),
     ("a row it cannot pick between", ["Change the unit price of the Webcam to 45."]),
     ("a plain edit", ["Set the units on row 7 to 25."]),
-    (
-        "a spelling fix",
-        ["Row 10 spells the product in lowercase. Make it match the others."],
-    ),
+    ("renaming a column", ["Rename the Units column to Quantity."]),
     ("adding a row", ["Add a row for a Webcam sold in the EU, 5 units at 42.00."]),
     (
         "adding then changing its mind",
@@ -159,6 +163,7 @@ def main() -> None:
     start from the same data. It does make one Groq request per turn, plus
     one per tool call, so it is not free.
     """
+    use_utf8_output()
     path = resolve_workbook()
 
     # Kept outside the data folder. A copy left beside the workbook would be a
