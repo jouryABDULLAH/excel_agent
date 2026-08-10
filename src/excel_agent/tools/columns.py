@@ -24,6 +24,7 @@ from excel_agent.workbook import (
     is_blank,
     last_data_row,
     load_book,
+    location,
     resolve_sheet,
     save,
 )
@@ -135,7 +136,7 @@ def apply_column_change(
         return (
             f'Added a column called "{name}", at {get_column_letter(column)}. '
             "It is empty: use modify_sheet to put values into it."
-        )
+        ) + location(sheet, path)
 
     if action == "rename":
         if is_blank(new_name):
@@ -155,7 +156,7 @@ def apply_column_change(
         return (
             f'Renamed the column "{name}" to "{new_name}". '
             "Its data has not moved, and the values in it are unchanged."
-        )
+        ) + location(sheet, path)
 
     if action == "delete":
         target = headers[name]
@@ -182,7 +183,7 @@ def apply_column_change(
             f'Deleted the column "{name}" and everything in it, which cannot '
             "be brought back. Every column that was to its right has moved one "
             "place left."
-        )
+        ) + location(sheet, path)
 
     return f'Unknown action "{action}". Use add, rename or delete.'
 

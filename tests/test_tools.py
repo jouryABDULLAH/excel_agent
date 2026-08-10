@@ -212,7 +212,7 @@ def test_editing_changes_the_columns_given_and_no_others(tmp_path, use_workbook)
 
     answer = modify_sheet.invoke({"action": "edit", "row": 3, "values": {"Units": 99}})
 
-    assert answer == "Updated row 3: Units = 99."
+    assert answer == "Updated row 3: Units = 99. (Sales in clean_table.xlsx)"
 
     sheet = sheet_of(path)
     assert sheet["D3"].value == 99
@@ -224,7 +224,7 @@ def test_a_cell_can_be_cleared(tmp_path, use_workbook):
 
     answer = modify_sheet.invoke({"action": "edit", "row": 3, "values": {"Region": None}})
 
-    assert answer == "Updated row 3: Region = (blank)."
+    assert answer == "Updated row 3: Region = (blank). (Sales in clean_table.xlsx)"
     assert sheet_of(path)["C3"].value is None
 
 
@@ -265,7 +265,10 @@ def test_a_number_that_replaced_a_formula_can_still_be_corrected(
     # column is what makes the difference between this and the test above.
     answer = modify_sheet.invoke({"action": "edit", "row": 6, "values": {"Total": 800}})
 
-    assert answer == "Updated row 6: Total = 800."
+    assert answer == (
+        "Updated row 6: Total = 800. "
+        "(Sales in formulas_last_row_overwritten.xlsx)"
+    )
     assert sheet_of(path)["D6"].value == 800
 
 

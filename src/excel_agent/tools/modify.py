@@ -20,6 +20,7 @@ from excel_agent.workbook import (
     header_map,
     last_data_row,
     load_book,
+    location,
     resolve_sheet,
     save,
 )
@@ -213,7 +214,7 @@ def apply_change(
             names = ", ".join(column_names(copied, headers))
             message += f" Copied the formula in {names} down from row {last_row}."
         message += " Any other column was left blank."
-        return message
+        return message + location(sheet, path)
 
     if action == "edit":
         assert values is not None and row is not None
@@ -223,7 +224,7 @@ def apply_change(
             # cell is something this tool offers, so it has to mean it.
             sheet.cell(row=row, column=headers[name]).value = value
         save(book, path)
-        return f"Updated row {row}: {describe(values)}."
+        return f"Updated row {row}: {describe(values)}." + location(sheet, path)
 
     if action == "remove":
         assert row is not None
@@ -233,7 +234,7 @@ def apply_change(
             f"Removed row {row}. The rows below it have shifted up by one, so "
             "any row numbers you read earlier are now out of date. Call "
             "inspect_sheet again before changing anything else by row number."
-        )
+        ) + location(sheet, path)
 
     return f'Unknown action "{action}". Use add, edit or remove.'
 

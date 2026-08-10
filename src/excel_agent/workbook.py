@@ -85,6 +85,16 @@ def resolve_sheet(book, name: str | None = None):
     )
 
 
+def location(worksheet, path) -> str:
+    """Where a change was written, for the end of a confirmation.
+
+    A tool that is told which workbook to change says so back. Leaving the
+    argument out is easy, and a write that landed in the wrong file would
+    otherwise be silent.
+    """
+    return f" ({worksheet.title} in {path.name})"
+
+
 def is_blank(value) -> bool:
     """Whether a cell holds nothing worth reading.
 

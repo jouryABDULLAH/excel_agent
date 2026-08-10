@@ -109,6 +109,11 @@ def tool_calls_in(messages: list[BaseMessage]) -> list[str]:
 
 
 CASES = [
+    ("finding the files", ["What spreadsheets can you work on?"]),
+    (
+        "a file it cannot pick between",
+        ["Open the orders file and tell me how many rows it has."],
+    ),
     ("reading the columns", ["What columns does the sheet have?"]),
     (
         "counting",
