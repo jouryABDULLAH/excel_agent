@@ -20,6 +20,8 @@ from excel_agent.workbook import (
     backup_once,
     backups_of,
     find_header_row,
+    columns_referenced,
+    formula_cells,
     formula_columns,
     header_map,
     resolve_sheet,
@@ -258,6 +260,48 @@ def test_a_sheet_with_no_data_has_no_calculated_columns(tmp_path):
     sheet = active_sheet(make_fixtures.clean_table(tmp_path))
 
     assert formula_columns(sheet, header_row=1, last_row=1) == set()
+
+
+# Reading every formula in a sheet
+
+
+def test_every_formula_in_the_used_range_is_found(tmp_path):
+    sheet = active_sheet(make_fixtures.formulas_all_the_way_down(tmp_path))
+
+    found = list(formula_cells(sheet, header_row=1, last_row=6))
+
+    assert [cell.coordinate for cell in found] == ["D2", "D3", "D4", "D5", "D6"]
+
+
+def test_formulas_are_found_even_when_the_last_row_holds_none(tmp_path):
+    sheet = active_sheet(make_fixtures.formulas_last_row_overwritten(tmp_path))
+
+    # The last row was typed over by hand, so asking the column reports no
+    # calculation at all. Every row still holds four of them, and deleting a
+    # column has to know about all four.
+    assert formula_columns(sheet, header_row=1, last_row=6) == set()
+    assert [cell.coordinate for cell in formula_cells(sheet, 1, 6)] == [
+        "D2",
+        "D3",
+        "D4",
+        "D5",
+    ]
+
+
+def test_which_columns_a_formula_reads():
+    assert columns_referenced("=B2*C2") == {2, 3}
+    assert columns_referenced("=$B$2*C2") == {2, 3}
+    assert columns_referenced("=SUM(B2:B10)") == {2}
+    assert columns_referenced("=AA1") == {27}
+    assert columns_referenced("=TODAY()") == set()
+
+
+def test_a_formula_can_be_read_as_reaching_further_than_it_does():
+    # A function name ending in digits, and a reference to another sheet, are
+    # both taken for references to this one. Each makes a caller refuse a
+    # deletion it could have allowed, which is the safe way round to be wrong.
+    assert columns_referenced("=LOG10(B2)") > {2}
+    assert columns_referenced("=Notes!A1") == {1}
 
 
 # Backing up

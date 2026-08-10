@@ -14,6 +14,7 @@ from shutil import copyfile
 import pandas as pd
 from openpyxl import load_workbook
 from openpyxl.formula.translate import Translator
+from openpyxl.utils import column_index_from_string
 
 from excel_agent.config import BACKUP_DIR, BACKUP_KEEP
 
@@ -29,6 +30,11 @@ HEADER_SEARCH_DEPTH = 10
 # real suffix, so a backup opens by double clicking like any other workbook.
 STAMP_FORMAT = "%Y%m%d-%H%M%S"
 STAMP_PATTERN = re.compile(r"-\d{8}-\d{6}")
+
+# An A1 style cell reference: up to three letters, a row number, and the
+# dollar signs that pin either of them. The lookbehind keeps it from biting a
+# piece out of a longer word.
+CELL_REFERENCE = re.compile(r"(?<![A-Za-z0-9_$])\$?([A-Z]{1,3})\$?(\d+)")
 
 # The workbooks backed up so far this session, so each one is copied once
 # however many times it is written to.
@@ -176,6 +182,36 @@ def formula_columns(sheet, header_row: int, last_row: int) -> set[int]:
         cell.column
         for cell in sheet[last_row]
         if isinstance(cell.value, str) and cell.value.startswith("=")
+    }
+
+
+def formula_cells(sheet, header_row: int, last_row: int):
+    """Every cell in the used range that works its value out.
+
+    formula_columns only reads the last row, which is enough to spot a column
+    that is calculated all the way down. Deleting a column needs more than
+    that: one formula anywhere in the sheet is enough to make the deletion
+    wrong, so every row has to be looked at.
+    """
+    for row in range(header_row, last_row + 1):
+        for cell in sheet[row]:
+            if isinstance(cell.value, str) and cell.value.startswith("="):
+                yield cell
+
+
+def columns_referenced(formula: str) -> set[int]:
+    """The column numbers a formula reads from.
+
+    Matches A1 style references, with or without the dollar signs that pin
+    them, and both ends of a range. Two things it reads too greedily: a
+    function whose name ends in digits, such as LOG10, and a reference to
+    another sheet, such as Notes!A1, are both taken for references to this
+    sheet. Both make a caller refuse a deletion it could have allowed, which
+    is the safe way round to be wrong.
+    """
+    return {
+        column_index_from_string(letters)
+        for letters, _ in CELL_REFERENCE.findall(formula)
     }
 
 
