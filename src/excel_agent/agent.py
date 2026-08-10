@@ -7,10 +7,12 @@ loop that lets it call them until it has an answer.
 from pathlib import Path
 from shutil import copyfile
 from tempfile import TemporaryDirectory
+from uuid import uuid4
 
 from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_groq import ChatGroq
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.errors import GraphRecursionError
 
 from excel_agent.config import MAX_TURNS, MODEL, require_api_key, resolve_workbook
@@ -41,33 +43,62 @@ def build_agent():
         temperature=TEMPERATURE,
         model_kwargs={"parallel_tool_calls": False},
     )
-    return create_agent(model, TOOLS, system_prompt=SYSTEM_PROMPT)
+    # The checkpointer is what keeps the conversation. With one, a caller
+    # holds the name of a thread rather than the messages themselves, and the
+    # agent remembers the rest. It lives in memory, so a conversation lasts as
+    # long as the program does and no longer.
+    return create_agent(
+        model,
+        TOOLS,
+        system_prompt=SYSTEM_PROMPT,
+        checkpointer=InMemorySaver(),
+    )
 
 
-def ask(agent, question: str, history: list[BaseMessage] | None = None) -> list[BaseMessage]:
-    """Send one question and return the full conversation that came back.
+def new_thread() -> str:
+    """A name for a fresh conversation.
 
-    The returned list includes the question, any tool calls and their
-    results, and the answer. Pass it back in as history to keep the
-    conversation going, which lets the user say things like "remove that row
-    again" and be understood.
+    Nothing is deleted to forget a conversation: a new name is taken, and the
+    messages under the old one are simply never read again.
     """
-    messages = list(history or []) + [HumanMessage(question)]
-    state = {"messages": messages}
+    return uuid4().hex
 
-    # Streamed rather than invoked so that the messages so far are still in
-    # hand when the agent runs out of steps.
+
+def ask(agent, question: str, thread_id: str) -> list[BaseMessage]:
+    """Send one question and return what the agent did in answering it.
+
+    Only the question is passed in. Everything said earlier in this thread is
+    already held by the agent, which is what lets the user say "remove that
+    row again" and be understood.
+
+    The returned list holds the messages this turn produced: any tool calls,
+    their results, and the answer last. The question itself is not among them,
+    because it goes in as input rather than coming back out as a step.
+    """
+    config = {
+        "configurable": {"thread_id": thread_id},
+        "recursion_limit": RECURSION_LIMIT,
+    }
+
+    # Streamed by update rather than by value, so what arrives is this turn's
+    # work on its own. Streaming values would hand back the whole conversation
+    # at every step and leave the caller to work out which part of it was new.
+    produced: list[BaseMessage] = []
     try:
-        for state in agent.stream(
-            {"messages": messages},
-            config={"recursion_limit": RECURSION_LIMIT},
-            stream_mode="values",
+        for chunk in agent.stream(
+            {"messages": [HumanMessage(question)]},
+            config=config,
+            stream_mode="updates",
         ):
-            pass
+            for update in chunk.values():
+                # Not every update carries messages, so the ones that do not
+                # are stepped over rather than assumed away.
+                if isinstance(update, dict):
+                    produced.extend(update.get("messages") or [])
     except GraphRecursionError:
-        return state["messages"] + [AIMessage(GAVE_UP)]
+        return produced + [AIMessage(GAVE_UP)]
 
-    return state["messages"]
+    return produced
 
 
 def answer_of(messages: list[BaseMessage]) -> str:
@@ -117,19 +148,20 @@ CASES = [
 
 
 def run_case(agent, prompts: list[str]) -> None:
-    """Hold one conversation, printing the tool calls and answer per turn."""
-    history: list[BaseMessage] = []
+    """Hold one conversation, printing the tool calls and answer per turn.
+
+    One thread per case, so a case starts with nothing said and cannot be
+    answered out of what some earlier case happened to leave behind.
+    """
+    thread_id = new_thread()
 
     for prompt in prompts:
-        # Where the new messages start, so a second turn does not reprint the
-        # tool calls from the first one.
-        already_said = len(history)
-        history = ask(agent, prompt, history)
+        produced = ask(agent, prompt, thread_id)
 
         print(f"> {prompt}")
-        for call in tool_calls_in(history[already_said:]):
+        for call in tool_calls_in(produced):
             print(f"    {call}")
-        print(f"    {answer_of(history)}")
+        print(f"    {answer_of(produced)}")
 
 
 def main() -> None:
