@@ -25,8 +25,7 @@ TEMPERATURE = 0.3
 
 # Stands in for the answer when the agent runs out of steps before giving one.
 GAVE_UP = (
-    "I ran out of steps before reaching an answer. The tool calls above show "
-    "what I kept trying."
+    "I ran out of steps before reaching an answer."
 )
 
 
