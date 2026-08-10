@@ -7,6 +7,6 @@ __pycache__/
 *.egg-info/
 excel_agent-bundle.md
 *.sh
-/data
+data/
 data/sample.xlsx
 backups/

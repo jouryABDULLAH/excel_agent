@@ -6,7 +6,7 @@ answer, and repeats.
 
 import argparse
 
-from excel_agent.agent import answer_of, ask, build_agent, tool_calls_in
+from excel_agent.agent import answer_of, ask, build_agent, new_thread, tool_calls_in
 from excel_agent.config import MODEL, WORKBOOK_PATH
 from excel_agent.tools.inspect import inspect_sheet
 
@@ -21,17 +21,20 @@ Type what you want done to the sheet, in your own words.
 """
 
 
-def run_turn(agent, question: str, history: list, show_tools: bool) -> list:
-    """Receives the user's question and prints the answer. Returns the new history."""
-    already_said = len(history)
-    history = ask(agent, question, history)
+def run_turn(agent, question: str, thread_id: str, show_tools: bool) -> None:
+    """Receives the user's question and prints the answer.
+
+    Nothing is handed back, because nothing needs to be carried: the agent
+    keeps the conversation under the thread name, and this only prints what
+    the turn produced.
+    """
+    produced = ask(agent, question, thread_id)
 
     if show_tools:
-        for call in tool_calls_in(history[already_said:]):
+        for call in tool_calls_in(produced):
             print(f"  . {call}")
 
-    print(answer_of(history))
-    return history
+    print(answer_of(produced))
 
 
 def read_arguments() -> argparse.Namespace:
@@ -67,7 +70,7 @@ def main() -> None:
 
     print(f"Working on {WORKBOOK_PATH.name} with {MODEL}. /help for commands.")
 
-    history: list = []
+    thread_id = new_thread()
     show_tools = True
 
     while True:
@@ -99,12 +102,14 @@ def main() -> None:
             continue
 
         if question == "/reset":
-            history = []
+            # A new thread rather than an emptied one: the old messages stay
+            # where they are and are never read again.
+            thread_id = new_thread()
             print("Conversation forgotten. The sheet itself is unchanged.")
             continue
 
         try:
-            history = run_turn(agent, question, history, show_tools)
+            run_turn(agent, question, thread_id, show_tools)
         except KeyboardInterrupt:
             print("\nStopped. The sheet may have been part way through a change.")
         except Exception as e:
