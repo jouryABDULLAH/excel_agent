@@ -52,6 +52,33 @@ def load_book(path: Path):
     return load_workbook(path)
 
 
+def resolve_sheet(book, name: str | None = None):
+    """Pick a sheet out of an open workbook by name.
+
+    Returns the active sheet the workbook opens on when given nothing. Names are matched ignoring
+    case and surrounding spaces, the same way a workbook name is.
+
+    Raises ValueError, with a message worth showing to the model, when the
+    name reaches no sheet.
+    """
+    
+    if not name or not name.strip():
+        sheet = book.active
+        if sheet is None:
+            raise ValueError("This workbook has no sheets.")
+        return sheet
+
+    wanted = name.strip()
+    for title in book.sheetnames:
+        if title.lower() == wanted.lower():
+            return book[title]
+
+    available = ", ".join(book.sheetnames) or "no sheets at all"
+    raise ValueError(
+        f'There is no sheet called "{name}". The workbook has: {available}.'
+    )
+
+
 def is_blank(value) -> bool:
     """Whether a cell holds nothing worth reading.
 

@@ -20,6 +20,7 @@ from excel_agent.workbook import (
     header_map,
     last_data_row,
     load_book,
+    resolve_sheet,
     save,
 )
 
@@ -62,6 +63,7 @@ def modify_sheet(
     row: int | None = None,
     values: dict[str, str | int | float | None] | None = None,
     workbook: str | None = None,
+    sheet: str | None = None,
 ) -> str:
     """Add, edit or remove a row in the sheet.
 
@@ -84,6 +86,10 @@ def modify_sheet(
             Name a workbook only when the user named a file, and read it with
             inspect_sheet first: row numbers from one workbook mean nothing in
             another.
+        sheet: Which sheet to change, by name. Leave this out to change the
+            sheet the workbook opens on. The same warning applies: a row
+            number read from one sheet means nothing in another, so read the
+            sheet you are about to change.
 
     Returns:
         A sentence saying what changed, or an explanation of why nothing was
@@ -104,7 +110,7 @@ def modify_sheet(
         return str(explanation)
 
     with WRITE_LOCK:
-        return apply_change(action, row, values, path)
+        return apply_change(action, row, values, path, sheet)
 
 
 def apply_change(
@@ -112,14 +118,15 @@ def apply_change(
     row: int | None,
     values: dict[str, str | int | float | None] | None,
     path: Path,
+    sheet_name: str | None = None,
 ) -> str:
     """Do the work of modify_sheet, with the write lock already held."""
     book = load_book(path)
 
-    # the file contains one sheet
-    sheet = book.active
-    if sheet is None:
-        return f"{path.name} has no sheets."
+    try:
+        sheet = resolve_sheet(book, sheet_name)
+    except ValueError as explanation:
+        return str(explanation)
 
     header_row = find_header_row(sheet)
     headers = header_map(sheet, header_row)
@@ -265,7 +272,7 @@ def main() -> None:
 
     # The same workbook the tool calls above reached for, since none of them
     # names one.
-    sheet = load_book(resolve_workbook()).active
+    sheet = resolve_sheet(load_book(resolve_workbook()))
     assert sheet is not None
     added_row = last_data_row(sheet, find_header_row(sheet))
 

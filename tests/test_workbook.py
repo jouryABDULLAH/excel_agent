@@ -22,6 +22,7 @@ from excel_agent.workbook import (
     find_header_row,
     formula_columns,
     header_map,
+    resolve_sheet,
     is_blank,
     last_data_row,
     load_book,
@@ -98,6 +99,36 @@ def test_a_sheet_with_no_header_reads_its_first_row_as_one(tmp_path):
         "12",
         "24.5",
     ]
+
+
+# Picking a sheet
+
+
+def test_the_workbook_opens_on_its_first_sheet_when_none_is_named(tmp_path):
+    book = load_book(make_fixtures.multi_sheet(tmp_path))
+
+    assert resolve_sheet(book).title == "Sales"
+    assert resolve_sheet(book, None).title == "Sales"
+    assert resolve_sheet(book, "  ").title == "Sales"
+
+
+def test_a_sheet_can_be_picked_by_name(tmp_path):
+    book = load_book(make_fixtures.multi_sheet(tmp_path))
+
+    assert resolve_sheet(book, "Notes").title == "Notes"
+    # Matched the way a workbook name is, so the same spelling works in both.
+    assert resolve_sheet(book, "notes").title == "Notes"
+    assert resolve_sheet(book, "  NOTES  ").title == "Notes"
+
+
+def test_a_name_reaching_no_sheet_says_which_ones_exist(tmp_path):
+    book = load_book(make_fixtures.multi_sheet(tmp_path))
+
+    with pytest.raises(ValueError) as refused:
+        resolve_sheet(book, "Summary")
+
+    assert 'There is no sheet called "Summary"' in str(refused.value)
+    assert "Sales, Notes" in str(refused.value)
 
 
 # Cells that look empty

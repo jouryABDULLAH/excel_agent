@@ -13,11 +13,12 @@ from excel_agent.tools.inspect import inspect_sheet
 HELP = """\
 Type what you want done to the sheet, in your own words.
 
-  /sheet   show the sheet without asking the model
-  /tools   show or hide the tool calls behind each answer
-  /reset   forget the conversation so far
-  /help    show this
-  /quit    leave
+  /sheet [name]   show a sheet without asking the model, the one the file
+                  opens on unless you name another
+  /tools          show or hide the tool calls behind each answer
+  /reset          forget the conversation so far
+  /help           show this
+  /quit           leave
 """
 
 
@@ -90,10 +91,17 @@ def main() -> None:
             print(HELP)
             continue
 
-        if question == "/sheet":
+        if question == "/sheet" or question.startswith("/sheet "):
             # Named rather than left out, so the workbook the banner promised
             # is the one shown, whatever the tool would have picked by itself.
-            print(inspect_sheet.invoke({"workbook": WORKBOOK_PATH.name}))
+            # A name after the command picks a sheet; a wrong one is answered
+            # with the sheets the workbook does have.
+            wanted = question[len("/sheet"):].strip()
+            print(
+                inspect_sheet.invoke(
+                    {"workbook": WORKBOOK_PATH.name, "sheet": wanted or None}
+                )
+            )
             continue
 
         if question == "/tools":
