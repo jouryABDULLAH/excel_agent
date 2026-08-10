@@ -15,6 +15,7 @@ from excel_agent.workbook import (
     last_data_row,
     load_book,
     load_values,
+    resolve_sheet,
 )
 
 # Upper bound on max_rows, so one call cannot return a huge sheet.
@@ -44,6 +45,7 @@ def inspect_sheet(
     start_row: int | None = None,
     max_rows: int = 50,
     workbook: str | None = None,
+    sheet: str | None = None,
 ) -> str:
     """Read rows from the sheet so you can see what is there before changing it.
 
@@ -58,6 +60,10 @@ def inspect_sheet(
         workbook: Which workbook to read, by file name. Leave this out to read
             the one being worked on, which is what you normally want. Name a
             workbook only when the user named a file.
+        sheet: Which sheet to read, by name. Leave this out to read the sheet
+            the workbook opens on. Name a sheet only when the user named one.
+            A name that reaches no sheet is answered with the names that do
+            exist.
 
     Returns:
         A markdown table. Its row column holds the real Excel row number,
@@ -70,15 +76,19 @@ def inspect_sheet(
     except ValueError as explanation:
         return str(explanation)
 
-    sheet = load_values(path).active
-    if sheet is None:
-        return f"{path.name} has no sheets."
+    try:
+        worksheet = resolve_sheet(load_values(path), sheet)
+    except ValueError as explanation:
+        return str(explanation)
 
-    formulas = load_book(path).active
+    # Found by the name of the sheet already settled on, so the values and the
+    # formulas are two views of the same sheet rather than two lookups that
+    # could disagree.
+    formulas = load_book(path)[worksheet.title]
 
 
-    header_row = find_header_row(sheet)
-    headers = header_map(sheet, header_row)
+    header_row = find_header_row(worksheet)
+    headers = header_map(worksheet, header_row)
 
 
     if not headers:
@@ -100,12 +110,12 @@ def inspect_sheet(
             )
         names = list(columns)
 
-    last_row = last_data_row(sheet, header_row)
+    last_row = last_data_row(worksheet, header_row)
     total_rows = max(last_row - header_row, 0)
 
     if total_rows == 0:
         return (
-            f"Sheet: {sheet.title} in {path.name}. It has column names but no "
+            f"Sheet: {worksheet.title} in {path.name}. It has column names but no "
             "rows of data yet."
         )
 
@@ -115,7 +125,7 @@ def inspect_sheet(
 
     if first > last_row:
         return (
-            f"Sheet: {sheet.title} in {path.name} has {total_rows} rows of data, "
+            f"Sheet: {worksheet.title} in {path.name} has {total_rows} rows of data, "
             f"ending at row {last_row}, so there is nothing to read from row "
             f"{start_row}."
         )
@@ -123,7 +133,7 @@ def inspect_sheet(
     # The workbook is named on every read, so that two tables in one
     # conversation cannot be mistaken for each other.
     summary = (
-        f"Sheet: {sheet.title} in {path.name} ({total_rows} rows of data, "
+        f"Sheet: {worksheet.title} in {path.name} ({total_rows} rows of data, "
         f"column names in row {header_row})"
     )
     if first > first_data_row or last < last_row:
@@ -140,7 +150,7 @@ def inspect_sheet(
     for row in range(first, last + 1):
         cells = []
         for name in names:
-            value = sheet.cell(row=row, column=headers[name]).value
+            value = worksheet.cell(row=row, column=headers[name]).value
             if value is None and formulas is not None:
                 formula = formulas.cell(row=row, column=headers[name]).value
                 if isinstance(formula, str) and formula.startswith("="):

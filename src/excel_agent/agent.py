@@ -23,30 +23,24 @@ from excel_agent.tools import TOOLS
 RECURSION_LIMIT = MAX_TURNS * 2 + 1
 TEMPERATURE = 0.3
 
-# Stands in for the answer when the agent runs out of steps before giving one.
+# How many steps one turn may take. A step is a move through the agent, so a
+# single tool call costs three of them: ask the model, run the tool, ask the
+# model again.
+
 GAVE_UP = (
-    "I ran out of steps before reaching an answer. The tool calls above show "
-    "what I kept trying."
+    "I ran out of steps before reaching an answer."
 )
 
 
 def build_agent():
-    """Build the agent from the model, the tools and the system prompt.
-
-    Tool calls are asked for one at a time. Two of them running at once would
-    be two writes to the same file at once, and the second would be working
-    from the sheet as it looked before the first one saved.
-    """
+    """Build the agent from the model, the tools and the system prompt."""
     model = ChatGroq(
         model=MODEL,
         api_key=require_api_key(),
         temperature=TEMPERATURE,
         model_kwargs={"parallel_tool_calls": False},
     )
-    # The checkpointer is what keeps the conversation. With one, a caller
-    # holds the name of a thread rather than the messages themselves, and the
-    # agent remembers the rest. It lives in memory, so a conversation lasts as
-    # long as the program does and no longer.
+    
     return create_agent(
         model,
         TOOLS,
@@ -56,33 +50,20 @@ def build_agent():
 
 
 def new_thread() -> str:
-    """A name for a fresh conversation.
-
-    Nothing is deleted to forget a conversation: a new name is taken, and the
-    messages under the old one are simply never read again.
-    """
+    """Creates a thread ID used to track conversations"""
     return uuid4().hex
 
 
 def ask(agent, question: str, thread_id: str) -> list[BaseMessage]:
-    """Send one question and return what the agent did in answering it.
+    """Send one question. returns a list holding the messages this turn produced: any tool calls,
+    their results, and the answer last."""
 
-    Only the question is passed in. Everything said earlier in this thread is
-    already held by the agent, which is what lets the user say "remove that
-    row again" and be understood.
-
-    The returned list holds the messages this turn produced: any tool calls,
-    their results, and the answer last. The question itself is not among them,
-    because it goes in as input rather than coming back out as a step.
-    """
     config = {
         "configurable": {"thread_id": thread_id},
         "recursion_limit": RECURSION_LIMIT,
     }
 
-    # Streamed by update rather than by value, so what arrives is this turn's
-    # work on its own. Streaming values would hand back the whole conversation
-    # at every step and leave the caller to work out which part of it was new.
+
     produced: list[BaseMessage] = []
     try:
         for chunk in agent.stream(
