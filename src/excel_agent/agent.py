@@ -23,7 +23,9 @@ from excel_agent.tools import TOOLS
 RECURSION_LIMIT = MAX_TURNS * 2 + 1
 TEMPERATURE = 0.3
 
-# Stands in for the answer when the agent runs out of steps before giving one.
+# How many steps one turn may take. A step is a move through the agent, so a
+# single tool call costs three of them: ask the model, run the tool, ask the
+# model again. 
 GAVE_UP = (
     "I ran out of steps before reaching an answer."
 )
