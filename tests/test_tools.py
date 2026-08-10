@@ -104,12 +104,15 @@ def test_a_calculated_cell_is_shown_as_its_formula_with_a_warning(
     assert "calculated by the sheet itself" in answer
 
 
-def test_only_the_active_sheet_is_read(tmp_path, use_workbook):
+def test_the_sheet_the_workbook_opens_on_is_read_when_none_is_named(
+    tmp_path, use_workbook
+):
     use_workbook(make_fixtures.multi_sheet(tmp_path))
 
     answer = inspect_sheet.invoke({})
 
-    # The tools never name a sheet, so the second one may as well not be there.
+    # Leaving the sheet out reads the one the file opens on, so a single sheet
+    # workbook behaves exactly as it did before sheets could be named.
     assert "Sheet: Sales" in answer
     assert "Author" not in answer
 
@@ -416,4 +419,70 @@ def test_a_name_reaching_outside_the_data_folder_is_refused(tmp_path, use_workbo
     )
 
     assert "is not a workbook name" in answer
+    assert digest(path) == before
+
+
+# Choosing a sheet
+
+
+def test_a_named_sheet_is_read(tmp_path, use_workbook):
+    use_workbook(make_fixtures.multi_sheet(tmp_path))
+
+    answer = inspect_sheet.invoke({"sheet": "Notes"})
+
+    assert "Sheet: Notes in multi_sheet.xlsx" in answer
+    assert "| row | Author | Comment |" in answer
+    assert "Joori" in answer
+
+
+def test_a_sheet_name_is_matched_however_it_is_spelled(tmp_path, use_workbook):
+    use_workbook(make_fixtures.multi_sheet(tmp_path))
+
+    assert "Sheet: Notes" in inspect_sheet.invoke({"sheet": "notes"})
+    assert "Sheet: Notes" in inspect_sheet.invoke({"sheet": "  NOTES  "})
+
+
+def test_a_named_sheet_is_the_one_that_gets_changed(tmp_path, use_workbook):
+    path = use_workbook(make_fixtures.multi_sheet(tmp_path))
+
+    answer = modify_sheet.invoke(
+        {"action": "edit", "row": 2, "values": {"Comment": "changed"}, "sheet": "Notes"}
+    )
+
+    assert "Updated row 2" in answer
+
+    book = load_workbook(path)
+    assert book["Notes"]["B2"].value == "changed"
+    # Both sheets have a row 2, and the one that was not named still holds
+    # what it always held.
+    assert book["Sales"]["B2"].value == "Laptop Stand"
+
+
+def test_a_row_added_to_a_named_sheet_lands_in_that_sheet(tmp_path, use_workbook):
+    path = use_workbook(make_fixtures.multi_sheet(tmp_path))
+
+    # Notes ends at row 2 and Sales at row 3, so the row number in the answer
+    # says which sheet was measured for the end of the data.
+    answer = modify_sheet.invoke(
+        {"action": "add", "values": {"Author": "Sam"}, "sheet": "Notes"}
+    )
+
+    assert "Added row 3" in answer
+
+    book = load_workbook(path)
+    assert book["Notes"]["A3"].value == "Sam"
+    assert book["Sales"].max_row == 3
+
+
+def test_a_sheet_that_does_not_exist_is_refused_by_both_tools(tmp_path, use_workbook):
+    path = use_workbook(make_fixtures.multi_sheet(tmp_path))
+    before = digest(path)
+
+    read = inspect_sheet.invoke({"sheet": "Summary"})
+    written = modify_sheet.invoke({"action": "remove", "row": 2, "sheet": "Summary"})
+
+    for answer in (read, written):
+        assert 'There is no sheet called "Summary"' in answer
+        assert "Sales, Notes" in answer
+
     assert digest(path) == before
