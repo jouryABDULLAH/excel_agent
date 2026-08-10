@@ -110,7 +110,9 @@ CASES = [
     ),
     ("filtering", ["Show me the rows for the EU region."]),
     ("something it cannot do", ["Make the header row bold and blue."]),
-    ("something else it cannot do", ["Add a Profit column to the sheet."]),
+    ("something else it cannot do", ["Sort the sheet by units, largest first."]),
+    ("adding a column", ["Add a Profit column to the sheet."]),
+    ("a column it must not delete", ["Delete the Units column."]),
     ("a row it cannot pick between", ["Change the unit price of the Webcam to 45."]),
     ("a plain edit", ["Set the units on row 7 to 25."]),
     (
