@@ -25,7 +25,8 @@ TEMPERATURE = 0.3
 
 # How many steps one turn may take. A step is a move through the agent, so a
 # single tool call costs three of them: ask the model, run the tool, ask the
-# model again. 
+# model again.
+
 GAVE_UP = (
     "I ran out of steps before reaching an answer."
 )
