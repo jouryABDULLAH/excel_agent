@@ -7,12 +7,15 @@ answer, and repeats.
 import argparse
 
 from excel_agent.agent import answer_of, ask, build_agent, new_thread, tool_calls_in
-from excel_agent.config import MODEL, WORKBOOK_PATH
+from excel_agent import config
+from excel_agent.config import MODEL, resolve_workbook, use_utf8_output
 from excel_agent.tools.inspect import inspect_sheet
+from excel_agent.tools.workbooks import list_workbooks
 
 HELP = """\
 Type what you want done to the sheet, in your own words.
 
+  /use [file]     work on another workbook, or list the ones there are
   /sheet [name]   show a sheet without asking the model, the one the file
                   opens on unless you name another
   /tools          show or hide the tool calls behind each answer
@@ -57,6 +60,7 @@ def read_arguments() -> argparse.Namespace:
 
 def main() -> None:
     """Talk to the agent until the user leaves."""
+    use_utf8_output()
     debug = read_arguments().debug
 
     try:
@@ -69,7 +73,7 @@ def main() -> None:
         print(e)
         return
 
-    print(f"Working on {WORKBOOK_PATH.name} with {MODEL}. /help for commands.")
+    print(f"Working on {config.WORKBOOK_PATH.name} with {MODEL}. /help for commands.")
 
     thread_id = new_thread()
     show_tools = True
@@ -92,16 +96,27 @@ def main() -> None:
             continue
 
         if question == "/sheet" or question.startswith("/sheet "):
-            # Named rather than left out, so the workbook the banner promised
-            # is the one shown, whatever the tool would have picked by itself.
             # A name after the command picks a sheet; a wrong one is answered
             # with the sheets the workbook does have.
             wanted = question[len("/sheet"):].strip()
             print(
                 inspect_sheet.invoke(
-                    {"workbook": WORKBOOK_PATH.name, "sheet": wanted or None}
+                    {"workbook": config.WORKBOOK_PATH.name, "sheet": wanted or None}
                 )
             )
+            continue
+
+        if question == "/use" or question.startswith("/use "):
+            wanted = question[len("/use"):].strip()
+            if not wanted:
+                print(list_workbooks.invoke({}))
+                continue
+            try:
+                config.WORKBOOK_PATH = resolve_workbook(wanted)
+            except ValueError as explanation:
+                print(explanation)
+                continue
+            print(f"Now working on {config.WORKBOOK_PATH.name}.")
             continue
 
         if question == "/tools":

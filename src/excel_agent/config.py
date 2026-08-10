@@ -6,6 +6,7 @@ else in the project.
 """
 
 import os
+import sys
 from pathlib import Path
 
 # To read the key from a .env file instead of the shell, install the dev
@@ -92,3 +93,15 @@ def require_api_key() -> str:
             '    $env:GROQ_API_KEY = "your-key-here"'
         )
     return GROQ_API_KEY
+
+
+def use_utf8_output() -> None:
+    """Let the console print whatever the model says.
+
+    Windows consoles default to a codepage that cannot render characters the
+    model reaches for, such as a non-breaking hyphen, and printing one raises
+    UnicodeEncodeError.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
