@@ -9,34 +9,10 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 from langgraph.checkpoint.memory import InMemorySaver
 from openpyxl import load_workbook
 
+from scripted import ScriptedModel
+
 from excel_agent.agent import answer_of, ask, new_thread, tool_calls_in
 from excel_agent.tools import TOOLS
-
-
-class ScriptedModel(BaseChatModel):
-    """A chat model that reads from a script instead of thinking.
-
-    Each call takes the next message off the front of the script, so a test
-    can lay out a whole conversation in advance, tool calls and all.
-    """
-
-    script: list[BaseMessage]
-
-    def bind_tools(self, tools, **kwargs):
-        """Accept the tools and ignore them.
-
-        The agent binds its tools to the model before it can be used, and the
-        stock fake models refuse, which is why this one exists. What the
-        script asks for is decided by the test, not by the tools on offer.
-        """
-        return self
-
-    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
-        return ChatResult(generations=[ChatGeneration(message=self.script.pop(0))])
-
-    @property
-    def _llm_type(self) -> str:
-        return "scripted"
 
 
 def agent_reading(script, tools=()):

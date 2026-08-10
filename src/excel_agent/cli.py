@@ -6,10 +6,11 @@ answer, and repeats.
 
 import argparse
 
-from excel_agent.agent import answer_of, ask, build_agent, new_thread, tool_calls_in
+from excel_agent.agent import build_agent
 from excel_agent import config
 from excel_agent.config import MODEL, resolve_workbook, use_utf8_output
 from excel_agent.tools.inspect import inspect_sheet
+from excel_agent.runner import Answer, Session, Text, ToolCall, rendered
 from excel_agent.tools.workbooks import list_workbooks
 
 HELP = """\
@@ -25,20 +26,19 @@ Type what you want done to the sheet, in your own words.
 """
 
 
-def run_turn(agent, question: str, thread_id: str, show_tools: bool) -> None:
+def run_turn(session, question: str, show_tools: bool) -> None:
     """Receives the user's question and prints the answer.
 
-    Nothing is handed back, because nothing needs to be carried: the agent
-    keeps the conversation under the thread name, and this only prints what
-    the turn produced.
+    Everything printed here comes from the events the session gives back, so
+    the terminal knows as much about the agent as a web page would.
     """
-    produced = ask(agent, question, thread_id)
-
-    if show_tools:
-        for call in tool_calls_in(produced):
-            print(f"  . {call}")
-
-    print(answer_of(produced))
+    for event in session.ask(question):
+        if isinstance(event, ToolCall) and show_tools:
+            print(f"  . {rendered(event)}")
+        elif isinstance(event, Text):
+            print(event.text, end="", flush=True)
+        elif isinstance(event, Answer):
+            print(event.text)
 
 
 def read_arguments() -> argparse.Namespace:
@@ -75,7 +75,7 @@ def main() -> None:
 
     print(f"Working on {config.WORKBOOK_PATH.name} with {MODEL}. /help for commands.")
 
-    thread_id = new_thread()
+    session = Session(agent)
     show_tools = True
 
     while True:
@@ -125,14 +125,12 @@ def main() -> None:
             continue
 
         if question == "/reset":
-            # A new thread rather than an emptied one: the old messages stay
-            # where they are and are never read again.
-            thread_id = new_thread()
+            session.reset()
             print("Conversation forgotten. The sheet itself is unchanged.")
             continue
 
         try:
-            run_turn(agent, question, thread_id, show_tools)
+            run_turn(session, question, show_tools)
         except KeyboardInterrupt:
             print("\nStopped. The sheet may have been part way through a change.")
         except Exception as e:
