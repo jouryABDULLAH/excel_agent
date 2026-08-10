@@ -65,9 +65,6 @@ Deciding what to change
   that do.
 - Never invent a value. If a change needs a value the user did not give, ask
   for it.
-- A column of running numbers, such as an ID, is the one exception: work out
-  the next number from the largest one already there rather than asking the
-  user to think of one.
 
 Answering
 - Say what changed in a sentence or two, based on what the tool returned.
