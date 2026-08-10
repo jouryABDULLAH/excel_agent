@@ -41,6 +41,7 @@ def test_a_chart_is_drawn_and_stays_in_the_file(tmp_path, use_workbook):
     )
 
     assert "Drew a bar chart of Units, labelled by Product" in answer
+    assert "(Sales in clean_table.xlsx)" in answer
     assert "covers rows 2 to 6" in answer
 
     charts = charts_in(path)
@@ -105,6 +106,63 @@ def test_a_chart_survives_a_later_edit(tmp_path, use_workbook):
     assert load_workbook(path).active["D2"].value == 99
 
 
+# Where a chart goes
+
+
+def test_a_second_chart_goes_below_the_first(tmp_path, use_workbook):
+    path = use_workbook(make_fixtures.clean_table(tmp_path))
+
+    first = modify_chart.invoke({"action": "add", "values": "Units", "kind": "bar"})
+    second = modify_chart.invoke(
+        {"action": "add", "values": "Unit Price", "kind": "pie"}
+    )
+
+    # Both are in the file, and the second is a chart's depth further down, so
+    # it does not sit on top of the first and hide it.
+    assert "at G1" in first
+    assert "at G17" in second
+
+    charts = charts_in(path)
+    assert [chart.tagname for chart in charts] == ["barChart", "pieChart"]
+    assert [chart.anchor._from.row for chart in charts] == [0, 16]
+
+
+def test_charts_drawn_in_a_later_session_still_step_down(tmp_path, use_workbook):
+    path = use_workbook(make_fixtures.clean_table(tmp_path))
+    modify_chart.invoke({"action": "add", "values": "Units"})
+
+    # Each call opens the file again, so the chart already saved has to be
+    # counted from the file rather than from anything held in memory.
+    answer = modify_chart.invoke({"action": "add", "values": "Unit Price"})
+
+    assert "at G17" in answer
+    assert len(charts_in(path)) == 2
+
+
+def test_a_chart_can_be_put_where_it_is_asked_for(tmp_path, use_workbook):
+    path = use_workbook(make_fixtures.clean_table(tmp_path))
+
+    answer = modify_chart.invoke(
+        {"action": "add", "values": "Units", "anchor": "b20"}
+    )
+
+    assert "at B20" in answer
+    placed = charts_in(path)[0].anchor._from
+    assert (placed.col, placed.row) == (1, 19)
+
+
+def test_something_that_is_not_a_cell_is_refused(tmp_path, use_workbook):
+    path = use_workbook(make_fixtures.clean_table(tmp_path))
+    before = digest(path)
+
+    answer = modify_chart.invoke(
+        {"action": "add", "values": "Units", "anchor": "over there"}
+    )
+
+    assert "is not a cell" in answer
+    assert digest(path) == before
+
+
 # Taking charts away
 
 
@@ -160,7 +218,7 @@ def test_an_unknown_kind_of_chart_is_refused(tmp_path, use_workbook):
     # Called underneath the tool, because the tool's own argument checking
     # rejects anything but bar, line and pie before the function runs. This is
     # the last line of defence, for a caller that is not the model.
-    answer = apply_chart_change("add", "Units", None, "scatter", None, path)
+    answer = apply_chart_change("add", "Units", None, "scatter", None, None, path)
 
     assert "bar, line, pie" in answer
     assert digest(path) == before
@@ -172,7 +230,7 @@ def test_an_action_that_is_neither_add_nor_remove_changes_nothing(
     path = use_workbook(make_fixtures.clean_table(tmp_path))
     before = digest(path)
 
-    answer = apply_chart_change("redraw", "Units", None, "bar", None, path)
+    answer = apply_chart_change("redraw", "Units", None, "bar", None, None, path)
 
     assert 'Unknown action "redraw"' in answer
     assert digest(path) == before
@@ -198,7 +256,7 @@ def test_a_named_sheet_is_the_one_charted(tmp_path, use_workbook):
         {"action": "add", "values": "ID", "sheet": "Sales"}
     )
 
-    assert "on Sales" in answer
+    assert "(Sales in multi_sheet.xlsx)" in answer
     assert len(charts_in(path, "Sales")) == 1
     assert charts_in(path, "Notes") == []
 

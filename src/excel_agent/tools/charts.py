@@ -9,6 +9,7 @@ The range is fixed when the chart is made. Rows added afterwards fall outside
 it, and the chart has to be made again to take them in.
 """
 
+import re
 from pathlib import Path
 from typing import Literal
 
@@ -25,11 +26,30 @@ from excel_agent.workbook import (
     last_data_row,
     load_book,
     load_values,
+    location,
     resolve_sheet,
     save,
 )
 
 KINDS = {"bar": BarChart, "line": LineChart, "pie": PieChart}
+
+# How far down the next chart goes, in rows. A chart is 7.5cm tall by default,
+# which is about fifteen rows, so sixteen clears it.
+CHART_DEPTH = 16
+
+ANCHOR = re.compile(r"^[A-Za-z]{1,3}[1-9][0-9]*$")
+
+
+def free_anchor(worksheet, headers: dict[str, int], header_row: int) -> str:
+    """Where to put a chart so it does not cover the data or another chart.
+
+    Two columns clear of the last named column, then one chart's depth further
+    down for each chart already on the sheet. Charts loaded from the file are
+    counted too, so a second chart drawn in a later session still lands below
+    the first rather than on top of it.
+    """
+    column = get_column_letter(max(headers.values()) + 2)
+    return f"{column}{header_row + len(worksheet._charts) * CHART_DEPTH}"
 
 
 def is_number(value) -> bool:
@@ -66,6 +86,7 @@ def modify_chart(
     categories: str | None = None,
     kind: Literal["bar", "line", "pie"] = "bar",
     title: str | None = None,
+    anchor: str | None = None,
     workbook: str | None = None,
     sheet: str | None = None,
 ) -> str:
@@ -83,6 +104,9 @@ def modify_chart(
             Leave it out to label them 1, 2, 3 and so on.
         kind: "bar", "line" or "pie".
         title: What to call the chart. Left out, it is named after the columns.
+        anchor: The cell to put the chart's top left corner in, such as "H2".
+            Left out, it goes clear of the data, and below any chart already
+            on the sheet rather than on top of it.
         workbook: Which workbook to change, by file name. Leave this out to
             change the one being worked on.
         sheet: Which sheet to change, by name. Leave this out to change the
@@ -99,6 +123,7 @@ def modify_chart(
     Examples:
         modify_chart(action="add", values="Units", categories="Product")
         modify_chart(action="add", values="Total", categories="Region", kind="pie")
+        modify_chart(action="add", values="Units", anchor="H2")
         modify_chart(action="remove")
     """
     try:
@@ -107,7 +132,9 @@ def modify_chart(
         return str(explanation)
 
     with WRITE_LOCK:
-        return apply_chart_change(action, values, categories, kind, title, path, sheet)
+        return apply_chart_change(
+            action, values, categories, kind, title, anchor, path, sheet
+        )
 
 
 def apply_chart_change(
@@ -116,6 +143,7 @@ def apply_chart_change(
     categories: str | None,
     kind: str,
     title: str | None,
+    anchor: str | None,
     path: Path,
     sheet_name: str | None = None,
 ) -> str:
@@ -135,9 +163,9 @@ def apply_chart_change(
         worksheet._charts.clear()
         save(book, path)
         return (
-            f"Removed {drawn} chart{'s' if drawn > 1 else ''} from "
-            f"{worksheet.title}. The data itself is untouched."
-        )
+            f"Removed {drawn} chart{'s' if drawn > 1 else ''}. "
+            "The data itself is untouched."
+        ) + location(worksheet, path)
 
     if action != "add":
         return f'Unknown action "{action}". Use add or remove.'
@@ -163,6 +191,12 @@ def apply_chart_change(
 
     if kind not in KINDS:
         return f'Unknown kind "{kind}". Use one of: {", ".join(KINDS)}.'
+
+    if anchor and not ANCHOR.match(anchor.strip()):
+        return (
+            f'"{anchor}" is not a cell. Give one cell for the chart to start '
+            'at, such as "H2".'
+        )
 
     last_row = last_data_row(worksheet, header_row)
     if last_row <= header_row:
@@ -199,17 +233,16 @@ def apply_chart_change(
             )
         )
 
-    # Placed two columns clear of the data, so it never sits over the table.
-    anchor = f"{get_column_letter(max(headers.values()) + 2)}{header_row}"
-    worksheet.add_chart(chart, anchor)
+    where = anchor.strip() if anchor else free_anchor(worksheet, headers, header_row)
+    worksheet.add_chart(chart, where.upper())
     save(book, path)
 
     labelled = f", labelled by {categories}" if categories else ""
     return (
-        f'Drew a {kind} chart of {values}{labelled} on {worksheet.title}, '
-        f"at {anchor}. It covers rows {header_row + 1} to {last_row}: rows "
-        "added after this are not in it, so draw it again if the data grows."
-    )
+        f"Drew a {kind} chart of {values}{labelled}, at {where.upper()}. "
+        f"It covers rows {header_row + 1} to {last_row}: rows added after this "
+        "are not in it, so draw it again if the data grows."
+    ) + location(worksheet, path)
 
 
 def main() -> None:
