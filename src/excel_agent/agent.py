@@ -109,6 +109,10 @@ CASES = [
         ["Which regions appear in the sheet, and how many rows does each have?"],
     ),
     ("filtering", ["Show me the rows for the EU region."]),
+    (
+        "summing a column",
+        ["How many units have been sold in total, and what is the largest order?"],
+    ),
     ("something it cannot do", ["Make the header row bold and blue."]),
     ("something else it cannot do", ["Sort the sheet by units, largest first."]),
     ("adding a column", ["Add a Profit column to the sheet."]),
