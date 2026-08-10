@@ -42,7 +42,7 @@ def run_turn(session, question: str, show_tools: bool) -> None:
 
 
 def read_arguments() -> argparse.Namespace:
-    """Read the command line, for both excel-agent and python -m excel_agent."""
+    """Reads the command line."""
     parser = argparse.ArgumentParser(
         prog="excel-agent",
         description="Change an Excel sheet by saying what you want in your own words.",
@@ -134,10 +134,7 @@ def main() -> None:
         except KeyboardInterrupt:
             print("\nStopped. The sheet may have been part way through a change.")
         except Exception as e:
-            # One bad turn should not end the session, so the loop keeps going
-            # and the user can try again. Under --debug it stops instead, with
-            # the traceback, because a summary is no use when the thing you
-            # are looking at is the bug.
+            
             if debug:
                 raise
             print(f"That went wrong: {e}")
