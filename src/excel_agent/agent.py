@@ -29,9 +29,6 @@ from excel_agent.tools import TOOLS
 RECURSION_LIMIT = MAX_TURNS * 2 + 1
 TEMPERATURE = 0.3
 
-# How many steps one turn may take. A step is a move through the agent, so a
-# single tool call costs three of them: ask the model, run the tool, ask the
-# model again.
 
 GAVE_UP = (
     "I ran out of steps before reaching an answer."
@@ -39,11 +36,8 @@ GAVE_UP = (
 
 
 def build_model():
-    """The model, built the one way both variants use.
+    """The model, built the one way both variants (single agent, multi agent) use."""
 
-    Shared rather than written out twice, because an A/B between two paths
-    running at different temperatures would measure the temperature.
-    """
     return ChatGroq(
         model=MODEL,
         api_key=require_api_key(),
