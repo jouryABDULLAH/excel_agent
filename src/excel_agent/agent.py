@@ -38,14 +38,23 @@ GAVE_UP = (
 )
 
 
-def build_agent():
-    """Build the agent from the model, the tools and the system prompt."""
-    model = ChatGroq(
+def build_model():
+    """The model, built the one way both variants use.
+
+    Shared rather than written out twice, because an A/B between two paths
+    running at different temperatures would measure the temperature.
+    """
+    return ChatGroq(
         model=MODEL,
         api_key=require_api_key(),
         temperature=TEMPERATURE,
         model_kwargs={"parallel_tool_calls": False},
     )
+
+
+def build_agent():
+    """Build the agent from the model, the tools and the system prompt."""
+    model = build_model()
     
     return create_agent(
         model,

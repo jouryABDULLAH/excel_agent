@@ -6,7 +6,7 @@ answer, and repeats.
 
 import argparse
 
-from excel_agent.agent import build_agent
+from excel_agent.subagents.factory import VARIANTS, build
 from excel_agent import config
 from excel_agent.config import MODEL, resolve_workbook, use_utf8_output
 from excel_agent.tools.inspect import inspect_sheet
@@ -48,6 +48,15 @@ def read_arguments() -> argparse.Namespace:
         description="Change an Excel sheet by saying what you want in your own words.",
     )
     parser.add_argument(
+        "--agents",
+        choices=VARIANTS,
+        default="single",
+        help=(
+            "single asks one agent holding every tool; multi asks an "
+            "orchestrator that hands the work to subagents"
+        ),
+    )
+    parser.add_argument(
         "--debug",
         action="store_true",
         help=(
@@ -61,10 +70,11 @@ def read_arguments() -> argparse.Namespace:
 def main() -> None:
     """Talk to the agent until the user leaves."""
     use_utf8_output()
-    debug = read_arguments().debug
+    arguments = read_arguments()
+    debug = arguments.debug
 
     try:
-        agent = build_agent()
+        agent = build(arguments.agents)
     except RuntimeError as e:
         # A missing API key explains itself, so the message is enough. Under
         # --debug the traceback is the point, so it is let through.
@@ -73,7 +83,10 @@ def main() -> None:
         print(e)
         return
 
-    print(f"Working on {config.WORKBOOK_PATH.name} with {MODEL}. /help for commands.")
+    print(
+        f"Working on {config.WORKBOOK_PATH.name} with {MODEL}, "
+        f"{arguments.agents} agent. /help for commands."
+    )
 
     session = Session(agent)
     show_tools = True
@@ -134,7 +147,7 @@ def main() -> None:
         except KeyboardInterrupt:
             print("\nStopped. The sheet may have been part way through a change.")
         except Exception as e:
-            
+
             if debug:
                 raise
             print(f"That went wrong: {e}")
