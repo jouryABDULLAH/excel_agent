@@ -8,10 +8,16 @@ end could damage something.
 import pathlib
 
 import make_fixtures
+from langchain.agents import create_agent
+from langchain_core.messages import AIMessage
+from langgraph.checkpoint.memory import InMemorySaver
+from scripted import ScriptedModel
 from streamlit.testing.v1 import AppTest
 
+from excel_agent.runner import Session
+
 import excel_agent.ui
-from excel_agent.ui import save_upload
+from excel_agent.ui import save_upload, suggestions
 
 # AppTest resolves a relative path against this file, so the page is found
 # through the module rather than by guessing at the layout of the repo.
@@ -103,3 +109,70 @@ def test_the_sidebar_offers_the_workbooks_and_the_two_variants(tmp_path, use_wor
     # The workbook in use is named on the page, so it is never a guess which
     # file a change would land in.
     assert any("clean_table.xlsx" in caption.value for caption in page.caption)
+
+
+# What to offer someone who has not typed anything yet
+
+
+def test_the_suggestions_are_built_from_the_columns_that_are_there(tmp_path):
+    asks = suggestions(make_fixtures.clean_table(tmp_path))
+
+    assert asks[:2] == ["Show me the first few rows", "Summarise every column"]
+    assert "What is the total Unit Price?" in asks
+    assert "Draw a bar chart of Unit Price by Product" in asks
+
+
+def test_a_sheet_whose_only_numbers_are_identifiers_is_offered_neither(tmp_path):
+    asks = suggestions(make_fixtures.multi_sheet(tmp_path))
+
+    # ID is a number, and a total of it would mean nothing.
+    assert asks == ["Show me the first few rows", "Summarise every column"]
+
+
+def test_a_workbook_that_will_not_open_still_offers_something(tmp_path):
+    broken = tmp_path / "broken.xlsx"
+    broken.write_bytes(b"not a workbook at all")
+
+    assert suggestions(broken) == ["Show me the first few rows", "Summarise every column"]
+
+
+def page_with_a_scripted_agent(says: str) -> AppTest:
+    """The page with an agent already in place, so no Groq request is made."""
+    page = AppTest.from_file(PAGE, default_timeout=60)
+    page.session_state["variant"] = "single"
+    page.session_state["transcript"] = []
+    page.session_state["session"] = Session(
+        create_agent(
+            ScriptedModel(script=[AIMessage(says)]),
+            [],
+            system_prompt="terse",
+            checkpointer=InMemorySaver(),
+        )
+    )
+    return page
+
+
+def test_clicking_a_suggestion_asks_it(tmp_path, use_workbook):
+    use_workbook(make_fixtures.clean_table(tmp_path))
+    page = page_with_a_scripted_agent("Five rows.").run()
+    asked = page.button[0].label
+
+    page.button[0].click().run()
+
+    assert [said["text"] for said in page.session_state["transcript"]] == [
+        asked,
+        "Five rows.",
+    ]
+
+
+def test_the_suggestions_are_taken_off_the_page_once_one_is_used(
+    tmp_path, use_workbook
+):
+    use_workbook(make_fixtures.clean_table(tmp_path))
+    page = page_with_a_scripted_agent("Five rows.").run()
+
+    page.button[0].click().run()
+
+    # Left on screen they would belong to a run that has ended, and clicking
+    # one again would do nothing at all.
+    assert [button.label for button in page.button] == ["New conversation"]
