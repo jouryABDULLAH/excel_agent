@@ -18,7 +18,7 @@ from excel_agent.runner import Answer, Session, ToolCall
 from excel_agent.subagents import SUBAGENTS, build
 from excel_agent.subagents.factory import as_tool
 from excel_agent.subagents.prompts import ORCHESTRATOR_PROMPT
-from excel_agent.tools import TOOLS
+from excel_agent.tools import LOCAL_TOOLS
 
 # list_workbooks is the orchestrator's own, so no subagent holds it.
 ORCHESTRATOR_ONLY = {"list_workbooks"}
@@ -29,9 +29,9 @@ ORCHESTRATOR_ONLY = {"list_workbooks"}
 
 def test_every_tool_reaches_some_subagent():
     covered = {tool.name for spec in SUBAGENTS for tool in spec.tools}
-    everything = {tool.name for tool in TOOLS} - ORCHESTRATOR_ONLY
+    everything = {tool.name for tool in LOCAL_TOOLS} - ORCHESTRATOR_ONLY
 
-    # A tool added to TOOLS and forgotten here would leave the multi agent
+    # A tool added to LOCAL_TOOLS and forgotten here would leave the multi agent
     # variant quietly unable to do something the single agent can, and the
     # comparison would read it as a routing failure.
     assert everything <= covered
@@ -40,7 +40,7 @@ def test_every_tool_reaches_some_subagent():
 def test_no_subagent_holds_a_tool_that_is_not_offered():
     covered = {tool.name for spec in SUBAGENTS for tool in spec.tools}
 
-    assert covered <= {tool.name for tool in TOOLS}
+    assert covered <= {tool.name for tool in LOCAL_TOOLS}
 
 
 def test_reading_comes_with_every_subagent_that_writes():

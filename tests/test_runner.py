@@ -13,7 +13,7 @@ from openpyxl import load_workbook
 from scripted import ScriptedModel, calling
 
 from excel_agent.runner import Answer, Session, Text, ToolCall, rendered
-from excel_agent.tools import TOOLS
+from excel_agent.tools import LOCAL_TOOLS
 
 
 def session_reading(script, tools=(), **settings) -> Session:
@@ -47,7 +47,7 @@ def test_a_tool_call_arrives_before_the_answer(tmp_path, use_workbook):
             calling("modify_sheet", "1", action="edit", row=2, values={"Units": 99}),
             AIMessage("Set row 2 to 99."),
         ],
-        tools=TOOLS,
+        tools=LOCAL_TOOLS,
     )
 
     events = list(session.ask("set row 2 units to 99"))
@@ -60,7 +60,7 @@ def test_the_arguments_come_through_as_data_not_as_a_sentence(tmp_path, use_work
     use_workbook(make_fixtures.clean_table(tmp_path))
     session = session_reading(
         [calling("inspect_sheet", "1", max_rows=3), AIMessage("read it")],
-        tools=TOOLS,
+        tools=LOCAL_TOOLS,
     )
 
     call = next(event for event in session.ask("read it") if isinstance(event, ToolCall))
@@ -75,7 +75,7 @@ def test_nothing_from_langchain_crosses_the_line(tmp_path, use_workbook):
     use_workbook(make_fixtures.clean_table(tmp_path))
     session = session_reading(
         [calling("inspect_sheet", "1"), AIMessage("read it")],
-        tools=TOOLS,
+        tools=LOCAL_TOOLS,
     )
 
     for event in session.ask("read the sheet"):
@@ -148,7 +148,7 @@ def test_a_turn_that_writes_still_writes(tmp_path, use_workbook):
             calling("modify_sheet", "1", action="edit", row=2, values={"Units": 99}),
             AIMessage("done"),
         ],
-        tools=TOOLS,
+        tools=LOCAL_TOOLS,
     )
 
     list(session.ask("set row 2 units to 99"))

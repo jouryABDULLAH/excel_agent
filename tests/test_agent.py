@@ -12,7 +12,7 @@ from openpyxl import load_workbook
 from scripted import ScriptedModel
 
 from excel_agent.agent import answer_of, ask, new_thread, tool_calls_in
-from excel_agent.tools import TOOLS
+from excel_agent.tools import LOCAL_TOOLS
 
 
 def agent_reading(script, tools=()):
@@ -84,7 +84,7 @@ def test_a_tool_call_and_its_answer_both_come_back(tmp_path, use_workbook):
             calling_modify("1", action="edit", row=2, values={"Units": 99}),
             AIMessage("Set the units on row 2 to 99."),
         ],
-        tools=TOOLS,
+        tools=LOCAL_TOOLS,
     )
 
     produced = ask(agent, "set row 2 units to 99", new_thread())
@@ -109,7 +109,7 @@ def test_a_row_added_in_one_turn_can_be_removed_in_the_next(tmp_path, use_workbo
             calling_modify("2", action="remove", row=7),
             AIMessage("Removed row 7 again."),
         ],
-        tools=TOOLS,
+        tools=LOCAL_TOOLS,
     )
     thread = new_thread()
 
