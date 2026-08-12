@@ -81,6 +81,11 @@ GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
 MODEL = os.environ.get("EXCEL_AGENT_MODEL", "openai/gpt-oss-120b")
 
+# Which set of tools the agent is given: "local" for the workbooks in the data
+# folder, "sheets" for spreadsheets on Google Drive. The tools package reads
+# this and hands over one set or the other.
+BACKEND = os.environ.get("EXCEL_AGENT_BACKEND", "local")
+
 
 MAX_TURNS = 10
 
