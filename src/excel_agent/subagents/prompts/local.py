@@ -1,11 +1,17 @@
-"""What the orchestrator and each subagent are told.
+"""What the orchestrator and each subagent are told, working on local files.
 
-Every subagent gets the refusals from prompts.CANNOT_DO as well as its own
-rules, so one of them cannot end up claiming it can do something the others
-refuse. What is written here is only what belongs to that subagent alone.
+Every subagent gets the refusals from prompts.local.CANNOT_DO as well as its
+own rules, so one of them cannot end up claiming it can do something the
+others refuse. What is written here is only what belongs to that subagent
+alone.
+
+The descriptions are what the orchestrator reads when it decides where to send
+a piece of work, so they are the routing itself. They live here rather than in
+the registry because what a subagent can do depends on which tools it holds,
+and that is what changes between one backend and the next.
 """
 
-from excel_agent.prompts import CANNOT_DO
+from excel_agent.prompts.local import CANNOT_DO
 
 # Said to every subagent. A subagent is spoken to by the orchestrator rather
 # than by a person, so it needs telling what to do with work that is not its
@@ -31,6 +37,29 @@ time.
 - If you need something from the user before you can go on, begin your answer
   with QUESTION: and then the question. Do not act on a guess.
 """
+
+
+ANALYST_DESCRIPTION = (
+    "Reads the sheet and answers questions about it: what is in it, which "
+    "rows match, how many, how much, the largest and smallest. Changes "
+    "nothing. Send it anything that only needs looking."
+)
+
+ROW_EDITOR_DESCRIPTION = (
+    "Adds a row, changes the values in a row, or removes a row. Send it "
+    "one row's worth of work, and say which row by number or by what is "
+    "in it."
+)
+
+STRUCTURE_DESCRIPTION = (
+    "Adds, renames and deletes whole columns. It does not put values into "
+    "a column: a new column arrives empty, and filling it is row work."
+)
+
+CHART_DESCRIPTION = (
+    "Draws a bar, line or pie chart of one column, and takes charts off a "
+    "sheet again. Send it the column to plot and what to label it by."
+)
 
 
 ANALYST_PROMPT = f"""\
