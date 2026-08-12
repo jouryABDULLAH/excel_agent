@@ -19,6 +19,13 @@ ui = [
     "streamlit>=1.40",
 ]
 
+# pip install .[google]
+google = [
+    "google-api-python-client>=2.100",
+    "google-auth-httplib2>=0.2",
+    "google-auth-oauthlib>=1.2",
+]
+
 # pip install .[dev]
 dev = [
     "pytest>=8.0",
