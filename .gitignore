@@ -14,3 +14,4 @@ model-shortcomings.txt
 credentials.json
 token.json
 auth.py
+sheet_quickstart.py
