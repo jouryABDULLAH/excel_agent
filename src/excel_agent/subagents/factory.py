@@ -15,8 +15,18 @@ from excel_agent.agent import RECURSION_LIMIT, build_agent, build_model
 from excel_agent.subagents.prompts import ORCHESTRATOR_PROMPT
 from excel_agent.subagents.registry import SUBAGENTS, SubagentSpec
 from excel_agent.tools.workbooks import list_workbooks
+from excel_agent.tracing import caller, called_by, record
 
 VARIANTS = ("single", "multi")
+
+# What the agent at the top of each variant is called in a trace. Handed to a
+# Session, so a turn is recorded against the name of whoever answered it.
+ROOT_NAME = {"single": "agent", "multi": "orchestrator"}
+
+
+def agent_name(variant: str) -> str:
+    """What to call the agent at the top of one variant, for traces."""
+    return ROOT_NAME.get(variant, "agent")
 
 
 def as_tool(spec: SubagentSpec, model):
@@ -32,10 +42,22 @@ def as_tool(spec: SubagentSpec, model):
     @tool(spec.name, description=spec.description)
     def delegate(instruction: str) -> str:
         """Hand one piece of work to this subagent and return what it says."""
-        finished = agent.invoke(
-            {"messages": [{"role": "user", "content": instruction}]},
-            config={"recursion_limit": RECURSION_LIMIT},
+        record(
+            {
+                "event": "delegated",
+                "by": caller(),
+                "to": spec.name,
+                "instruction": instruction,
+            }
         )
+
+        # Everything the subagent's tools do is recorded against its name
+        # rather than the orchestrator's, so a trace says who did what.
+        with called_by(spec.name):
+            finished = agent.invoke(
+                {"messages": [{"role": "user", "content": instruction}]},
+                config={"recursion_limit": RECURSION_LIMIT},
+            )
         messages = finished["messages"]
         used = [
             call["name"]

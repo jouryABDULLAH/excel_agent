@@ -15,6 +15,7 @@ from langchain_core.tools import tool
 from openpyxl.utils import get_column_letter
 
 from excel_agent.config import resolve_workbook
+from excel_agent.tracing import traced
 from excel_agent.workbook import (
     WRITE_LOCK,
     columns_referenced,
@@ -39,6 +40,7 @@ def column_holding(cell, headers: dict[str, int]) -> str:
 
 
 @tool
+@traced
 def modify_column(
     action: Literal["add", "rename", "delete"],
     name: str | None = None,

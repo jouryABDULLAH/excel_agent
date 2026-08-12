@@ -6,8 +6,11 @@ formulas behind them, so a calculated cell is shown as its formula.
 
 from langchain_core.tools import tool
 
+from excel_agent.tracing import traced
+
 
 @tool
+@traced
 def inspect_sheet(
     start_row: int = 1,
     max_rows: int = 20,

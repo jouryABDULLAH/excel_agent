@@ -6,8 +6,11 @@ answer to a question inspect_sheet would need many calls to answer.
 
 from langchain_core.tools import tool
 
+from excel_agent.tracing import traced
+
 
 @tool
+@traced
 def sheet_stats(
     column: str,
     spreadsheet: str | None = None,
