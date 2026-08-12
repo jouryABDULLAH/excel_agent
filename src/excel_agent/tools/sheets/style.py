@@ -7,8 +7,11 @@ that openpyxl makes hard.
 
 from langchain_core.tools import tool
 
+from excel_agent.tracing import traced
+
 
 @tool
+@traced
 def modify_style(
     column: str | None = None,
     first_row: int | None = None,

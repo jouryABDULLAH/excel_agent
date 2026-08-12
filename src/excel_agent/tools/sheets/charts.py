@@ -4,8 +4,11 @@ from typing import Literal
 
 from langchain_core.tools import tool
 
+from excel_agent.tracing import traced
+
 
 @tool
+@traced
 def modify_chart(
     action: Literal["add", "remove", "retitle"],
     kind: Literal["column", "bar", "line", "pie", "scatter"] | None = None,

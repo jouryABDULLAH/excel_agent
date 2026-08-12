@@ -18,6 +18,7 @@ from openpyxl.chart import BarChart, LineChart, PieChart, Reference
 from openpyxl.utils import get_column_letter
 
 from excel_agent.config import resolve_workbook
+from excel_agent.tracing import traced
 from excel_agent.workbook import (
     WRITE_LOCK,
     find_header_row,
@@ -80,6 +81,7 @@ def can_be_plotted(values_sheet, formulas_sheet, column: int, rows) -> bool:
 
 
 @tool
+@traced
 def modify_chart(
     action: Literal["add", "remove"],
     values: str | None = None,

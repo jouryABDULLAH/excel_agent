@@ -7,6 +7,7 @@ else in the project.
 
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 
 # To read the key from a .env file instead of the shell, install the dev
@@ -85,6 +86,16 @@ MODEL = os.environ.get("EXCEL_AGENT_MODEL", "openai/gpt-oss-120b")
 # folder, "sheets" for spreadsheets on Google Drive. The tools package reads
 # this and hands over one set or the other.
 BACKEND = os.environ.get("EXCEL_AGENT_BACKEND", "local")
+
+# What the tools were asked for and what they returned, for debugging. Set
+# EXCEL_AGENT_TRACE=0 to turn it off.
+TRACE_DIR = PROJECT_ROOT / "traces"
+TRACING = os.environ.get("EXCEL_AGENT_TRACE", "1") != "0"
+
+# One file per run, named for when the run started. Two of them going at once,
+# a browser and a terminal say, would otherwise write into the same file and
+# leave calls from both interleaved with nothing to tell them apart.
+TRACE_FILE = TRACE_DIR / f"{datetime.now():%Y%m%d-%H%M%S}.jsonl"
 
 
 MAX_TURNS = 10

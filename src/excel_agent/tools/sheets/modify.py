@@ -9,8 +9,11 @@ from typing import Literal
 
 from langchain_core.tools import tool
 
+from excel_agent.tracing import traced
+
 
 @tool
+@traced
 def modify_sheet(
     action: Literal["add", "edit", "remove", "move"],
     row: int | None = None,

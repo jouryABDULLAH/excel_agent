@@ -13,6 +13,7 @@ from langchain_core.tools import tool
 
 from excel_agent.config import resolve_workbook
 from excel_agent.tools.inspect import as_text
+from excel_agent.tracing import traced
 from excel_agent.workbook import (
     find_header_row,
     header_map,
@@ -65,6 +66,7 @@ def summarise(values: list) -> str:
 
 
 @tool
+@traced
 def sheet_stats(
     columns: list[str] | None = None,
     workbook: str | None = None,

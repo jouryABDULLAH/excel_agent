@@ -6,8 +6,11 @@ the drive.readonly scope.
 
 from langchain_core.tools import tool
 
+from excel_agent.tracing import traced
+
 
 @tool
+@traced
 def list_workbooks(name: str | None = None) -> str:
     """List the Google spreadsheets that can be worked on.
 

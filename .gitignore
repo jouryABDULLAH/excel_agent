@@ -13,6 +13,7 @@ backups/
 model-shortcomings.txt
 credentials.json
 token.json
+traces/
 auth.py
 sheet_quickstart.py
 /data

@@ -17,7 +17,7 @@ import streamlit as st
 from excel_agent import config
 from excel_agent.config import MODEL, resolve_workbook, workbook_names
 from excel_agent.runner import Answer, Session, ToolCall, rendered
-from excel_agent.subagents.factory import VARIANTS, build
+from excel_agent.subagents.factory import VARIANTS, agent_name, build
 from excel_agent.workbook import (
     find_header_row,
     header_map,
@@ -118,7 +118,7 @@ def suggestions(path: Path) -> list[str]:
 def start(variant: str) -> None:
     """Build the agent and forget whatever was said to the last one."""
     st.session_state.variant = variant
-    st.session_state.session = Session(build(variant))
+    st.session_state.session = Session(build(variant), name=agent_name(variant))
     st.session_state.transcript = []
 
 
