@@ -87,6 +87,11 @@ MODEL = os.environ.get("EXCEL_AGENT_MODEL", "openai/gpt-oss-120b")
 # this and hands over one set or the other.
 BACKEND = os.environ.get("EXCEL_AGENT_BACKEND", "local")
 
+# The spreadsheet being worked on, by name, when the backend is "sheets".
+# Read at the moment a tool asks for it rather than at import, so a
+# spreadsheet chosen part way through a conversation is the one that answers.
+SPREADSHEET = os.environ.get("EXCEL_AGENT_SPREADSHEET")
+
 # What the tools were asked for and what they returned, for debugging. Set
 # EXCEL_AGENT_TRACE=0 to turn it off.
 TRACE_DIR = PROJECT_ROOT / "traces"

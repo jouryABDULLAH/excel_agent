@@ -46,7 +46,7 @@ def test_no_subagent_holds_a_tool_that_is_not_offered():
 def test_reading_comes_with_every_subagent_that_writes():
     for spec in SUBAGENTS:
         names = {tool.name for tool in spec.tools}
-        if names & {"modify_sheet", "modify_column", "modify_chart"}:
+        if names & {"modify_row", "modify_column", "modify_chart"}:
             # A row number handed from one agent to another is stale before it
             # arrives, so whoever writes has to be able to look first.
             assert "inspect_sheet" in names, spec.name
@@ -93,7 +93,7 @@ def test_a_subagent_does_the_work_and_says_which_tools_it_used(tmp_path, use_wor
         row_editor,
         ScriptedModel(
             script=[
-                calling("modify_sheet", "1", action="edit", row=2, values={"Units": 99}),
+                calling("modify_row", "1", action="edit", row=2, values={"Units": 99}),
                 AIMessage("Set row 2 to 99."),
             ]
         ),
@@ -150,3 +150,16 @@ def test_the_orchestrator_answers_through_the_same_events(tmp_path, use_workbook
     # tool call names a subagent rather than a spreadsheet tool.
     assert events[0] == ToolCall("analyst", {"instruction": "how many rows?"})
     assert events[-1] == Answer("There are five rows.")
+
+
+def test_the_orchestrator_gets_the_file_tool_of_the_backend_in_use():
+    from excel_agent.config import BACKEND
+    from excel_agent.tools import select_tools
+
+    offered = {tool.name: tool for tool in select_tools(BACKEND)}
+
+    # Both backends have a tool called list_workbooks. Importing one of them
+    # by name gave the orchestrator the local one while every subagent under
+    # it talked to Drive, so it has to be picked out of the set in use.
+    assert "list_workbooks" in offered
+    assert offered["list_workbooks"] in select_tools(BACKEND)

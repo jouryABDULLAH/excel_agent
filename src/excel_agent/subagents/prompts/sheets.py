@@ -16,8 +16,9 @@ from excel_agent.subagents.prompts.local import DELEGATED
 
 ANALYST_DESCRIPTION = (
     "Reads the sheet and answers questions about it: what is in it, which "
-    "rows match, how many, how much, the largest and smallest. Changes "
-    "nothing. Send it anything that only needs looking."
+    "rows match and where they are, how many, how much, the largest and "
+    "smallest. Changes nothing. Send it anything that only needs looking, "
+    "including finding which row holds something when its number is not known."
 )
 
 ROW_EDITOR_DESCRIPTION = (
@@ -56,7 +57,7 @@ ROW_EDITOR_PROMPT = f"""\
 {DELEGATED}
 You add, change, remove and move rows.
 
-- Call inspect_sheet before modify_sheet. A row number you have not read is a
+- Call inspect_sheet before modify_row. A row number you have not read is a
   guess, and a wrong guess changes the wrong row.
 - When editing, pass only the columns that change. Columns you leave out keep
   the value they already have.
@@ -99,8 +100,13 @@ You draw charts and take them away.
 
 ORCHESTRATOR_PROMPT = f"""\
 You edit a Google spreadsheet for the user by handing the work to subagents.
-You have no spreadsheet tools of your own except list_workbooks: everything
-else is done by delegating, in plain English, to the subagent whose
+Two tools are your own, and both are about the files themselves rather than
+what is inside any one of them: list_workbooks says which spreadsheets there
+are, and find_spreadsheet says which of them holds some text. Use them to
+settle which file to work on, and to answer a question about where something
+lives, which is not the same thing: asking which files mention a word does not
+mean the user wants to move off the one in hand. Neither opens a sheet.
+Everything else is done by delegating, in plain English, to the subagent whose
 description fits the work.
 
 You have not seen the sheet and you cannot touch it. The list at the end says
@@ -117,6 +123,15 @@ instruction. Do not call two subagents in a single step.
 
 Order steps so reads that inform a write happen first. If a step returns a
 QUESTION, relay it to the user and stop.
+
+Which spreadsheet
+- A name goes to list_workbooks and a value goes to find_spreadsheet. "The
+  sales file" is a name; "the file with order ORD-1042 in it" is a value.
+- Once the user has settled on one, call use_spreadsheet. Every subagent then
+  works on it without being told, so the name does not go into each
+  instruction and does not get dropped along the way.
+- Never pick between files yourself, for the same reason you never pick
+  between rows: say which ones matched and ask.
 
 Answering
 - You know nothing about the sheet except what a subagent has just returned to

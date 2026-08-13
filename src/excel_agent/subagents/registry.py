@@ -43,6 +43,13 @@ def subagents_for(backend: str) -> tuple[SubagentSpec, ...]:
     # reason for being.
     reading = tools["inspect_sheet"]
 
+    # Finding a row by what is in it is reading, and it gives back a row
+    # number: whoever will act on that number should be the one who asked for
+    # it, which is why this is not the orchestrator's.
+    reading_tools = [reading, tools["sheet_stats"]]
+    if "find_data" in tools:
+        reading_tools.append(tools["find_data"])
+
     # Styling is structural work, so it goes to the subagent that already
     # changes the shape of the sheet rather than to a fifth one.
     structural = [tools["modify_column"]]
@@ -54,13 +61,13 @@ def subagents_for(backend: str) -> tuple[SubagentSpec, ...]:
             "analyst",
             prompts.ANALYST_DESCRIPTION,
             prompts.ANALYST_PROMPT,
-            (reading, tools["sheet_stats"]),
+            tuple(reading_tools),
         ),
         SubagentSpec(
             "row_editor",
             prompts.ROW_EDITOR_DESCRIPTION,
             prompts.ROW_EDITOR_PROMPT,
-            (reading, tools["modify_sheet"]),
+            (reading, tools["modify_row"]),
         ),
         SubagentSpec(
             "structure_editor",
