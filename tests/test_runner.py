@@ -40,6 +40,24 @@ def test_a_plain_turn_gives_back_one_answer():
     assert events == [Answer("all done")]
 
 
+def test_a_tools_output_is_never_mistaken_for_the_answer(tmp_path, use_workbook):
+    use_workbook(make_fixtures.clean_table(tmp_path))
+    session = session_reading(
+        [
+            calling("modify_row", "1", action="edit", row=2, values={"Units": 99}),
+            AIMessage(""),
+        ],
+        tools=LOCAL_TOOLS,
+    )
+
+    answer = [one for one in session.ask("set row 2 units to 99") if isinstance(one, Answer)]
+
+    # A tool's result is a message carrying content, so taking the last of
+    # those handed back "Updated row 2: Units = 99." as though the model had
+    # said it. Silence is silence, and whoever draws it decides what to show.
+    assert answer == [Answer("")]
+
+
 def test_a_tool_call_arrives_before_the_answer(tmp_path, use_workbook):
     use_workbook(make_fixtures.clean_table(tmp_path))
     session = session_reading(

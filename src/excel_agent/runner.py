@@ -12,6 +12,7 @@ of a thread, and the agent keeps everything said under it.
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 
+from langchain_core.messages import AIMessage
 from langgraph.errors import GraphRecursionError
 
 from excel_agent.agent import GAVE_UP, RECURSION_LIMIT, new_thread
@@ -101,7 +102,12 @@ class Session:
                         for message in update.get("messages") or []:
                             for call in getattr(message, "tool_calls", None) or []:
                                 yield ToolCall(call["name"], dict(call["args"]))
-                            if message.content:
+                            # Only what the model said. A tool's result is a
+                            # message with content too, so taking any of them
+                            # meant that a turn the model ended in silence came
+                            # back carrying the last tool's output as though it
+                            # were the answer.
+                            if isinstance(message, AIMessage) and message.content:
                                 spoken = str(message.content)
             except GraphRecursionError:
                 record({"event": "gave_up", "text": GAVE_UP})

@@ -110,6 +110,17 @@ def start(variant: str) -> None:
     st.session_state.transcript = []
 
 
+# A turn can end with nothing said: the answer is built from whatever message
+# carried content, and there is no rule that one did. Drawn as an empty bubble
+# it reads as the page having lost the answer, which is the one thing it must
+# not be mistaken for. It does not say nothing happened, because the calls
+# above it may well have changed the sheet.
+NO_ANSWER = (
+    "_This turn ended without anything being said. Any tool calls listed "
+    "above did run, so look at the sheet before asking again._"
+)
+
+
 def draw_turn(events, box) -> dict:
     """Draw one turn as it happens, and return it for the transcript.
 
@@ -128,8 +139,9 @@ def draw_turn(events, box) -> dict:
                 answer = event.text
         status.update(label=f"{len(calls)} tool call(s)", state="complete", expanded=False)
 
-    box.markdown(answer)
-    return {"role": "assistant", "text": answer, "calls": calls}
+    said = answer.strip() or NO_ANSWER
+    box.markdown(said)
+    return {"role": "assistant", "text": said, "calls": calls}
 
 
 def draw_transcript() -> None:
@@ -268,7 +280,14 @@ def main() -> None:
             said = draw_turn(st.session_state.session.ask(question), box)
         except Exception as error:  # noqa: BLE001 - one bad turn must not end the session
             box.error(f"That went wrong: {error}")
-            return
+            # Kept, rather than returned on. Dropping it leaves the question on
+            # the page with nothing under it once anything redraws, which reads
+            # as the answer having gone missing rather than as a turn failing.
+            said = {
+                "role": "assistant",
+                "text": f"That went wrong: {error}",
+                "calls": [],
+            }
 
     st.session_state.transcript.append(said)
 
