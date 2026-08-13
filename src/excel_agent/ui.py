@@ -15,18 +15,18 @@ from pathlib import Path
 import streamlit as st
 
 from excel_agent import config
-from excel_agent.config import MODEL, resolve_workbook, workbook_names
+from excel_agent.browsing import IN_USE
+from excel_agent.config import MODEL
 from excel_agent.runner import Answer, Session, ToolCall, rendered
 from excel_agent.subagents.factory import VARIANTS, agent_name, build
-from excel_agent.workbook import (
-    find_header_row,
-    header_map,
-    is_blank,
-    last_data_row,
-    load_values,
-)
 
 UPLOAD_SUFFIX = ".xlsx"
+
+# Reading Drive costs a call over the network, and Streamlit runs this file
+# again on every click. Held for a minute, so clicking about the page does not
+# ask Google the same question a dozen times over. Cleared whenever the file
+# being worked on changes, since both answers are about that file.
+CACHE_SECONDS = 60
 
 # Long enough to be seen, short enough that nobody waits for it. The class
 # comes from the key on the container the suggestions are drawn in.
@@ -65,54 +65,42 @@ def save_upload(upload, folder: Path) -> str:
     return f"Saved {name}."
 
 
-def suggestions(path: Path) -> list[str]:
-    """A few things worth asking about this particular workbook.
+@st.cache_data(ttl=CACHE_SECONDS, show_spinner=False)
+def workbooks(backend: str) -> list[str]:
+    """What can be worked on. Nothing here asks the model."""
+    return IN_USE["workbooks"]()
 
-    Built from the column names rather than written down in advance, so what
+
+@st.cache_data(ttl=CACHE_SECONDS, show_spinner=False)
+def suggestions(reading: str | None) -> list[str]:
+    """A few things worth asking about the file in hand.
+
+    Built from its column names rather than written down in advance, so what
     is offered fits the file that is open. Nothing here asks the model: it
     reads the header the same way the tools do.
+
+    The argument is the file being worked on. Nothing uses it: it is there to
+    be part of what the cache is keyed on, so that switching files asks about
+    the new one rather than answering about the last. A name starting with an
+    underscore would be left out of that key, which is the opposite.
     """
-    generic = ["Show me the first few rows", "Summarise every column"]
+    return IN_USE["suggestions"]()
 
-    try:
-        sheet = load_values(path).active
-        header_row = find_header_row(sheet)
-        headers = header_map(sheet, header_row)
-        last_row = last_data_row(sheet, header_row)
-    except Exception:  # noqa: BLE001 - a workbook that will not open offers nothing
-        return generic
 
-    if not headers or last_row <= header_row:
-        return generic
+def heading() -> str:
+    """The one line saying where a change would land, and how to go and see it.
 
-    rows = range(header_row + 1, min(header_row + 6, last_row) + 1)
-    numbers, labels = [], []
-    for name, column in headers.items():
-        filled = [
-            sheet.cell(row=row, column=column).value
-            for row in rows
-            if not is_blank(sheet.cell(row=row, column=column).value)
-        ]
-        if not filled:
-            continue
-        if all(isinstance(value, (int, float)) and not isinstance(value, bool) for value in filled):
-            numbers.append(name)
-        elif all(isinstance(value, str) for value in filled):
-            labels.append(name)
+    The sheet itself is the only view of the sheet worth having, so the page
+    does not draw one: it points at the real thing instead, which is always
+    right and shows a change landing as it lands.
+    """
+    said = f"Working on **{IN_USE['where']()}**"
 
-    # An ID is a number, but adding identifiers up means nothing. A sheet whose
-    # only numbers are identifiers is offered the plain two rather than a
-    # suggestion worth nobody's click.
-    worth_adding = [name for name in numbers if not name.strip().lower().endswith("id")]
-    chosen = worth_adding[-1] if worth_adding else None
+    link = IN_USE["link"]()
+    if link:
+        said += f" · [open it]({link})"
 
-    asks = list(generic)
-    if chosen:
-        asks.append(f"What is the total {chosen}?")
-    if chosen and labels:
-        asks.append(f"Draw a bar chart of {chosen} by {labels[0]}")
-
-    return asks
+    return said
 
 
 def start(variant: str) -> None:
@@ -156,29 +144,46 @@ def draw_transcript() -> None:
 
 
 def sidebar() -> None:
-    """The workbooks there are, which one is in use, and how to add another."""
+    """The files there are, which one is in use, and how to add another."""
     with st.sidebar:
-        st.subheader("Workbooks")
+        st.subheader(IN_USE["noun"])
 
-        names = workbook_names()
+        names = workbooks(config.BACKEND)
+        in_use = IN_USE["in_use"]()
+
         if not names:
-            st.info(f"No workbooks in {config.DATA_DIR.name} yet. Upload one below.")
+            st.info(IN_USE["empty"])
         else:
-            in_use = config.WORKBOOK_PATH.name
-            chosen = st.radio(
+            # A list, not a row of buttons: eleven spreadsheets as a radio is a
+            # wall of text. Nothing is chosen when the agent starts against
+            # Drive without EXCEL_AGENT_SPREADSHEET set, so it starts empty and
+            # the line under the title says as much.
+            chosen = st.selectbox(
                 "Working on",
                 names,
-                index=names.index(in_use) if in_use in names else 0,
+                index=names.index(in_use) if in_use in names else None,
+                placeholder="Choose one, or ask",
                 label_visibility="collapsed",
             )
-            if chosen != in_use:
+            if chosen and chosen != in_use:
                 # The same switch /use makes at the command line.
-                config.WORKBOOK_PATH = resolve_workbook(chosen)
-                st.rerun()
+                try:
+                    IN_USE["choose"](chosen)
+                except ValueError as explanation:
+                    st.error(str(explanation))
+                else:
+                    # What was read about the last file says nothing about
+                    # this one, and both are keyed on a name that has changed.
+                    suggestions.clear()
+                    st.rerun()
 
-        upload = st.file_uploader("Add a workbook", type=["xlsx"])
-        if upload is not None:
-            st.write(save_upload(upload, config.DATA_DIR))
+        if IN_USE["uploads"]:
+            upload = st.file_uploader("Add a workbook", type=["xlsx"])
+            if upload is not None:
+                st.write(save_upload(upload, config.DATA_DIR))
+                workbooks.clear()
+        else:
+            st.caption("Spreadsheets come from your Drive. Add one there.")
 
         st.divider()
         st.subheader("Agent")
@@ -203,8 +208,15 @@ def sidebar() -> None:
 
 def main() -> None:
     """Draw the page and answer whatever is typed into it."""
-    st.set_page_config(page_title="Excel agent", page_icon=":bar_chart:")
-    st.title("Excel agent")
+    # Opens as a chat and nothing else. Everything in the sidebar is either a
+    # setting or a way out of a corner, and none of it is worth the width on
+    # the way in: the first thing anyone should see is somewhere to type.
+    st.set_page_config(
+        page_title=IN_USE["title"],
+        page_icon=":bar_chart:",
+        initial_sidebar_state="collapsed",
+    )
+    st.title(IN_USE["title"])
 
     if "session" not in st.session_state:
         try:
@@ -216,7 +228,7 @@ def main() -> None:
             st.stop()
 
     sidebar()
-    st.caption(f"Working on **{config.WORKBOOK_PATH.name}**")
+    st.caption(heading())
     draw_transcript()
 
     picked = None
@@ -224,7 +236,7 @@ def main() -> None:
     if not st.session_state.transcript:
         with holder.container(key="suggestions"):
             st.caption("Try one of these")
-            asks = suggestions(config.WORKBOOK_PATH)
+            asks = suggestions(IN_USE["in_use"]())
             # Two to a row, filled across before down, so they read in the
             # order they are written.
             for first in range(0, len(asks), 2):
@@ -248,6 +260,8 @@ def main() -> None:
     with st.chat_message("user"):
         st.markdown(question)
 
+    was = IN_USE["in_use"]()
+
     with st.chat_message("assistant"):
         box = st.container()
         try:
@@ -257,6 +271,12 @@ def main() -> None:
             return
 
     st.session_state.transcript.append(said)
+
+    # The agent can move to another file part way through a turn, and the line
+    # saying where the work is going was drawn before it did. Left alone, the
+    # page would name the old file until something else was clicked.
+    if IN_USE["in_use"]() != was:
+        st.rerun()
 
 
 # Streamlit runs this file as the main script, so this is where the page is

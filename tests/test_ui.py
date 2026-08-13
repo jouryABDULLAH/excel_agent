@@ -17,7 +17,7 @@ from streamlit.testing.v1 import AppTest
 from excel_agent.runner import Session
 
 import excel_agent.ui
-from excel_agent.ui import save_upload, suggestions
+from excel_agent.ui import save_upload
 
 # AppTest resolves a relative path against this file, so the page is found
 # through the module rather than by guessing at the layout of the repo.
@@ -103,37 +103,14 @@ def test_the_sidebar_offers_the_workbooks_and_the_two_variants(tmp_path, use_wor
 
     page = AppTest.from_file(PAGE, default_timeout=60).run()
 
+    files = {one.label: list(one.options) for one in page.sidebar.selectbox}
+    assert files["Working on"] == ["clean_table.xlsx", "multi_sheet.xlsx"]
+
     offered = {radio.label: list(radio.options) for radio in page.sidebar.radio}
-    assert offered["Working on"] == ["clean_table.xlsx", "multi_sheet.xlsx"]
     assert offered["Agents"] == ["single", "multi"]
     # The workbook in use is named on the page, so it is never a guess which
     # file a change would land in.
     assert any("clean_table.xlsx" in caption.value for caption in page.caption)
-
-
-# What to offer someone who has not typed anything yet
-
-
-def test_the_suggestions_are_built_from_the_columns_that_are_there(tmp_path):
-    asks = suggestions(make_fixtures.clean_table(tmp_path))
-
-    assert asks[:2] == ["Show me the first few rows", "Summarise every column"]
-    assert "What is the total Unit Price?" in asks
-    assert "Draw a bar chart of Unit Price by Product" in asks
-
-
-def test_a_sheet_whose_only_numbers_are_identifiers_is_offered_neither(tmp_path):
-    asks = suggestions(make_fixtures.multi_sheet(tmp_path))
-
-    # ID is a number, and a total of it would mean nothing.
-    assert asks == ["Show me the first few rows", "Summarise every column"]
-
-
-def test_a_workbook_that_will_not_open_still_offers_something(tmp_path):
-    broken = tmp_path / "broken.xlsx"
-    broken.write_bytes(b"not a workbook at all")
-
-    assert suggestions(broken) == ["Show me the first few rows", "Summarise every column"]
 
 
 def page_with_a_scripted_agent(says: str) -> AppTest:
