@@ -11,6 +11,9 @@ from langchain_core.tools import tool
 from excel_agent.sheets import (
     Cell,
     cell,
+    chart_kind,
+    chart_title,
+    charts_in,
     find_header_row,
     grid,
     header_map,
@@ -149,6 +152,17 @@ def inspect_sheet(
             f"Rows {last + 1} to {last_row} were not shown. "
             f"Call again with start_row={last + 1} to see them."
         )
+
+    # A chart has an id but no name, so the number here is how modify_chart is
+    # pointed at one. Listed last, because it is about the sheet rather than
+    # about the rows just read.
+    drawn = charts_in(spreadsheet_id, properties["title"])
+    if drawn:
+        lines.append("")
+        lines.append(f"{len(drawn)} chart(s) on this sheet:")
+        for number, chart in enumerate(drawn, start=1):
+            spec = chart.get("spec", {})
+            lines.append(f"  {number}. {chart_title(spec)} ({chart_kind(spec)})")
 
     return "\n".join(lines)
 

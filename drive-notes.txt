@@ -92,3 +92,76 @@ clear:
     a value, an id, a column name  find_spreadsheet
     which row holds it             find_data, and only once a file is settled
 
+
+2026-08-13  A format can be set but not taken away
+------------------------------------------------------------------------
+modify_style always sends a type and a pattern, so it can make a column read
+as #,##0.00 but has no way of saying "however the sheet would show it", which
+is what a column with no format set is doing. Google clears one by sending an
+empty format with the number format in the field mask; no tool does that.
+
+So a format the agent sets, the agent cannot undo. Putting the scratch file
+back after testing took a batchUpdate written by hand. Worth a "plain" or
+"automatic" value on number_format if this ever bites.
+
+
+2026-08-13  Styling every column fills in cells that had none
+------------------------------------------------------------------------
+Styling a run of rows with no column named covers the whole width of the
+sheet, and Google then keeps a format record for cells that had none before.
+Nothing looks different: the record holds the defaults. But a cell that was
+absent from rowData is afterwards present in it, so a before-and-after
+comparison of a sheet's formats will show a row grown by a cell. Seen on row 2
+of the scratch file, which went from 12 cells to 13.
+
+
+2026-08-13  Formatting can be written but not read, and that caused a lie
+------------------------------------------------------------------------
+GRID_FIELDS asks for formattedValue, the formula, effectiveValue and the type
+of the number format. Not bold, not background. So modify_style can set how a
+cell looks while nothing in the project can see how any cell already looks.
+
+Asked to "make the Notes header match the other headers", the run went:
+structure_editor read the sheet twice and could not find out what to match;
+the orchestrator asked the analyst what colour and weight the header row was;
+the analyst holds the same blind tools and invented "the default light-grey
+header shade"; the orchestrator reported the change as done. modify_style was
+never called and nothing was written.
+
+The rule against claiming an unconfirmed change was already in the prompt. It
+did not help, because a confident subagent report reads exactly like a
+subagent confirming something. A gap in what can be known gets filled in
+rather than reported, so the gap has to be named where the agent will see it:
+CANNOT_DO now says formatting cannot be read.
+
+The way out is not a reader. copyPaste with pasteType PASTE_FORMAT copies one
+cell's look onto another without anyone having to see it, which answers "match
+the other headers" without answering "what colour is it".
+
+
+2026-08-13  A grouped chart needs a table nothing here can build
+------------------------------------------------------------------------
+"A chart of revenue by region, with each region appearing once" cannot be done
+with these tools, and the near miss is worth writing down because it looked
+like a success.
+
+Told that a totals column was the answer, the agent added one: a SUMIF worked
+out for every row. The formula was right and the references shifted correctly.
+But a per-row total is still one value per row, so the chart drew fifty points
+with each region ten times over, flat. It then reported the chart as made,
+truthfully, having not done what was asked.
+
+A grouped chart wants a block of its own: one row per region, its total beside
+it. Nothing writes an arbitrary cell at an arbitrary place, so nothing can
+build one. The chart prompt now says so instead of sending it down the column
+route.
+
+
+2026-08-13  What the field mask is worth, measured
+------------------------------------------------------------------------
+The Profit column on the scratch file has a green fill. Making row 2 bold and
+then not bold again left that green exactly as it was, on the live API and not
+only in a test. That is the fields mask doing its job: without it, setting one
+part of a format clears every other part, and a single bold would have wiped
+the colouring off the sheet.
+

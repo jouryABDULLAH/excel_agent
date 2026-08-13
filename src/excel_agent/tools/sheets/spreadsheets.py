@@ -13,7 +13,14 @@ from googleapiclient.errors import HttpError
 from langchain_core.tools import tool
 
 from excel_agent import config
-from excel_agent.sheets import containing, number_forms, readable, resolve_spreadsheet, search
+from excel_agent.sheets import (
+    containing,
+    number_forms,
+    readable,
+    resolve_spreadsheet,
+    search,
+    sheets_in,
+)
 from excel_agent.tracing import traced
 
 
@@ -83,17 +90,22 @@ def list_workbooks(name: str | None = None) -> str:
 def use_spreadsheet(name: str) -> str:
     """Work on this spreadsheet from now on.
 
-    Call this once the user has said which spreadsheet they mean. Every tool
-    called afterwards without a spreadsheet argument works on this one, so the
-    name does not have to be repeated on every call.
+    Call this when the user wants to move to a different spreadsheet and stay
+    there. Every tool called afterwards without a spreadsheet argument works on
+    this one, so the name does not have to be repeated on every call.
+
+    Do not call this to read something out of another file. Every tool takes a
+    spreadsheet argument of its own for that. Calling this instead would leave
+    the file being worked on changed, and every later edit would land in the
+    file that was only meant to be read.
 
     Args:
         name: The spreadsheet to work on, by name, as list_workbooks or
             find_spreadsheet gives it.
 
     Returns:
-        A sentence saying which spreadsheet is now being worked on, or an
-        explanation of why the name reached none.
+        A sentence saying which spreadsheet is now being worked on and naming
+        the sheets inside it, or an explanation of why the name reached none.
 
     Examples:
         use_spreadsheet(name="TEST - Sales Orders")
@@ -104,17 +116,30 @@ def use_spreadsheet(name: str) -> str:
     try:
         # Resolved before it is settled on, so a name that reaches nothing, or
         # two files at once, is refused here rather than by every later call.
-        _, title = resolve_spreadsheet(name)
+        spreadsheet_id, title = resolve_spreadsheet(name)
+        inside = list(sheets_in(spreadsheet_id))
     except ValueError as explanation:
         return str(explanation)
     except HttpError as failure:
         return readable(failure)
 
     config.SPREADSHEET = title
-    return (
+
+    answer = (
         f'Now working on "{title}". Tools called without a spreadsheet '
         "argument will use it."
     )
+
+    # The sheets are named here because nothing else says what they are, and
+    # the name of a file is not the name of a sheet inside it. Told only the
+    # file name, an agent will invent a sheet called after it.
+    if inside:
+        answer += (
+            f" It holds {len(inside)} sheet(s): {', '.join(inside)}. "
+            f"Calls that name no sheet work on {inside[0]}."
+        )
+
+    return answer
 
 
 

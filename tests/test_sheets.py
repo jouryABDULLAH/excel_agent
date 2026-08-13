@@ -9,6 +9,7 @@ decides which row gets deleted should not need a spreadsheet to check.
 import fake_sheets
 import pytest
 
+from excel_agent import sheets as sheets_module
 from excel_agent.sheets import (
     Cell,
     as_cell,
@@ -19,10 +20,91 @@ from excel_agent.sheets import (
     is_blank,
     last_data_row,
     quoted,
+    resolve_spreadsheet,
     to_dimension_range,
     to_grid_range,
     a1,
 )
+
+
+# Turning a name into the file it means
+
+
+@pytest.fixture
+def a_drive(monkeypatch):
+    """Stand in for what Drive returns, without asking Drive.
+
+    Drive matches a name by what contains it, so what search gives back here
+    is every file whose name holds the one asked for, the way Drive would.
+    """
+
+    def use(*titles: str):
+        monkeypatch.setattr(sheets_module, "_spreadsheet_ids", {})
+
+        def search(name=None):
+            return [
+                (f"id-{title}", title)
+                for title in titles
+                if not name or name.lower() in title.lower()
+            ]
+
+        monkeypatch.setattr(sheets_module, "search", search)
+
+    return use
+
+
+def test_a_name_that_matches_one_file_reaches_it(a_drive):
+    a_drive("TEST - Sales Orders", "TEST - Raw Contacts")
+
+    assert resolve_spreadsheet("TEST - Sales Orders") == (
+        "id-TEST - Sales Orders",
+        "TEST - Sales Orders",
+    )
+
+
+def test_a_name_another_file_begins_with_still_reaches_its_own(a_drive):
+    a_drive("TEST - Sales Orders", "TEST - Sales Orders - scratch")
+
+    # Drive returns both, because one name contains the other. Only one is
+    # called this, and that is the answer: otherwise a file could be made
+    # unreachable by creating another beside it with a longer name.
+    assert resolve_spreadsheet("TEST - Sales Orders")[1] == "TEST - Sales Orders"
+    assert (
+        resolve_spreadsheet("TEST - Sales Orders - scratch")[1]
+        == "TEST - Sales Orders - scratch"
+    )
+
+
+def test_part_of_a_name_reaches_the_only_file_holding_it(a_drive):
+    a_drive("TEST - Sales Orders", "TEST - Raw Contacts")
+
+    assert resolve_spreadsheet("raw")[1] == "TEST - Raw Contacts"
+
+
+def test_part_of_a_name_that_several_hold_is_refused_by_full_name(a_drive):
+    a_drive("TEST - Sales Orders", "TEST - Sales Orders - scratch")
+
+    with pytest.raises(ValueError) as refused:
+        resolve_spreadsheet("Sales")
+
+    # Asking for a full name is something the tools can act on, which asking
+    # for an id is not: no tool takes one.
+    assert 'No spreadsheet is called exactly "Sales"' in str(refused.value)
+    assert "by its full name" in str(refused.value)
+
+
+def test_two_files_really_sharing_a_name_are_refused(a_drive):
+    a_drive("TEST - Simple Budget", "TEST - Simple Budget")
+
+    with pytest.raises(ValueError, match="More than one spreadsheet is called"):
+        resolve_spreadsheet("TEST - Simple Budget")
+
+
+def test_a_name_reaching_nothing_says_so(a_drive):
+    a_drive("TEST - Sales Orders")
+
+    with pytest.raises(ValueError, match="There is no spreadsheet called"):
+        resolve_spreadsheet("Nonsense")
 
 
 # Reading Google's answer

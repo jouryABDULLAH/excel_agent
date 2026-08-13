@@ -289,8 +289,15 @@ def resolve_spreadsheet(name: str | None = None) -> tuple[str, str]:
     matched against what Drive actually holds rather than trusted: the id that
     comes back has been seen to exist.
 
+    Drive matches a name by what contains it, so asking for one file can bring
+    back several. A title that matches exactly is the answer rather than one
+    candidate among many: without that, a file whose name begins another's
+    could never be reached, and "Sales Orders" would be ambiguous for as long
+    as "Sales Orders - scratch" existed beside it.
+
     Raises ValueError, with a message worth showing the model, when the name
-    reaches nothing.
+    reaches nothing, or when it reaches more than one file and none of them is
+    called exactly that.
     """
     wanted = (name or "").strip()
 
@@ -317,14 +324,28 @@ def resolve_spreadsheet(name: str | None = None) -> tuple[str, str]:
             "to see the ones there are."
         )
 
-    if len(found) > 1:
-        names = ", ".join(title for _, title in found)
+    exact = [pair for pair in found if pair[1].strip().lower() == wanted.lower()]
+
+    # Two files really do share a name. Nothing here can tell them apart, and
+    # picking one would be picking for the user.
+    if len(exact) > 1:
+        names = ", ".join(title for _, title in exact)
         raise ValueError(
             f'More than one spreadsheet is called "{wanted}": {names}. Say '
             "which one, by its id."
         )
 
-    spreadsheet_id, title = found[0]
+    # Nothing is called this, but several files have it in their name. Asking
+    # for the full name of one of them is something the tools can act on,
+    # which asking for an id is not.
+    if not exact and len(found) > 1:
+        names = ", ".join(title for _, title in found)
+        raise ValueError(
+            f'No spreadsheet is called exactly "{wanted}". These have it in '
+            f"their name: {names}. Say which one, by its full name."
+        )
+
+    spreadsheet_id, title = (exact or found)[0]
     _spreadsheet_ids[wanted] = spreadsheet_id
     return spreadsheet_id, title
 
@@ -377,6 +398,46 @@ def resolve_sheet(spreadsheet_id: str, name: str | None = None) -> dict:
         f'There is no sheet called "{name}". The spreadsheet has: '
         f"{', '.join(found)}."
     )
+
+
+def charts_in(spreadsheet_id: str, title: str) -> list[dict]:
+    """Every chart on one sheet, in the order Google gives them.
+
+    A chart has an id but no name, so the only way to point at one is by
+    where it comes in this list. That is the same bargain as a row number:
+    good until something is added or removed, which is why a caller reads
+    before it acts.
+
+    The whole spec comes back, because changing a chart means sending its
+    spec again with one thing altered.
+    """
+    answer = with_retries(
+        sheets().spreadsheets().get(
+            spreadsheetId=spreadsheet_id,
+            fields="sheets(properties(title),charts(chartId,spec))",
+        )
+    )
+
+    for sheet in answer.get("sheets", []):
+        if sheet.get("properties", {}).get("title") == title:
+            return sheet.get("charts", [])
+
+    return []
+
+
+def chart_kind(spec: dict) -> str:
+    """What sort of chart a spec describes, in the words the tool uses."""
+    if "pieChart" in spec:
+        return "pie"
+    if "basicChart" in spec:
+        return str(spec["basicChart"].get("chartType", "")).lower() or "chart"
+
+    return "chart"
+
+
+def chart_title(spec: dict) -> str:
+    """What a chart is called, or a note that it is called nothing."""
+    return spec.get("title") or "(untitled)"
 
 
 def grid(spreadsheet_id: str, title: str) -> list[list[Cell]]:

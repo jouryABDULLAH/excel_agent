@@ -29,6 +29,10 @@ def a_sheet(monkeypatch):
             module, "resolve_sheet", lambda id, name=None: {"title": title, "sheetId": 0}
         )
         monkeypatch.setattr(module, "grid", lambda id, title: rows)
+        # A sheet with no charts on it. Without this, reading one would go out
+        # to Google to ask, which is the one thing these tests must not do.
+        if hasattr(module, "charts_in"):
+            monkeypatch.setattr(module, "charts_in", lambda id, title: [])
         return rows
 
     return use
@@ -440,12 +444,31 @@ def test_choosing_a_spreadsheet_makes_it_the_one_in_use(monkeypatch):
     monkeypatch.setattr(
         spreadsheets, "resolve_spreadsheet", lambda name=None: ("an-id", "Sales Orders")
     )
+    monkeypatch.setattr(spreadsheets, "sheets_in", lambda id: {"Orders": {}, "Q1": {}})
 
     answer = spreadsheets.use_spreadsheet.invoke({"name": "sales orders"})
 
     # The name the file really has, not the one that was typed.
     assert 'Now working on "Sales Orders"' in answer
     assert spreadsheets.config.SPREADSHEET == "Sales Orders"
+
+
+def test_choosing_a_spreadsheet_says_what_sheets_are_in_it(monkeypatch):
+    monkeypatch.setattr(spreadsheets.config, "SPREADSHEET", None)
+    monkeypatch.setattr(
+        spreadsheets,
+        "resolve_spreadsheet",
+        lambda name=None: ("an-id", "TEST - Employee Attendance"),
+    )
+    monkeypatch.setattr(spreadsheets, "sheets_in", lambda id: {"Attendance": {}})
+
+    answer = spreadsheets.use_spreadsheet.invoke({"name": "attendance"})
+
+    # Nothing else says what the sheets are called, and the name of a file is
+    # not the name of a sheet in it: told only the file name, an agent asks for
+    # a sheet called "Employee Attendance", which does not exist.
+    assert "It holds 1 sheet(s): Attendance." in answer
+    assert "Calls that name no sheet work on Attendance." in answer
 
 
 def test_a_name_that_reaches_nothing_settles_nothing(monkeypatch):
