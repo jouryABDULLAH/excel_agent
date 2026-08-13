@@ -35,7 +35,7 @@ def test_a_new_column_goes_on_the_end(tmp_path, use_workbook):
     answer = modify_column.invoke({"action": "add", "name": "Notes"})
 
     assert 'Added a column called "Notes", at F.' in answer
-    assert "use modify_sheet to put values into it" in answer
+    assert "use modify_row to put values into it" in answer
     assert headers_of(path) == ["ID", "Product", "Region", "Units", "Unit Price", "Notes"]
 
 

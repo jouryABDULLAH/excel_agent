@@ -1,6 +1,6 @@
-"""Tool for changing the sheet.
+"""Tool for changing rows.
 
-Adds, edits and removes rows. Every write goes through workbook.save(), so a
+Adds, edits and removes them. Every write goes through workbook.save(), so a
 backup is taken before the file is touched.
 """
 
@@ -61,7 +61,7 @@ def column_names(columns: list[int], headers: dict[str, int]) -> list[str]:
 
 @tool
 @traced
-def modify_sheet(
+def modify_row(
     action: Literal["add", "edit", "remove"],
     row: int | None = None,
     values: dict[str, str | int | float | None] | None = None,
@@ -100,10 +100,10 @@ def modify_sheet(
         explanation, so you are free to correct the arguments and try again.
 
     Examples:
-        modify_sheet(action="edit", row=5, values={"Units": 20})
-        modify_sheet(action="edit", row=5, values={"Notes": null})
-        modify_sheet(action="add", values={"Product": "Webcam", "Region": "EU"})
-        modify_sheet(action="remove", row=5)
+        modify_row(action="edit", row=5, values={"Units": 20})
+        modify_row(action="edit", row=5, values={"Notes": null})
+        modify_row(action="add", values={"Product": "Webcam", "Region": "EU"})
+        modify_row(action="remove", row=5)
     """
 
   
@@ -123,7 +123,7 @@ def apply_change(
     path: Path,
     sheet_name: str | None = None,
 ) -> str:
-    """Do the work of modify_sheet, with the write lock already held."""
+    """Do the work of modify_row, with the write lock already held."""
     book = load_book(path)
 
     try:
@@ -253,14 +253,14 @@ def main() -> None:
     from excel_agent.tools.inspect import inspect_sheet
 
     print("--- a row that does not exist, so nothing is written ---")
-    print(modify_sheet.invoke({"action": "edit", "row": 9999, "values": {"Region": "EU"}}))
+    print(modify_row.invoke({"action": "edit", "row": 9999, "values": {"Region": "EU"}}))
 
     print("\n--- a column that does not exist, so nothing is written ---")
-    print(modify_sheet.invoke({"action": "add", "values": {"Profit": 10}}))
+    print(modify_row.invoke({"action": "add", "values": {"Profit": 10}}))
 
     print("\n--- add a row ---")
     print(
-        modify_sheet.invoke(
+        modify_row.invoke(
             {
                 "action": "add",
                 "values": {
@@ -280,13 +280,13 @@ def main() -> None:
     added_row = last_data_row(sheet, find_header_row(sheet))
 
     print(f"\n--- edit row {added_row} ---")
-    print(modify_sheet.invoke({"action": "edit", "row": added_row, "values": {"Units": 8}}))
+    print(modify_row.invoke({"action": "edit", "row": added_row, "values": {"Units": 8}}))
 
     print("\n--- the sheet now, last few rows ---")
     print(inspect_sheet.invoke({"start_row": added_row - 2}))
 
     print(f"\n--- remove row {added_row} again ---")
-    print(modify_sheet.invoke({"action": "remove", "row": added_row}))
+    print(modify_row.invoke({"action": "remove", "row": added_row}))
 
 
 if __name__ == "__main__":

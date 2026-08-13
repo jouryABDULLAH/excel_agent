@@ -44,7 +44,7 @@ def test_a_tool_call_arrives_before_the_answer(tmp_path, use_workbook):
     use_workbook(make_fixtures.clean_table(tmp_path))
     session = session_reading(
         [
-            calling("modify_sheet", "1", action="edit", row=2, values={"Units": 99}),
+            calling("modify_row", "1", action="edit", row=2, values={"Units": 99}),
             AIMessage("Set row 2 to 99."),
         ],
         tools=LOCAL_TOOLS,
@@ -52,7 +52,7 @@ def test_a_tool_call_arrives_before_the_answer(tmp_path, use_workbook):
 
     events = list(session.ask("set row 2 units to 99"))
 
-    assert events[0] == ToolCall("modify_sheet", {"action": "edit", "row": 2, "values": {"Units": 99}})
+    assert events[0] == ToolCall("modify_row", {"action": "edit", "row": 2, "values": {"Units": 99}})
     assert events[-1] == Answer("Set row 2 to 99.")
 
 
@@ -145,7 +145,7 @@ def test_a_turn_that_writes_still_writes(tmp_path, use_workbook):
     path = use_workbook(make_fixtures.clean_table(tmp_path))
     session = session_reading(
         [
-            calling("modify_sheet", "1", action="edit", row=2, values={"Units": 99}),
+            calling("modify_row", "1", action="edit", row=2, values={"Units": 99}),
             AIMessage("done"),
         ],
         tools=LOCAL_TOOLS,

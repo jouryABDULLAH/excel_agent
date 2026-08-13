@@ -14,7 +14,7 @@ import make_fixtures
 from openpyxl import load_workbook
 
 from excel_agent.tools.inspect import inspect_sheet
-from excel_agent.tools.modify import apply_change, modify_sheet
+from excel_agent.tools.modify import apply_change, modify_row
 
 
 def digest(path) -> str:
@@ -42,7 +42,7 @@ def test_the_whole_sheet_is_read_with_its_real_row_numbers(tmp_path, use_workboo
         in answer
     )
     assert "| row | ID | Product | Region | Units | Unit Price |" in answer
-    # Row 2 in the table is row 2 in Excel, which is what modify_sheet needs.
+    # Row 2 in the table is row 2 in Excel, which is what modify_row needs.
     assert "| 2 | 1001 | Laptop Stand | EU | 12 | 24.5 |" in answer
     assert "| 6 | 1005 | Webcam | US | 18 | 42 |" in answer
 
@@ -123,7 +123,7 @@ def test_the_sheet_the_workbook_opens_on_is_read_when_none_is_named(
 def test_a_new_row_goes_under_the_last_one(tmp_path, use_workbook):
     path = use_workbook(make_fixtures.clean_table(tmp_path))
 
-    answer = modify_sheet.invoke(
+    answer = modify_row.invoke(
         {"action": "add", "values": {"Product": "Standing Desk", "Region": "EU"}}
     )
 
@@ -138,7 +138,7 @@ def test_a_new_row_goes_under_the_last_one(tmp_path, use_workbook):
 def test_a_new_row_picks_up_the_calculated_column(tmp_path, use_workbook):
     path = use_workbook(make_fixtures.formulas_all_the_way_down(tmp_path))
 
-    answer = modify_sheet.invoke(
+    answer = modify_row.invoke(
         {"action": "add", "values": {"Product": "Standing Desk", "Units": 4, "Unit Price": 120.0}}
     )
 
@@ -152,7 +152,7 @@ def test_a_calculated_column_typed_over_in_its_last_row_is_not_copied_down(
 ):
     path = use_workbook(make_fixtures.formulas_last_row_overwritten(tmp_path))
 
-    answer = modify_sheet.invoke({"action": "add", "values": {"Product": "Standing Desk"}})
+    answer = modify_row.invoke({"action": "add", "values": {"Product": "Standing Desk"}})
 
     # The formula is copied from the last row, and the last row holds a number
     # someone typed, so the new row gets a blank where the sheet's other rows
@@ -164,7 +164,7 @@ def test_a_calculated_column_typed_over_in_its_last_row_is_not_copied_down(
 def test_a_new_row_ignores_formatting_far_below_the_data(tmp_path, use_workbook):
     path = use_workbook(make_fixtures.formatting_past_data(tmp_path))
 
-    answer = modify_sheet.invoke({"action": "add", "values": {"Product": "Standing Desk"}})
+    answer = modify_row.invoke({"action": "add", "values": {"Product": "Standing Desk"}})
 
     # Row 500 is coloured in, so trusting max_row would put this at row 501
     # and leave several hundred blank rows above it.
@@ -176,7 +176,7 @@ def test_setting_a_calculated_column_is_refused(tmp_path, use_workbook):
     path = use_workbook(make_fixtures.formulas_all_the_way_down(tmp_path))
     before = digest(path)
 
-    answer = modify_sheet.invoke(
+    answer = modify_row.invoke(
         {"action": "add", "values": {"Product": "Standing Desk", "Total": 480}}
     )
 
@@ -188,7 +188,7 @@ def test_adding_without_values_is_refused(tmp_path, use_workbook):
     path = use_workbook(make_fixtures.clean_table(tmp_path))
     before = digest(path)
 
-    answer = modify_sheet.invoke({"action": "add", "values": {}})
+    answer = modify_row.invoke({"action": "add", "values": {}})
 
     assert "needs at least one column in values" in answer
     assert digest(path) == before
@@ -198,7 +198,7 @@ def test_adding_an_unknown_column_is_refused(tmp_path, use_workbook):
     path = use_workbook(make_fixtures.clean_table(tmp_path))
     before = digest(path)
 
-    answer = modify_sheet.invoke({"action": "add", "values": {"Profit": 10}})
+    answer = modify_row.invoke({"action": "add", "values": {"Profit": 10}})
 
     assert "Unknown column(s): Profit" in answer
     assert digest(path) == before
@@ -210,7 +210,7 @@ def test_adding_an_unknown_column_is_refused(tmp_path, use_workbook):
 def test_editing_changes_the_columns_given_and_no_others(tmp_path, use_workbook):
     path = use_workbook(make_fixtures.clean_table(tmp_path))
 
-    answer = modify_sheet.invoke({"action": "edit", "row": 3, "values": {"Units": 99}})
+    answer = modify_row.invoke({"action": "edit", "row": 3, "values": {"Units": 99}})
 
     assert answer == "Updated row 3: Units = 99. (Sales in clean_table.xlsx)"
 
@@ -222,7 +222,7 @@ def test_editing_changes_the_columns_given_and_no_others(tmp_path, use_workbook)
 def test_a_cell_can_be_cleared(tmp_path, use_workbook):
     path = use_workbook(make_fixtures.clean_table(tmp_path))
 
-    answer = modify_sheet.invoke({"action": "edit", "row": 3, "values": {"Region": None}})
+    answer = modify_row.invoke({"action": "edit", "row": 3, "values": {"Region": None}})
 
     assert answer == "Updated row 3: Region = (blank). (Sales in clean_table.xlsx)"
     assert sheet_of(path)["C3"].value is None
@@ -232,7 +232,7 @@ def test_editing_a_cell_in_a_calculated_column_is_refused(tmp_path, use_workbook
     path = use_workbook(make_fixtures.formulas_all_the_way_down(tmp_path))
     before = digest(path)
 
-    answer = modify_sheet.invoke({"action": "edit", "row": 3, "values": {"Total": 500}})
+    answer = modify_row.invoke({"action": "edit", "row": 3, "values": {"Total": 500}})
 
     assert "Total is worked out by a formula" in answer
     assert digest(path) == before
@@ -245,7 +245,7 @@ def test_a_formula_partway_down_a_column_is_protected(tmp_path, use_workbook):
     # Row 3 holds a formula, but the last row of Total holds a number someone
     # typed, so the column does not look calculated and the column level check
     # lets this through. Looking at the cell itself is what catches it.
-    answer = modify_sheet.invoke(
+    answer = modify_row.invoke(
         {"action": "edit", "row": 3, "values": {"Units": 99, "Total": 500}}
     )
 
@@ -263,7 +263,7 @@ def test_a_number_that_replaced_a_formula_can_still_be_corrected(
     # Row 6's Total is a number, not a formula, so there is no calculation to
     # protect and correcting it is allowed. Checking the cell rather than the
     # column is what makes the difference between this and the test above.
-    answer = modify_sheet.invoke({"action": "edit", "row": 6, "values": {"Total": 800}})
+    answer = modify_row.invoke({"action": "edit", "row": 6, "values": {"Total": 800}})
 
     assert answer == (
         "Updated row 6: Total = 800. "
@@ -276,7 +276,7 @@ def test_editing_a_row_that_does_not_exist_is_refused(tmp_path, use_workbook):
     path = use_workbook(make_fixtures.clean_table(tmp_path))
     before = digest(path)
 
-    answer = modify_sheet.invoke({"action": "edit", "row": 9999, "values": {"Units": 1}})
+    answer = modify_row.invoke({"action": "edit", "row": 9999, "values": {"Units": 1}})
 
     assert "Row 9999 does not exist. The sheet has rows 2 to 6." in answer
     assert digest(path) == before
@@ -288,7 +288,7 @@ def test_editing_the_header_row_is_refused(tmp_path, use_workbook):
 
     # Row 1 holds the column names, and renaming a column is not something
     # these tools do.
-    answer = modify_sheet.invoke({"action": "edit", "row": 1, "values": {"Units": 1}})
+    answer = modify_row.invoke({"action": "edit", "row": 1, "values": {"Units": 1}})
 
     assert "Row 1 does not exist" in answer
     assert digest(path) == before
@@ -298,7 +298,7 @@ def test_editing_without_a_row_number_is_refused(tmp_path, use_workbook):
     path = use_workbook(make_fixtures.clean_table(tmp_path))
     before = digest(path)
 
-    answer = modify_sheet.invoke({"action": "edit", "values": {"Units": 1}})
+    answer = modify_row.invoke({"action": "edit", "values": {"Units": 1}})
 
     assert "needs a row number" in answer
     assert digest(path) == before
@@ -310,7 +310,7 @@ def test_editing_without_a_row_number_is_refused(tmp_path, use_workbook):
 def test_removing_a_row_shifts_the_rest_up_and_says_so(tmp_path, use_workbook):
     path = use_workbook(make_fixtures.clean_table(tmp_path))
 
-    answer = modify_sheet.invoke({"action": "remove", "row": 3})
+    answer = modify_row.invoke({"action": "remove", "row": 3})
 
     assert answer.startswith("Removed row 3.")
     assert "now out of date" in answer
@@ -325,7 +325,7 @@ def test_removing_a_row_that_does_not_exist_is_refused(tmp_path, use_workbook):
     path = use_workbook(make_fixtures.clean_table(tmp_path))
     before = digest(path)
 
-    answer = modify_sheet.invoke({"action": "remove", "row": 9999})
+    answer = modify_row.invoke({"action": "remove", "row": 9999})
 
     assert "does not exist" in answer
     assert digest(path) == before
@@ -335,7 +335,7 @@ def test_removing_without_a_row_number_is_refused(tmp_path, use_workbook):
     path = use_workbook(make_fixtures.clean_table(tmp_path))
     before = digest(path)
 
-    answer = modify_sheet.invoke({"action": "remove"})
+    answer = modify_row.invoke({"action": "remove"})
 
     assert "needs a row number" in answer
     assert digest(path) == before
@@ -374,7 +374,7 @@ def test_a_named_workbook_is_the_one_that_gets_changed(tmp_path, use_workbook):
     named = make_fixtures.blank_rows_inside(tmp_path)
     untouched = digest(default)
 
-    answer = modify_sheet.invoke(
+    answer = modify_row.invoke(
         {"action": "edit", "row": 2, "values": {"Product": "Standing Desk"},
          "workbook": "blank_rows_inside.xlsx"}
     )
@@ -390,7 +390,7 @@ def test_leaving_the_workbook_out_uses_the_one_being_worked_on(tmp_path, use_wor
     other = make_fixtures.blank_rows_inside(tmp_path)
     untouched = digest(other)
 
-    modify_sheet.invoke({"action": "edit", "row": 2, "values": {"Product": "Standing Desk"}})
+    modify_row.invoke({"action": "edit", "row": 2, "values": {"Product": "Standing Desk"}})
 
     assert sheet_of(default)["B2"].value == "Standing Desk"
     assert digest(other) == untouched
@@ -402,7 +402,7 @@ def test_a_workbook_that_does_not_exist_is_named_along_with_the_ones_that_do(
     path = use_workbook(make_fixtures.clean_table(tmp_path))
     before = digest(path)
 
-    answer = modify_sheet.invoke(
+    answer = modify_row.invoke(
         {"action": "remove", "row": 2, "workbook": "invoices"}
     )
 
@@ -417,7 +417,7 @@ def test_a_name_reaching_outside_the_data_folder_is_refused(tmp_path, use_workbo
 
     # A name arrives from the model, so one carrying a folder of its own must
     # not be followed wherever it points.
-    answer = modify_sheet.invoke(
+    answer = modify_row.invoke(
         {"action": "remove", "row": 2, "workbook": "../../secrets.xlsx"}
     )
 
@@ -448,7 +448,7 @@ def test_a_sheet_name_is_matched_however_it_is_spelled(tmp_path, use_workbook):
 def test_a_named_sheet_is_the_one_that_gets_changed(tmp_path, use_workbook):
     path = use_workbook(make_fixtures.multi_sheet(tmp_path))
 
-    answer = modify_sheet.invoke(
+    answer = modify_row.invoke(
         {"action": "edit", "row": 2, "values": {"Comment": "changed"}, "sheet": "Notes"}
     )
 
@@ -466,7 +466,7 @@ def test_a_row_added_to_a_named_sheet_lands_in_that_sheet(tmp_path, use_workbook
 
     # Notes ends at row 2 and Sales at row 3, so the row number in the answer
     # says which sheet was measured for the end of the data.
-    answer = modify_sheet.invoke(
+    answer = modify_row.invoke(
         {"action": "add", "values": {"Author": "Sam"}, "sheet": "Notes"}
     )
 
@@ -482,7 +482,7 @@ def test_a_sheet_that_does_not_exist_is_refused_by_both_tools(tmp_path, use_work
     before = digest(path)
 
     read = inspect_sheet.invoke({"sheet": "Summary"})
-    written = modify_sheet.invoke({"action": "remove", "row": 2, "sheet": "Summary"})
+    written = modify_row.invoke({"action": "remove", "row": 2, "sheet": "Summary"})
 
     for answer in (read, written):
         assert 'There is no sheet called "Summary"' in answer

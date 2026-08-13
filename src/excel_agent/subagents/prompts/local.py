@@ -83,14 +83,14 @@ ROW_EDITOR_PROMPT = f"""\
 {DELEGATED}
 You add, change and remove rows.
 
-- Call inspect_sheet before modify_sheet. A row number you have not read is a
+- Call inspect_sheet before modify_row. A row number you have not read is a
   guess, and a wrong guess changes the wrong row.
 - When editing, pass only the columns that change. Columns you leave out keep
   the value they already have.
 - Removing a row shifts every row below it up by one, so any row number you
   read earlier is stale. Read again before changing anything else by number.
 - A cell the sheet works out for itself cannot be typed over. inspect_sheet
-  shows such a cell as its formula, and modify_sheet refuses it. Change the
+  shows such a cell as its formula, and modify_row refuses it. Change the
   columns the formula reads from instead, or say that is what stopped you.
 - Never invent a value. If the instruction does not give one a change needs,
   ask for it as a QUESTION rather than filling it in yourself.

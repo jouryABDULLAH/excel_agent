@@ -1,7 +1,7 @@
 """Tool for reading the sheet.
 
 Gives the model a view of the data before it changes anything, using real
-Excel row numbers so modify_sheet can be pointed at the right row.
+Excel row numbers so modify_row can be pointed at the right row.
 """
 
 from datetime import date, datetime
@@ -51,7 +51,7 @@ def inspect_sheet(
 ) -> str:
     """Read rows from the sheet so you can see what is there before changing it.
 
-    Call this before modify_sheet, so that you work from the real row numbers
+    Call this before modify_row, so that you work from the real row numbers
     instead of guessing them.
 
     Args:
@@ -69,7 +69,7 @@ def inspect_sheet(
 
     Returns:
         A markdown table. Its row column holds the real Excel row number,
-        which is what modify_sheet expects. The first line says which workbook
+        which is what modify_row expects. The first line says which workbook
         and sheet it came from, which row the column names are in, and how many
         rows of data follow, so you can tell whether you have seen all of them.
     """
