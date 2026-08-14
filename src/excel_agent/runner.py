@@ -89,6 +89,7 @@ class Session:
                         yield Text(str(token.content))
                     continue
 
+                # Change: 
                 for update in payload.values():
                     if not isinstance(update, dict):
                         continue

@@ -7,6 +7,7 @@ the two can be compared without being two programs.
 """
 
 from langchain.agents import create_agent
+from langchain.tools import ToolRuntime
 from langchain_core.messages import ToolMessage
 from langchain_core.tools import tool
 from langgraph.checkpoint.memory import InMemorySaver
@@ -22,6 +23,13 @@ VARIANTS = ("single", "multi")
 # Session, so a turn is recorded against the name of whoever answered it.
 ROOT_NAME = {"single": "agent", "multi": "orchestrator"}
 
+
+# Define Orchestrator's state:
+    # class AgentState(AgentState):
+    #     spreadsheet_id: str | None
+    #     spreadsheet_name: str | None
+    #     active_sheet_id: int | None
+    #     active_sheet_name: str | None
 
 def agent_name(variant: str) -> str:
     """What to call the agent at the top of one variant, for traces."""
@@ -39,25 +47,37 @@ def as_tool(spec: SubagentSpec, model):
     agent = create_agent(model, list(spec.tools), system_prompt=spec.system_prompt)
 
     @tool(spec.name, description=spec.description)
-    def delegate(instruction: str) -> str:
+    def delegate(
+        instruction: str,
+        # runtime: ToolRuntime
+    ) -> str:
         """Hand one piece of work to this subagent and return what it says."""
-        finished = agent.invoke(
+
+        # spreadsheet_id = runtime.state.get("spreadsheet_id")
+        # spreadsheet_name = runtime.state.get("spreadsheet_name")
+
+        # subagent_instruction = f"""
+        # Current spreadsheet:
+        # {spreadsheet_name}
+        # Spreadsheet ID:
+        # {spreadsheet_id}
+
+        # Task:
+        # {instruction}
+        # """
+        result = agent.invoke(
             {"messages": [{"role": "user", "content": instruction}]},
-            # Named for the subagent, so a trace says who was handed the work
-            # rather than showing a second "LangGraph" under the first.
-            config={"recursion_limit": RECURSION_LIMIT, "run_name": spec.name},
+             config={"recursion_limit": RECURSION_LIMIT, "run_name": spec.name},
         )
-        messages = finished["messages"]
+
+        # Chane this: by defining the subagent's output contract
+        messages = result["messages"]
         used = [
             call["name"]
             for message in messages
             for call in getattr(message, "tool_calls", None) or []
         ]
 
-        # What the tools returned goes up with the answer. A subagent writes as
-        # though its reader watched it work, and the reader did not: given a
-        # summary alone, an orchestrator asked for the data has nothing to
-        # answer from, and fills the gap by inventing it.
         evidence = [
             str(message.content)
             for message in messages
@@ -65,7 +85,6 @@ def as_tool(spec: SubagentSpec, model):
         ]
 
         answer = str(messages[-1].content)
-        # an attempt to control hallucination
         if evidence:
             answer += "\n\nWhat the tools returned:\n" + "\n\n".join(evidence)
         if not used:
@@ -81,14 +100,8 @@ def build_orchestrator():
     model = build_model()
     delegates = [as_tool(spec, model) for spec in SUBAGENTS]
 
-    # Choosing which file to work on is the orchestrator's own question, and
-    # none of these gives back a row number, so none of them tempts it into
-    # work that belongs to a subagent.
-    choosing = [list_workbooks, find_spreadsheet, use_spreadsheet]
-
     return create_agent(
         model,
-        # [*choosing, *delegates],
         [list_workbooks, find_spreadsheet, use_spreadsheet, *delegates],
         system_prompt=ORCHESTRATOR_PROMPT,
         checkpointer=InMemorySaver(),

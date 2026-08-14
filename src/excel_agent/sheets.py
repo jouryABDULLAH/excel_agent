@@ -1,12 +1,7 @@
-"""How to deal with the Google Sheets and Drive APIs.
+"""
+Google API clients.
+How to deal with the Google Sheets and Drive APIs.
 
-Rules the tools do not have to repeat: building a service, turning a name into
-an id, reading a sheet into cells, and turning rows and columns counting from
-one into the ranges Google wants. A tool that worked any of this out for
-itself would be one more place to get it wrong.
-
-Everything here raises ValueError with a message worth showing the model, or
-HttpError for the caller to pass through readable().
 """
 
 import random
