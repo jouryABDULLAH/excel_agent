@@ -15,13 +15,7 @@ from excel_agent.tools import inspect_sheet, list_workbooks
 HELP = """\
 Type what you want done to the sheet, in your own words.
 
-  /use [name]     work on another spreadsheet, or list the ones there are
-  /sheet [name]   show a sheet without asking the model, the one the
-                  spreadsheet opens on unless you name another
-  /tools          show or hide the tool calls behind each answer
   /reset          forget the conversation so far
-  /help           show this
-  /quit           leave
 """
 
 
@@ -75,8 +69,6 @@ def main() -> None:
     try:
         agent = build(arguments.agents)
     except RuntimeError as e:
-        # A missing API key explains itself, so the message is enough. Under
-        # --debug the traceback is the point, so it is let through.
         if debug:
             raise
         print(e)
@@ -84,7 +76,7 @@ def main() -> None:
 
     print(
         f"Working on {browsing.where()} with {MODEL}, "
-        f"{arguments.agents} agent. /help for commands."
+        f"{arguments.agents} agent."
     )
 
     session = Session(agent, name=agent_name(arguments.agents))
@@ -100,39 +92,39 @@ def main() -> None:
         if not question:
             continue
 
-        if question in ("/quit", "/exit"):
-            return
+        # if question in ("/quit", "/exit"):
+        #     return
 
-        if question == "/help":
-            print(HELP)
-            continue
+        # if question == "/help":
+        #     print(HELP)
+        #     continue
 
-        if question == "/sheet" or question.startswith("/sheet "):
-            # A name after the command picks a sheet; a wrong one is answered
-            # with the sheets the spreadsheet does have.
-            wanted = question[len("/sheet"):].strip()
-            print(inspect_sheet.invoke({"sheet": wanted or None}))
-            continue
+        # if question == "/sheet" or question.startswith("/sheet "):
+        #     # A name after the command picks a sheet; a wrong one is answered
+        #     # with the sheets the spreadsheet does have.
+        #     wanted = question[len("/sheet"):].strip()
+        #     print(inspect_sheet.invoke({"sheet": wanted or None}))
+        #     continue
 
-        if question == "/use" or question.startswith("/use "):
-            wanted = question[len("/use"):].strip()
-            if not wanted:
-                print(list_workbooks.invoke({}))
-                continue
-            try:
-                # Resolved against Drive, so what is stored is the name Drive
-                # really holds rather than the one that was typed.
-                browsing.choose(wanted)
-            except ValueError as explanation:
-                print(explanation)
-                continue
-            print(f"Now working on {browsing.where()}.")
-            continue
+        # if question == "/use" or question.startswith("/use "):
+        #     wanted = question[len("/use"):].strip()
+        #     if not wanted:
+        #         print(list_workbooks.invoke({}))
+        #         continue
+        #     try:
+        #         # Resolved against Drive, so what is stored is the name Drive
+        #         # really holds rather than the one that was typed.
+        #         browsing.choose(wanted)
+        #     except ValueError as explanation:
+        #         print(explanation)
+        #         continue
+        #     print(f"Now working on {browsing.where()}.")
+        #     continue
 
-        if question == "/tools":
-            show_tools = not show_tools
-            print(f"Tool calls are now {'shown' if show_tools else 'hidden'}.")
-            continue
+        # if question == "/tools":
+        #     show_tools = not show_tools
+        #     print(f"Tool calls are now {'shown' if show_tools else 'hidden'}.")
+        #     continue
 
         if question == "/reset":
             session.reset()
