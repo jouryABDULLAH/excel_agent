@@ -92,40 +92,6 @@ def main() -> None:
         if not question:
             continue
 
-        # if question in ("/quit", "/exit"):
-        #     return
-
-        # if question == "/help":
-        #     print(HELP)
-        #     continue
-
-        # if question == "/sheet" or question.startswith("/sheet "):
-        #     # A name after the command picks a sheet; a wrong one is answered
-        #     # with the sheets the spreadsheet does have.
-        #     wanted = question[len("/sheet"):].strip()
-        #     print(inspect_sheet.invoke({"sheet": wanted or None}))
-        #     continue
-
-        # if question == "/use" or question.startswith("/use "):
-        #     wanted = question[len("/use"):].strip()
-        #     if not wanted:
-        #         print(list_workbooks.invoke({}))
-        #         continue
-        #     try:
-        #         # Resolved against Drive, so what is stored is the name Drive
-        #         # really holds rather than the one that was typed.
-        #         browsing.choose(wanted)
-        #     except ValueError as explanation:
-        #         print(explanation)
-        #         continue
-        #     print(f"Now working on {browsing.where()}.")
-        #     continue
-
-        # if question == "/tools":
-        #     show_tools = not show_tools
-        #     print(f"Tool calls are now {'shown' if show_tools else 'hidden'}.")
-        #     continue
-
         if question == "/reset":
             session.reset()
             print("Conversation forgotten. The sheet itself is unchanged.")
