@@ -234,7 +234,7 @@ FIND_CASES = [
 
 
 def main() -> None:
-    """Try the tool by hand with `python -m excel_agent.tools.sheets.spreadsheets`."""
+    """Try the tool by hand with `python -m excel_agent.tools.spreadsheets`."""
     for label, arguments in CASES:
         print(f"--- {label}: {arguments} ---")
         print(list_workbooks.invoke(arguments))

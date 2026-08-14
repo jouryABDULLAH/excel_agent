@@ -1,184 +1,182 @@
-"""Tool for summarising a sheet.
+"""Tool for summarising a column.
 
-Answers questions about a whole column - how many, how much, what range, what
-appears most - without the model reading every row and counting.
-
-Read-only tool: nothing here writes to the file.
+Reads the whole column however long it is, which is what makes it the right
+answer to a question inspect_sheet would need many calls to answer.
 """
 
-from collections import Counter
-from datetime import date, datetime
-
+from googleapiclient.errors import HttpError
 from langchain_core.tools import tool
 
-from excel_agent.config import resolve_workbook
-from excel_agent.tools.inspect import as_text
-from excel_agent.workbook import (
+from excel_agent.sheets import (
+    Cell,
+    cell,
     find_header_row,
+    grid,
     header_map,
     is_blank,
     last_data_row,
-    load_book,
-    load_values,
+    readable,
     resolve_sheet,
+    resolve_spreadsheet,
 )
 
+# How many of the most common values to name for a column of text.
+COMMON_LIMIT = 3
 
-def is_number(value) -> bool:
-    """Whether a value is a number to do arithmetic on.
 
-    True and False are whole numbers as far as Python is concerned, and adding
-    them up would be nonsense, so they are left out.
+def is_number(one: Cell) -> bool:
+    """Whether a cell holds a number to do arithmetic on.
+
+    A date is a number underneath, a count of days, so it is left out: adding
+    up a column of dates gives a five figure number that means nothing. A
+    boolean is a number to Python and nonsense to add up as well.
     """
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    return (
+        isinstance(one.value, (int, float))
+        and not isinstance(one.value, bool)
+        and not one.is_date
+    )
 
 
-def total_of(values: list) -> str:
-    """Add numbers up and render the answer without a trailing .0 or a long tail."""
-    added = sum(values)
-    return as_text(round(added, 2))
+def rounded(number: float) -> str:
+    """Render a total without a trailing .0 or a long tail of decimals."""
+    number = round(number, 2)
+    return str(int(number)) if number == int(number) else str(number)
 
 
-def summarise(values: list) -> str:
-    """Describe a column's values in a phrase.
+def describe(cells: list[Cell]) -> str:
+    """Say what a column holds, in a phrase.
 
     Numbers get their range and their total, dates get their range, and
     anything else gets whatever turns up most often, since a total means
     nothing for text.
+
+    The smallest and largest are shown the way the sheet shows them, so a
+    price keeps its currency and a date reads as a date. The total is worked
+    out from the values underneath, where the sheet's formatting cannot reach.
     """
-    if not values:
+    if not cells:
         return "nothing to summarise"
 
-    if all(is_number(value) for value in values):
+    if all(is_number(one) for one in cells):
+        least = min(cells, key=lambda one: one.value)
+        most = max(cells, key=lambda one: one.value)
+        total = sum(one.value for one in cells)
         return (
-            f"{as_text(min(values))} to {as_text(max(values))}, "
-            f"adding up to {total_of(values)}"
+            f"{least.displayed} to {most.displayed}, adding up to {rounded(total)}"
         )
 
-    if all(isinstance(value, (datetime, date)) for value in values):
-        return f"{as_text(min(values))} to {as_text(max(values))}"
+    if all(one.is_date for one in cells):
+        earliest = min(cells, key=lambda one: one.value)
+        latest = max(cells, key=lambda one: one.value)
+        return f"{earliest.displayed} to {latest.displayed}"
 
-    most_common, seen = Counter(as_text(value) for value in values).most_common(1)[0]
-    if seen == 1:
+    seen: dict[str, int] = {}
+    for one in cells:
+        shown = str(one.displayed).strip()
+        seen[shown] = seen.get(shown, 0) + 1
+
+    common = sorted(seen.items(), key=lambda pair: (-pair[1], pair[0]))
+    if common[0][1] == 1:
         return "every value different"
-    return f'"{most_common}" most often, {seen} times'
+
+    named = ", ".join(
+        f'"{value}" {count} times' for value, count in common[:COMMON_LIMIT] if count > 1
+    )
+    return f"most often {named}"
 
 
 @tool
 def sheet_stats(
-    columns: list[str] | None = None,
-    workbook: str | None = None,
+    column: str,
+    spreadsheet: str | None = None,
     sheet: str | None = None,
 ) -> str:
-    """Summarise the columns of a sheet: how many, how much, what range.
+    """Summarise one column: how many values, and the totals worth knowing.
 
-    Use this instead of reading every row and working it out yourself. It
-    answers questions like how many rows there are, how many are blank, how
-    many different values a column holds, and the smallest, largest and total
-    of a column of numbers.
+    Use this rather than reading rows and working it out yourself. It reads
+    the whole column however long it is, where inspect_sheet returns only as
+    much as it is allowed to.
 
     Args:
-        columns: Column names to summarise. Leave empty to summarise all.
-        workbook: Which workbook to read, by file name. Leave this out to read
-            the one being worked on.
-        sheet: Which sheet to read, by name. Leave this out to read the sheet
-            the workbook opens on.
+        column: The column to summarise, by the name in its header.
+        spreadsheet: Which spreadsheet to read, by name. Leave this out to
+            read the one being worked on.
+        sheet: Which sheet to read, by name. Leave this out to read the first
+            sheet in the spreadsheet.
 
     Returns:
-        A table with a line per column: how many rows hold a value, how many
-        are blank, how many different values there are, and a summary.
-
-        A column the sheet works out for itself has no summary unless the file
-        has been opened in Excel since the formulas were last changed, because
-        until then the results are not stored in the file. That is said
-        plainly rather than reported as a total of zero.
+        A sentence of figures, or an explanation of why none were worked out.
 
     Examples:
-        sheet_stats()
-        sheet_stats(columns=["Units", "Region"])
+        sheet_stats(column="Units")
+        sheet_stats(column="Region", spreadsheet="Sales Orders")
     """
     try:
-        path = resolve_workbook(workbook)
+        spreadsheet_id, title = resolve_spreadsheet(spreadsheet)
+        properties = resolve_sheet(spreadsheet_id, sheet)
+        rows = grid(spreadsheet_id, properties["title"])
     except ValueError as explanation:
         return str(explanation)
+    except HttpError as failure:
+        return readable(failure)
 
-    try:
-        worksheet = resolve_sheet(load_values(path), sheet)
-    except ValueError as explanation:
-        return str(explanation)
+    where = f"{properties['title']} in {title}"
 
-    formulas = load_book(path)[worksheet.title]
-
-    header_row = find_header_row(worksheet)
-    headers = header_map(worksheet, header_row)
+    header_row = find_header_row(rows)
+    headers = header_map(rows, header_row)
     if not headers:
         return (
-            f"No column names were found. Row {header_row} is empty, and no "
-            "row near the top of the sheet looks like a header."
+            f"Sheet: {where}. No column names were found, so there is no "
+            "column to summarise."
         )
 
-    last_row = last_data_row(worksheet, header_row)
-    total_rows = max(last_row - header_row, 0)
-    if total_rows == 0:
+    if column not in headers:
         return (
-            f"Sheet: {worksheet.title} in {path.name}. It has column names but "
-            "no rows of data yet."
+            f'There is no column called "{column}". '
+            f"The sheet has: {', '.join(headers)}."
         )
 
-    names = list(headers)
-    if columns:
-        unknown = [name for name in columns if name not in headers]
-        if unknown:
-            return (
-                f"Unknown column(s): {', '.join(unknown)}. "
-                f"The sheet has: {', '.join(names)}."
-            )
-        names = list(columns)
+    last_row = last_data_row(rows, header_row)
+    if last_row <= header_row:
+        return f"Sheet: {where}. It has column names but no rows of data yet."
 
-    rows = range(header_row + 1, last_row + 1)
+    number = headers[column]
+    values = [cell(rows, row, number) for row in range(header_row + 1, last_row + 1)]
+    filled = [one for one in values if not is_blank(one.displayed)]
+
+    different = len({str(one.displayed).strip() for one in filled})
+    calculated = sum(1 for one in filled if one.formula)
+
     lines = [
-        f"Sheet: {worksheet.title} in {path.name} ({total_rows} rows of data, "
-        f"column names in row {header_row})",
-        "",
-        "| column | filled | blank | different | summary |",
-        "|---|---|---|---|---|",
+        f'"{column}" in {where}: {len(filled)} filled, '
+        f"{len(values) - len(filled)} blank, {different} different.",
+        describe(filled) + ".",
     ]
-
-    for name in names:
-        column = headers[name]
-        values = [worksheet.cell(row=row, column=column).value for row in rows]
-        filled = [value for value in values if not is_blank(value)]
-
-        calculated = any(
-            str(formulas.cell(row=row, column=column).value or "").startswith("=")
-            for row in rows
-        )
-        if calculated and not filled:
-            summary = "worked out by the sheet, and its results are not stored in the file"
-        else:
-            summary = summarise(filled)
-
-        different = len({as_text(value) for value in filled})
+    if calculated:
+        # Worth saying, because a column the sheet works out can be summarised
+        # here but must not be written to.
         lines.append(
-            f"| {name} | {len(filled)} | {len(values) - len(filled)} | "
-            f"{different} | {summary} |"
+            f"{calculated} of them are worked out by a formula in the sheet."
         )
 
-    return "\n".join(lines)
+    return " ".join(lines)
 
 
 CASES = [
-    ("every column", {}),
-    ("one column", {"columns": ["Units"]}),
-    ("two columns", {"columns": ["Region", "Unit Price"]}),
-    ("a column that does not exist", {"columns": ["Profit"]}),
+    ("a column of numbers", {"column": "Units"}),
+    ("a column of money", {"column": "Revenue"}),
+    ("a column of dates", {"column": "Order Date"}),
+    ("a column of words", {"column": "Region"}),
+    ("a column that does not exist", {"column": "Nonsense"}),
 ]
 
 
 def main() -> None:
     """Try the tool by hand with `python -m excel_agent.tools.stats`.
 
-    Reading only, so running this never changes the file.
+    Reading only, so running this never changes anything. It works on the
+    spreadsheet named in EXCEL_AGENT_SPREADSHEET.
     """
     for label, arguments in CASES:
         print(f"--- {label}: {arguments} ---")

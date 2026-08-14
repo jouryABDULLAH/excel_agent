@@ -153,7 +153,7 @@ CASES = [
 
 
 def main() -> None:
-    """Try the tool by hand with `python -m excel_agent.tools.sheets.find`."""
+    """Try the tool by hand with `python -m excel_agent.tools.find`."""
     for label, arguments in CASES:
         print(f"--- {label}: {arguments} ---")
         print(find_data.invoke(arguments))

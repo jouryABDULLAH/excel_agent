@@ -1,28 +1,27 @@
 """Tool for changing rows.
 
-Adds, edits and removes them. Every write goes through workbook.save(), so a
-backup is taken before the file is touched.
+Rows are added, edited, removed and moved through the Sheets API, which
+rewrites every formula that referred to them, so nothing here has to protect a
+calculated cell.
 """
 
 from typing import Literal
 
-from pathlib import Path
-
+from googleapiclient.errors import HttpError
 from langchain_core.tools import tool
-from openpyxl.utils import get_column_letter
 
-from excel_agent.config import resolve_workbook
-from excel_agent.workbook import (
-    WRITE_LOCK,
-    copy_row_formulas,
+from excel_agent.sheets import (
+    a1,
+    batch,
     find_header_row,
-    formula_columns,
+    grid,
     header_map,
     last_data_row,
-    load_book,
-    location,
+    readable,
     resolve_sheet,
-    save,
+    resolve_spreadsheet,
+    to_dimension_range,
+    write_values,
 )
 
 
@@ -34,115 +33,91 @@ def describe(values: dict) -> str:
     )
 
 
-def holds_a_formula(cell) -> bool:
-    """Whether a cell works its value out rather than holding one."""
-    return isinstance(cell.value, str) and cell.value.startswith("=")
+def cells_for(title: str, row: int, values: dict, headers: dict[str, int]) -> list[dict]:
+    """One range per column being written, for values.batchUpdate.
 
+    Written a cell at a time rather than as one run, because the columns named
+    may sit anywhere across the row and everything between them must be left
+    exactly as it is.
 
-def formula_refusal(names: list[str]) -> str:
-    """The standard explanation for declining to write over a calculation."""
-    return (
-        f"{', '.join(names)} is worked out by a formula in the "
-        "sheet, so it cannot be set directly. Change the columns it "
-        "is calculated from instead, and leave it out of values."
-    )
-
-
-def column_names(columns: list[int], headers: dict[str, int]) -> list[str]:
-    """Turn column numbers back into column names for the confirmation message.
-
-    Falls back to the column letter for a column with no name in the header
-    row, which can happen when a calculated column sits outside the table.
+    Nothing becomes an empty string, which is how a cell is cleared: there is
+    no way to send "no value" that Google reads as "empty this".
     """
-    by_number = {number: name for name, number in headers.items()}
-    return [by_number.get(number, get_column_letter(number)) for number in columns]
+    return [
+        {
+            "range": a1(title, row, row, headers[name], headers[name]),
+            "values": [["" if value is None else value]],
+        }
+        for name, value in values.items()
+    ]
 
 
 @tool
 def modify_row(
-    action: Literal["add", "edit", "remove"],
+    action: Literal["add", "edit", "remove", "move"],
     row: int | None = None,
+    to_row: int | None = None,
     values: dict[str, str | int | float | None] | None = None,
-    workbook: str | None = None,
+    spreadsheet: str | None = None,
     sheet: str | None = None,
 ) -> str:
-    """Add, edit or remove a row in the sheet.
+    """Add, edit, remove or move a row in the sheet.
 
     Call inspect_sheet first, so the row numbers you use are real ones.
 
     Args:
         action: What to do. "add" puts a new row at the bottom, "edit" changes
-            cells in a row that already exists, "remove" deletes a whole row.
-        row: The Excel row number to change. Needed for edit and remove, and
+            cells in a row that already exists, "remove" deletes a whole row,
+            "move" carries a row to a different position.
+        row: The row number to change. Needed for edit, remove and move, and
             ignored for add.
-        values: Column name mapped to new value. Only the columns listed here are
-            changed, and columns you leave out keep their current value. Pass
-            null as a value to clear a cell. Ignored for remove.
-            A cell the sheet works out for itself cannot be set, whether it is
-            a whole calculated column or one formula partway down a column.
-            inspect_sheet shows such a cell as its formula. Change the columns
-            the formula reads from instead, and leave it out of values.
-        workbook: Which workbook to change, by file name. Leave this out to
-            change the one being worked on, which is what you normally want.
-            Name a workbook only when the user named a file, and read it with
-            inspect_sheet first: row numbers from one workbook mean nothing in
-            another.
+        to_row: Where the row should end up. Needed for move only.
+        values: Column name mapped to new value. Only the columns listed here
+            are changed. Pass null to clear a cell. A value beginning with "="
+            is stored as a formula. Ignored for remove and move.
+        spreadsheet: Which spreadsheet to change, by name. Leave this out to
+            change the one being worked on.
         sheet: Which sheet to change, by name. Leave this out to change the
-            sheet the workbook opens on. The same warning applies: a row
-            number read from one sheet means nothing in another, so read the
-            sheet you are about to change.
+            first sheet in the spreadsheet.
 
     Returns:
         A sentence saying what changed, or an explanation of why nothing was
-        changed. Nothing is written to the file when the answer is an
-        explanation, so you are free to correct the arguments and try again.
+        changed. Nothing is written when the answer is an explanation, so you
+        are free to correct the arguments and try again.
 
     Examples:
         modify_row(action="edit", row=5, values={"Units": 20})
         modify_row(action="edit", row=5, values={"Notes": null})
         modify_row(action="add", values={"Product": "Webcam", "Region": "EU"})
+        modify_row(action="add", values={"Total": "=D7*E7"})
         modify_row(action="remove", row=5)
+        modify_row(action="move", row=8, to_row=2)
     """
-
-  
     try:
-        path = resolve_workbook(workbook)
+        spreadsheet_id, name = resolve_spreadsheet(spreadsheet)
+        properties = resolve_sheet(spreadsheet_id, sheet)
+        rows = grid(spreadsheet_id, properties["title"])
     except ValueError as explanation:
         return str(explanation)
+    except HttpError as failure:
+        return readable(failure)
 
-    with WRITE_LOCK:
-        return apply_change(action, row, values, path, sheet)
+    title = properties["title"]
+    where = f"({title} in {name})"
 
-
-def apply_change(
-    action: str,
-    row: int | None,
-    values: dict[str, str | int | float | None] | None,
-    path: Path,
-    sheet_name: str | None = None,
-) -> str:
-    """Do the work of modify_row, with the write lock already held."""
-    book = load_book(path)
-
-    try:
-        sheet = resolve_sheet(book, sheet_name)
-    except ValueError as explanation:
-        return str(explanation)
-
-    header_row = find_header_row(sheet)
-    headers = header_map(sheet, header_row)
+    header_row = find_header_row(rows)
+    headers = header_map(rows, header_row)
     if not headers:
-        # the modification process depends on the column names being decalred
         return (
             f"No column names were found. Row {header_row} is empty, and no "
-            "row near the top of the sheet looks like a header."
+            f"row near the top of the sheet looks like a header. {where}"
         )
 
-    last_row = last_data_row(sheet, header_row)
+    last_row = last_data_row(rows, header_row)
 
-    # Check everything before writing anything, so a rejected call leaves the
-    # file exactly as it was.
-    if action in ("edit", "remove"):
+    # Everything is checked before anything is written, so a rejected call
+    # leaves the sheet exactly as it was.
+    if action in ("edit", "remove", "move"):
         if row is None:
             return (
                 f"The {action} action needs a row number. "
@@ -151,140 +126,115 @@ def apply_change(
         if row <= header_row or row > last_row:
             return (
                 f"Row {row} does not exist. The sheet has rows "
-                f"{header_row + 1} to {last_row}."
+                f"{header_row + 1} to {last_row}. {where}"
             )
 
     if action in ("add", "edit"):
         if not values:
             return f"The {action} action needs at least one column in values."
-        unknown = [name for name in values if name not in headers]
+        unknown = [column for column in values if column not in headers]
         if unknown:
             return (
                 f"Unknown column(s): {', '.join(unknown)}. "
                 f"The sheet has: {', '.join(headers)}."
             )
 
-    # A calculated column is protected differently depending on the action,
-    # because the two are about to write to different places.
-    if action == "add":
-        assert values is not None
-        # The new row copies its formulas from the last row, so the question
-        # is which columns that row calculates.
-        calculated = formula_columns(sheet, header_row, last_row)
-        blocked = [name for name in values if headers[name] in calculated]
-        if blocked:
-            return formula_refusal(blocked)
+    if action == "move":
+        if to_row is None:
+            return "The move action needs to_row, the row it should end up at."
+        if to_row <= header_row or to_row > last_row:
+            return (
+                f"Row {to_row} is not somewhere a row can go. The sheet has "
+                f"rows {header_row + 1} to {last_row}. {where}"
+            )
+        if to_row == row:
+            return f"Row {row} is already where it should be. Nothing changed."
 
-    if action == "edit":
-        assert values is not None and row is not None
-        # One row is being written to, so the cells of that row are what to
-        # look at. Asking the column instead would miss a formula partway down
-        # a column whose last row holds a number someone typed over it, and
-        # the formula would be replaced without a word about it.
-        blocked = [
-            name
-            for name in values
-            if holds_a_formula(sheet.cell(row=row, column=headers[name]))
-        ]
-        if blocked:
-            return formula_refusal(blocked)
-
-    if action == "add":
-        assert values is not None
-        new_row = last_row + 1
-
-        for name, value in values.items():
-            sheet.cell(row=new_row, column=headers[name], value=value)
-
-        # Carry any calculated column down into the new row, skipping the
-        # columns that were given a value so a formula cannot overwrite one.
-        copied = []
-        if last_row > header_row:
-            copied = copy_row_formulas(
-                sheet,
-                source_row=last_row,
-                target_row=new_row,
-                skip={headers[name] for name in values},
+    try:
+        if action == "add":
+            assert values is not None
+            new_row = last_row + 1
+            write_values(spreadsheet_id, cells_for(title, new_row, values, headers))
+            return (
+                f"Added row {new_row} with {describe(values)}. Any other "
+                f"column was left blank. {where}"
             )
 
-        save(book, path)
+        if action == "edit":
+            assert values is not None and row is not None
+            write_values(spreadsheet_id, cells_for(title, row, values, headers))
+            return f"Updated row {row}: {describe(values)}. {where}"
 
-        message = f"Added row {new_row} with {describe(values)}."
-        if copied:
-            names = ", ".join(column_names(copied, headers))
-            message += f" Copied the formula in {names} down from row {last_row}."
-        message += " Any other column was left blank."
-        return message + location(sheet, path)
+        if action == "remove":
+            assert row is not None
+            batch(
+                spreadsheet_id,
+                [
+                    {
+                        "deleteDimension": {
+                            "range": to_dimension_range(
+                                properties["sheetId"], "ROWS", row, row
+                            )
+                        }
+                    }
+                ],
+            )
+            return (
+                f"Removed row {row}. The rows below it have moved up by one, "
+                "so any row numbers you read earlier are now out of date. Call "
+                f"inspect_sheet again before changing anything else. {where}"
+            )
 
-    if action == "edit":
-        assert values is not None and row is not None
-        for name, value in values.items():
-            # Assigned rather than handed to cell(value=...), which reads None
-            # as "no value was given" and leaves the cell as it was. Clearing a
-            # cell is something this tool offers, so it has to mean it.
-            sheet.cell(row=row, column=headers[name]).value = value
-        save(book, path)
-        return f"Updated row {row}: {describe(values)}." + location(sheet, path)
+        if action == "move":
+            assert row is not None and to_row is not None
+            # Google counts the destination in the rows as they are now,
+            # before the row being moved is lifted out. Moving down, that
+            # means the number the row should end up at; moving up, the one
+            # before it.
+            destination = to_row if to_row > row else to_row - 1
+            batch(
+                spreadsheet_id,
+                [
+                    {
+                        "moveDimension": {
+                            "source": to_dimension_range(
+                                properties["sheetId"], "ROWS", row, row
+                            ),
+                            "destinationIndex": destination,
+                        }
+                    }
+                ],
+            )
+            return (
+                f"Moved row {row} to row {to_row}. Everything between them has "
+                "shifted by one, so any row numbers you read earlier are now "
+                f"out of date. {where}"
+            )
+    except HttpError as failure:
+        return readable(failure)
 
-    if action == "remove":
-        assert row is not None
-        sheet.delete_rows(row)
-        save(book, path)
-        return (
-            f"Removed row {row}. The rows below it have shifted up by one, so "
-            "any row numbers you read earlier are now out of date. Call "
-            "inspect_sheet again before changing anything else by row number."
-        ) + location(sheet, path)
+    return f'Unknown action "{action}". Use add, edit, remove or move.'
 
-    return f'Unknown action "{action}". Use add, edit or remove.'
+
+CASES = [
+    ("a row that does not exist", {"action": "edit", "row": 9999, "values": {"Region": "EU"}}),
+    ("a column that does not exist", {"action": "add", "values": {"Nonsense": 1}}),
+    ("edit with nothing to change", {"action": "edit", "row": 2, "values": {}}),
+    ("move with nowhere to go", {"action": "move", "row": 2}),
+]
 
 
 def main() -> None:
-    """Try the tool by hand with `python -m excel_agent.tools.modify`.
+    """Try the refusals by hand with `python -m excel_agent.tools.modify`.
 
-    Adds a row, edits it, then removes it again, so the sheet is left as it
-    was found. Close the file in Excel first, otherwise saving fails because
-    Excel holds a lock on it while it is open.
+    Only the calls that change nothing are here. Anything that writes belongs
+    in a scratch spreadsheet, run by hand, so a demo file is not quietly
+    reshaped by a smoke test.
     """
-    # Imported here rather than at the top, so the tool itself does not depend
-    # on the other tool.
-    from excel_agent.tools.inspect import inspect_sheet
-
-    print("--- a row that does not exist, so nothing is written ---")
-    print(modify_row.invoke({"action": "edit", "row": 9999, "values": {"Region": "EU"}}))
-
-    print("\n--- a column that does not exist, so nothing is written ---")
-    print(modify_row.invoke({"action": "add", "values": {"Profit": 10}}))
-
-    print("\n--- add a row ---")
-    print(
-        modify_row.invoke(
-            {
-                "action": "add",
-                "values": {
-                    "Product": "Test Row",
-                    "Region": "EU",
-                    "Units": 3,
-                    "Unit Price": 10,
-                },
-            }
-        )
-    )
-
-    # The same workbook the tool calls above reached for, since none of them
-    # names one.
-    sheet = resolve_sheet(load_book(resolve_workbook()))
-    assert sheet is not None
-    added_row = last_data_row(sheet, find_header_row(sheet))
-
-    print(f"\n--- edit row {added_row} ---")
-    print(modify_row.invoke({"action": "edit", "row": added_row, "values": {"Units": 8}}))
-
-    print("\n--- the sheet now, last few rows ---")
-    print(inspect_sheet.invoke({"start_row": added_row - 2}))
-
-    print(f"\n--- remove row {added_row} again ---")
-    print(modify_row.invoke({"action": "remove", "row": added_row}))
+    for label, arguments in CASES:
+        print(f"--- {label}: {arguments} ---")
+        print(modify_row.invoke(arguments))
+        print()
 
 
 if __name__ == "__main__":

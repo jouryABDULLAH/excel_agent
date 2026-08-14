@@ -10,17 +10,13 @@ drawn above the box.
 """
 
 import time
-from pathlib import Path
 
 import streamlit as st
 
-from excel_agent import config
-from excel_agent.browsing import IN_USE
+from excel_agent import browsing
 from excel_agent.config import MODEL
 from excel_agent.runner import Answer, Session, ToolCall, rendered
 from excel_agent.subagents.factory import VARIANTS, agent_name, build
-
-UPLOAD_SUFFIX = ".xlsx"
 
 # Reading Drive costs a call over the network, and Streamlit runs this file
 # again on every click. Held for a minute, so clicking about the page does not
@@ -43,32 +39,10 @@ FADE_OUT = """
 """ % FADE_SECONDS
 
 
-def save_upload(upload, folder: Path) -> str:
-    """Put an uploaded workbook in the folder, and say what happened.
-
-    The name is cut back to its last part, so an upload calling itself
-    ../../something cannot write outside the folder. A name already taken is
-    refused rather than written over: the file it would replace is the user's,
-    and a demo that quietly overwrites their sheet has nothing to put back.
-    """
-    name = Path(upload.name).name
-
-    if not name.lower().endswith(UPLOAD_SUFFIX):
-        return f"{name} is not a {UPLOAD_SUFFIX} file, so it was not saved."
-
-    destination = folder / name
-    if destination.exists():
-        return f"There is already a workbook called {name}. Rename it and try again."
-
-    folder.mkdir(parents=True, exist_ok=True)
-    destination.write_bytes(upload.getbuffer())
-    return f"Saved {name}."
-
-
 @st.cache_data(ttl=CACHE_SECONDS, show_spinner=False)
-def workbooks(backend: str) -> list[str]:
+def workbooks() -> list[str]:
     """What can be worked on. Nothing here asks the model."""
-    return IN_USE["workbooks"]()
+    return browsing.workbooks()
 
 
 @st.cache_data(ttl=CACHE_SECONDS, show_spinner=False)
@@ -84,7 +58,7 @@ def suggestions(reading: str | None) -> list[str]:
     the new one rather than answering about the last. A name starting with an
     underscore would be left out of that key, which is the opposite.
     """
-    return IN_USE["suggestions"]()
+    return browsing.suggestions()
 
 
 def heading() -> str:
@@ -94,9 +68,9 @@ def heading() -> str:
     does not draw one: it points at the real thing instead, which is always
     right and shows a change landing as it lands.
     """
-    said = f"Working on **{IN_USE['where']()}**"
+    said = f"Working on **{browsing.where()}**"
 
-    link = IN_USE["link"]()
+    link = browsing.link()
     if link:
         said += f" · [open it]({link})"
 
@@ -156,15 +130,15 @@ def draw_transcript() -> None:
 
 
 def sidebar() -> None:
-    """The files there are, which one is in use, and how to add another."""
+    """The spreadsheets there are, and which one is in use."""
     with st.sidebar:
-        st.subheader(IN_USE["noun"])
+        st.subheader(browsing.NOUN)
 
-        names = workbooks(config.BACKEND)
-        in_use = IN_USE["in_use"]()
+        names = workbooks()
+        in_use = browsing.in_use()
 
         if not names:
-            st.info(IN_USE["empty"])
+            st.info(browsing.EMPTY)
         else:
             # A list, not a row of buttons: eleven spreadsheets as a radio is a
             # wall of text. Nothing is chosen when the agent starts against
@@ -180,7 +154,7 @@ def sidebar() -> None:
             if chosen and chosen != in_use:
                 # The same switch /use makes at the command line.
                 try:
-                    IN_USE["choose"](chosen)
+                    browsing.choose(chosen)
                 except ValueError as explanation:
                     st.error(str(explanation))
                 else:
@@ -189,13 +163,9 @@ def sidebar() -> None:
                     suggestions.clear()
                     st.rerun()
 
-        if IN_USE["uploads"]:
-            upload = st.file_uploader("Add a workbook", type=["xlsx"])
-            if upload is not None:
-                st.write(save_upload(upload, config.DATA_DIR))
-                workbooks.clear()
-        else:
-            st.caption("Spreadsheets come from your Drive. Add one there.")
+        # A spreadsheet is added in Drive, by Google, and nothing here has the
+        # scope to do it.
+        st.caption("Spreadsheets come from your Drive. Add one there.")
 
         st.divider()
         st.subheader("Agent")
@@ -224,11 +194,11 @@ def main() -> None:
     # setting or a way out of a corner, and none of it is worth the width on
     # the way in: the first thing anyone should see is somewhere to type.
     st.set_page_config(
-        page_title=IN_USE["title"],
+        page_title=browsing.TITLE,
         page_icon=":bar_chart:",
         initial_sidebar_state="collapsed",
     )
-    st.title(IN_USE["title"])
+    st.title(browsing.TITLE)
 
     if "session" not in st.session_state:
         try:
@@ -248,7 +218,7 @@ def main() -> None:
     if not st.session_state.transcript:
         with holder.container(key="suggestions"):
             st.caption("Try one of these")
-            asks = suggestions(IN_USE["in_use"]())
+            asks = suggestions(browsing.in_use())
             # Two to a row, filled across before down, so they read in the
             # order they are written.
             for first in range(0, len(asks), 2):
@@ -272,7 +242,7 @@ def main() -> None:
     with st.chat_message("user"):
         st.markdown(question)
 
-    was = IN_USE["in_use"]()
+    was = browsing.in_use()
 
     with st.chat_message("assistant"):
         box = st.container()
@@ -294,7 +264,7 @@ def main() -> None:
     # The agent can move to another file part way through a turn, and the line
     # saying where the work is going was drawn before it did. Left alone, the
     # page would name the old file until something else was clicked.
-    if IN_USE["in_use"]() != was:
+    if browsing.in_use() != was:
         st.rerun()
 
 

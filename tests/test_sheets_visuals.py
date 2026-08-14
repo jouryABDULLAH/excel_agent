@@ -9,7 +9,7 @@ import fake_sheets
 import pytest
 from pydantic import ValidationError
 
-from excel_agent.tools.sheets import charts, inspect, style
+from excel_agent.tools import charts, inspect, style
 
 SPREADSHEET = "TEST - Sales Orders"
 SHEET = "Sales Orders"

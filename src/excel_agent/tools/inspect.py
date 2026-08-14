@@ -1,100 +1,101 @@
 """Tool for reading the sheet.
 
-Gives the model a view of the data before it changes anything, using real
-Excel row numbers so modify_row can be pointed at the right row.
+Gives the model a view of the data before it changes anything, using the row
+numbers shown down the side of the sheet so modify_row can be pointed at the
+right row.
 """
 
-from datetime import date, datetime
-
+from googleapiclient.errors import HttpError
 from langchain_core.tools import tool
 
-from excel_agent.config import resolve_workbook
-from excel_agent.workbook import (
+from excel_agent.sheets import (
+    Cell,
+    cell,
+    chart_kind,
+    chart_title,
+    charts_in,
     find_header_row,
+    grid,
     header_map,
     last_data_row,
-    load_book,
-    load_values,
+    readable,
     resolve_sheet,
+    resolve_spreadsheet,
 )
 
-# Upper bound on max_rows, so one call cannot return a huge sheet.
+# Upper bound on max_rows, so one call cannot return the whole of a long sheet.
 ROW_LIMIT = 200
 
 
-def as_text(value) -> str:
-    """Render one cell value for the markdown table.
+def as_text(one: Cell) -> str:
+    """Render one cell for the markdown table.
 
-    Blanks become empty strings rather than None, dates lose the midnight
-    timestamp, and whole numbers stored as floats lose the trailing .0.
+    Google has already formatted every value the way the sheet displays it, so
+    a date reads as a date and a currency keeps its symbol without anything
+    here knowing about either. A cell holding a formula shows the formula
+    only when it has no result to show, which happens while a sheet is still
+    working one out.
+
+    Nothing at all becomes an empty string, so a blank cell leaves a gap in
+    the table rather than the word None.
     """
-    if value is None:
-        return ""
-    if isinstance(value, datetime):
-        return value.date().isoformat()
-    if isinstance(value, date):
-        return value.isoformat()
-    if isinstance(value, float) and value.is_integer():
-        return str(int(value))
-    return str(value)
+    if one.displayed is not None:
+        return str(one.displayed)
+    if one.formula:
+        return one.formula
+
+    return ""
 
 
 @tool
 def inspect_sheet(
     columns: list[str] | None = None,
-    start_row: int | None = None,
-    max_rows: int = 50,
-    workbook: str | None = None,
+    start_row: int = 1,
+    max_rows: int = 20,
+    spreadsheet: str | None = None,
     sheet: str | None = None,
 ) -> str:
-    """Read rows from the sheet so you can see what is there before changing it.
+    """Read rows from the sheet, with their real row numbers.
 
-    Call this before modify_row, so that you work from the real row numbers
-    instead of guessing them.
+    Call this before changing anything, so the row numbers you use are the
+    ones the sheet really has.
 
     Args:
         columns: Column names to show. Leave empty to show every column.
-        start_row: First Excel row to read. Omit this unless you are paging
-            through a long sheet.
-        max_rows: How many rows to read at most.
-        workbook: Which workbook to read, by file name. Leave this out to read
-            the one being worked on, which is what you normally want. Name a
-            workbook only when the user named a file.
-        sheet: Which sheet to read, by name. Leave this out to read the sheet
-            the workbook opens on. Name a sheet only when the user named one.
-            A name that reaches no sheet is answered with the names that do
-            exist.
+        start_row: The row to start reading from. Row numbers are the ones
+            shown down the side of the sheet in Google Sheets.
+        max_rows: How many rows to read.
+        spreadsheet: Which spreadsheet to read, by name. Leave this out to
+            read the one being worked on.
+        sheet: Which sheet to read, by name. Leave this out to read the first
+            sheet in the spreadsheet.
 
     Returns:
-        A markdown table. Its row column holds the real Excel row number,
-        which is what modify_row expects. The first line says which workbook
-        and sheet it came from, which row the column names are in, and how many
-        rows of data follow, so you can tell whether you have seen all of them.
+        A markdown table whose row column holds the real row number, or an
+        explanation of why nothing was read.
+
+    Examples:
+        inspect_sheet()
+        inspect_sheet(columns=["Region", "Units"], max_rows=50)
+        inspect_sheet(spreadsheet="Sales Orders", sheet="Q1")
     """
     try:
-        path = resolve_workbook(workbook)
+        spreadsheet_id, title = resolve_spreadsheet(spreadsheet)
+        properties = resolve_sheet(spreadsheet_id, sheet)
+        rows = grid(spreadsheet_id, properties["title"])
     except ValueError as explanation:
         return str(explanation)
+    except HttpError as failure:
+        return readable(failure)
 
-    try:
-        worksheet = resolve_sheet(load_values(path), sheet)
-    except ValueError as explanation:
-        return str(explanation)
+    where = f"{properties['title']} in {title}"
 
-    # Found by the name of the sheet already settled on, so the values and the
-    # formulas are two views of the same sheet rather than two lookups that
-    # could disagree.
-    formulas = load_book(path)[worksheet.title]
-
-
-    header_row = find_header_row(worksheet)
-    headers = header_map(worksheet, header_row)
-
-
+    header_row = find_header_row(rows)
+    headers = header_map(rows, header_row)
     if not headers:
         return (
-            f"No column names were found. Row {header_row} is empty, and no "
-            "row near the top of the sheet looks like a header."
+            f"Sheet: {where}. No column names were found: row {header_row} is "
+            "empty, and no row near the top looks like a header."
         )
 
     if max_rows < 1:
@@ -110,31 +111,24 @@ def inspect_sheet(
             )
         names = list(columns)
 
-    last_row = last_data_row(worksheet, header_row)
+    last_row = last_data_row(rows, header_row)
     total_rows = max(last_row - header_row, 0)
-
     if total_rows == 0:
-        return (
-            f"Sheet: {worksheet.title} in {path.name}. It has column names but no "
-            "rows of data yet."
-        )
+        return f"Sheet: {where}. It has column names but no rows of data yet."
 
     first_data_row = header_row + 1
-    first = max(start_row or first_data_row, first_data_row)
+    first = max(start_row, first_data_row)
     last = min(first + min(max_rows, ROW_LIMIT) - 1, last_row)
 
     if first > last_row:
         return (
-            f"Sheet: {worksheet.title} in {path.name} has {total_rows} rows of data, "
-            f"ending at row {last_row}, so there is nothing to read from row "
-            f"{start_row}."
+            f"Sheet: {where} has {total_rows} rows of data, ending at row "
+            f"{last_row}, so there is nothing to read from row {start_row}."
         )
 
-    # The workbook is named on every read, so that two tables in one
-    # conversation cannot be mistaken for each other.
     summary = (
-        f"Sheet: {worksheet.title} in {path.name} ({total_rows} rows of data, "
-        f"column names in row {header_row})"
+        f"Sheet: {where} ({total_rows} rows of data, column names in row "
+        f"{header_row})"
     )
     if first > first_data_row or last < last_row:
         summary += f". Showing rows {first} to {last}."
@@ -146,26 +140,9 @@ def inspect_sheet(
         "|" + "---|" * (len(names) + 1),
     ]
 
-    showed_a_formula = False
     for row in range(first, last + 1):
-        cells = []
-        for name in names:
-            value = worksheet.cell(row=row, column=headers[name]).value
-            if value is None and formulas is not None:
-                formula = formulas.cell(row=row, column=headers[name]).value
-                if isinstance(formula, str) and formula.startswith("="):
-                    value = formula
-                    showed_a_formula = True
-            cells.append(as_text(value))
-        lines.append(f"| {row} | " + " | ".join(cells) + " |")
-
-    if showed_a_formula:
-        lines.append("")
-        lines.append(
-            "A cell shown as a formula is calculated by the sheet itself. Its "
-            "result is worked out when the file is opened in Excel, so there "
-            "is no value to read here. Do not try to set these cells."
-        )
+        values = [as_text(cell(rows, row, headers[name])) for name in names]
+        lines.append(f"| {row} | " + " | ".join(values) + " |")
 
     if last < last_row:
         lines.append("")
@@ -174,35 +151,38 @@ def inspect_sheet(
             f"Call again with start_row={last + 1} to see them."
         )
 
+    # A chart has an id but no name, so the number here is how modify_chart is
+    # pointed at one. Listed last, because it is about the sheet rather than
+    # about the rows just read.
+    drawn = charts_in(spreadsheet_id, properties["title"])
+    if drawn:
+        lines.append("")
+        lines.append(f"{len(drawn)} chart(s) on this sheet:")
+        for number, chart in enumerate(drawn, start=1):
+            spec = chart.get("spec", {})
+            lines.append(f"  {number}. {chart_title(spec)} ({chart_kind(spec)})")
+
     return "\n".join(lines)
 
 
-
 CASES = [
-    ("the whole sheet", {}),
-    ("one column", {"columns": ["Product"]}),
-    ("three columns", {"columns": ["Product", "Region", "Units"]}),
-    ("columns asked for in a different order", {"columns": ["Region", "ID"]}),
-    ("the first three rows", {"max_rows": 3}),
-    ("paging on from row 5", {"start_row": 5, "max_rows": 3}),
-    ("the last row on its own", {"start_row": 11, "max_rows": 1}),
-    ("start_row on the header row, which gets clamped", {"start_row": 1, "max_rows": 2}),
-    ("start_row past the end of the data", {"start_row": 500}),
-    ("max_rows above the limit, which gets capped", {"max_rows": 5000}),
+    ("the first rows", {}),
+    ("two columns", {"columns": ["Region", "Units"]}),
+    ("paging on from row 10", {"start_row": 10, "max_rows": 5}),
+    ("more rows than there are", {"max_rows": 5000}),
     ("max_rows of zero", {"max_rows": 0}),
-    ("a column that does not exist", {"columns": ["Profit"]}),
-    ("a real column in the wrong case", {"columns": ["region"]}),
-    ("one real column and one made up one", {"columns": ["Region", "Profit"]}),
+    ("a column that does not exist", {"columns": ["Profit Margin ", "Nonsense"]}),
+    ("a sheet that does not exist", {"sheet": "Nonsense"}),
+    ("a spreadsheet that does not exist", {"spreadsheet": "Nonsense"}),
 ]
 
 
 def main() -> None:
     """Try the tool by hand with `python -m excel_agent.tools.inspect`.
 
-    Prints what the model would see for each case above. Reading only, so
-    running this never changes the file.
+    Reading only, so running this never changes anything. It works on the
+    spreadsheet named in EXCEL_AGENT_SPREADSHEET.
     """
-    
     for label, arguments in CASES:
         print(f"--- {label}: {arguments} ---")
         print(inspect_sheet.invoke(arguments))

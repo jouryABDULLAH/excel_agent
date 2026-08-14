@@ -1,18 +1,21 @@
-"""What a front end needs to know about the files it can work on.
+"""What a front end needs to know about the spreadsheets it can work on.
 
-The page asks the same handful of questions whichever backend is in use: what
-can be worked on, which one is in hand, how to move to another, where that
-leaves us, and what is worth asking about it. Answering them from openpyxl and
-from Drive is different enough that the alternative was a page full of
-branches.
+The handful of questions a page asks: what can be worked on, which one is in
+hand, how to move to another, where that leaves us, and what is worth asking
+about it.
 
 Nothing here draws anything, so it can be tested without Streamlit. Nothing
-here is cheap either: for Drive, every one of these is a call over the
-network, and Streamlit runs its page again on every click. Whoever draws the
-page is the one that has to cache them.
+here is cheap either: every one of these is a call over the network, and
+Streamlit runs its page again on every click. Whoever draws the page is the
+one that has to cache them.
 """
 
 from excel_agent import config
+
+# What the page calls itself and the things it lists.
+TITLE = "Sheets agent"
+NOUN = "Spreadsheets"
+EMPTY = "No spreadsheets in this Drive."
 
 # Offered whatever the sheet turns out to hold, and the whole of what is
 # offered when it cannot be read at all.
@@ -66,83 +69,19 @@ def asks_for(columns: dict[str, list]) -> list[str]:
     return asks
 
 
-# Workbooks in the data folder, through openpyxl
-
-
-def local_workbooks() -> list[str]:
-    """The workbooks that can be worked on."""
-    return config.workbook_names()
-
-
-def local_in_use() -> str | None:
-    """The workbook being worked on."""
-    return config.WORKBOOK_PATH.name
-
-
-def local_choose(name: str) -> None:
-    """Work on this workbook from now on. Raises ValueError on a bad name."""
-    config.WORKBOOK_PATH = config.resolve_workbook(name)
-
-
-def local_where() -> str:
-    """Where the work is going, for the line under the title."""
-    return config.WORKBOOK_PATH.name
-
-
-def local_link() -> str | None:
-    """A workbook is a file on this machine, so there is nowhere to send anyone."""
-    return None
-
-
-def local_suggestions() -> list[str]:
-    """A few things worth asking about the workbook in hand."""
-    from excel_agent.workbook import (
-        find_header_row,
-        header_map,
-        is_blank,
-        last_data_row,
-        load_values,
-    )
-
-    try:
-        sheet = load_values(config.WORKBOOK_PATH).active
-        header_row = find_header_row(sheet)
-        headers = header_map(sheet, header_row)
-        last_row = last_data_row(sheet, header_row)
-    except Exception:  # noqa: BLE001 - a workbook that will not open offers nothing
-        return list(GENERIC)
-
-    if not headers or last_row <= header_row:
-        return list(GENERIC)
-
-    rows = range(header_row + 1, min(header_row + 6, last_row) + 1)
-    columns = {
-        name: [
-            sheet.cell(row=row, column=number).value
-            for row in rows
-            if not is_blank(sheet.cell(row=row, column=number).value)
-        ]
-        for name, number in headers.items()
-    }
-    return asks_for(columns)
-
-
-# Spreadsheets on Google Drive
-
-
-def sheets_workbooks() -> list[str]:
+def workbooks() -> list[str]:
     """The spreadsheets that can be worked on, by name."""
     from excel_agent.sheets import search
 
     return [title for _, title in search()]
 
 
-def sheets_in_use() -> str | None:
+def in_use() -> str | None:
     """The spreadsheet being worked on, or None when none has been chosen."""
     return config.SPREADSHEET
 
 
-def sheets_choose(name: str) -> None:
+def choose(name: str) -> None:
     """Work on this spreadsheet from now on. Raises ValueError on a bad name.
 
     Resolved rather than trusted, so the name stored is the one Drive really
@@ -155,7 +94,7 @@ def sheets_choose(name: str) -> None:
     config.SPREADSHEET = title
 
 
-def sheets_where() -> str:
+def where() -> str:
     """Which sheet of which spreadsheet the work is going to.
 
     Both are named because neither on its own says where a change will land: a
@@ -176,7 +115,7 @@ def sheets_where() -> str:
     return f"{properties['title']} in {title}"
 
 
-def sheets_link() -> str | None:
+def link() -> str | None:
     """Where the spreadsheet lives, so it can be opened beside the agent.
 
     The sheet itself is the only view of the sheet worth having: it is always
@@ -196,7 +135,7 @@ def sheets_link() -> str | None:
     return f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}"
 
 
-def sheets_suggestions() -> list[str]:
+def suggestions() -> list[str]:
     """A few things worth asking about the spreadsheet in hand."""
     from excel_agent.sheets import (
         cell,
@@ -235,47 +174,3 @@ def sheets_suggestions() -> list[str]:
         for name, number in headers.items()
     }
     return asks_for(columns)
-
-
-BACKENDS = {
-    "local": {
-        "workbooks": local_workbooks,
-        "in_use": local_in_use,
-        "choose": local_choose,
-        "where": local_where,
-        "link": local_link,
-        "suggestions": local_suggestions,
-        # A workbook is added by putting a file in the folder. A spreadsheet is
-        # added in Drive, by Google, and nothing here has the scope to do it.
-        "uploads": True,
-        "title": "Excel agent",
-        "noun": "Workbooks",
-        "empty": "No workbooks yet. Upload one below.",
-    },
-    "sheets": {
-        "workbooks": sheets_workbooks,
-        "in_use": sheets_in_use,
-        "choose": sheets_choose,
-        "where": sheets_where,
-        "link": sheets_link,
-        "suggestions": sheets_suggestions,
-        "uploads": False,
-        "title": "Sheets agent",
-        "noun": "Spreadsheets",
-        "empty": "No spreadsheets in this Drive.",
-    },
-}
-
-
-def browsing_for(backend: str) -> dict:
-    """The answers for one backend.
-
-    Raises ValueError, naming both backends, when asked for neither.
-    """
-    if backend not in BACKENDS:
-        raise ValueError(f'EXCEL_AGENT_BACKEND is "{backend}". Use "local" or "sheets".')
-
-    return BACKENDS[backend]
-
-
-IN_USE = browsing_for(config.BACKEND)

@@ -11,7 +11,7 @@ whole of what a tool gives it.
 import fake_sheets
 import pytest
 
-from excel_agent.tools.sheets import columns, find, inspect, modify, spreadsheets, stats
+from excel_agent.tools import columns, find, inspect, modify, spreadsheets, stats
 
 SPREADSHEET = "TEST - Sales Orders"
 SHEET = "Sales Orders"

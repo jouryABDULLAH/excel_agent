@@ -5,12 +5,10 @@ routes sensibly: that is what the comparison run is for. What is tested is the
 wiring, which is what would make a comparison meaningless if it were wrong.
 """
 
-import make_fixtures
 import pytest
 from langchain.agents import create_agent
 from langchain_core.messages import AIMessage
 from langgraph.checkpoint.memory import InMemorySaver
-from openpyxl import load_workbook
 from scripted import ScriptedModel, calling
 
 from excel_agent.prompts import CANNOT_DO, SYSTEM_PROMPT
@@ -18,10 +16,11 @@ from excel_agent.runner import Answer, Session, ToolCall
 from excel_agent.subagents import SUBAGENTS, build
 from excel_agent.subagents.factory import as_tool
 from excel_agent.subagents.prompts import ORCHESTRATOR_PROMPT
-from excel_agent.tools import LOCAL_TOOLS
+from excel_agent.tools import TOOLS
 
-# list_workbooks is the orchestrator's own, so no subagent holds it.
-ORCHESTRATOR_ONLY = {"list_workbooks"}
+# Choosing which spreadsheet to work on is the orchestrator's own question, so
+# no subagent holds any of these.
+ORCHESTRATOR_ONLY = {"list_workbooks", "find_spreadsheet", "use_spreadsheet"}
 
 
 # Who holds what
@@ -29,9 +28,9 @@ ORCHESTRATOR_ONLY = {"list_workbooks"}
 
 def test_every_tool_reaches_some_subagent():
     covered = {tool.name for spec in SUBAGENTS for tool in spec.tools}
-    everything = {tool.name for tool in LOCAL_TOOLS} - ORCHESTRATOR_ONLY
+    everything = {tool.name for tool in TOOLS} - ORCHESTRATOR_ONLY
 
-    # A tool added to LOCAL_TOOLS and forgotten here would leave the multi agent
+    # A tool added to TOOLS and forgotten here would leave the multi agent
     # variant quietly unable to do something the single agent can, and the
     # comparison would read it as a routing failure.
     assert everything <= covered
@@ -40,7 +39,7 @@ def test_every_tool_reaches_some_subagent():
 def test_no_subagent_holds_a_tool_that_is_not_offered():
     covered = {tool.name for spec in SUBAGENTS for tool in spec.tools}
 
-    assert covered <= {tool.name for tool in LOCAL_TOOLS}
+    assert covered <= {tool.name for tool in TOOLS}
 
 
 def test_reading_comes_with_every_subagent_that_writes():
@@ -86,8 +85,8 @@ def test_a_subagent_becomes_a_tool_taking_an_instruction():
     assert wrapped.description == SUBAGENTS[0].description
 
 
-def test_a_subagent_does_the_work_and_says_which_tools_it_used(tmp_path, use_workbook):
-    path = use_workbook(make_fixtures.clean_table(tmp_path))
+def test_a_subagent_does_the_work_and_says_which_tools_it_used(a_spreadsheet):
+    sent = a_spreadsheet()
     row_editor = next(spec for spec in SUBAGENTS if spec.name == "row_editor")
     wrapped = as_tool(
         row_editor,
@@ -106,7 +105,7 @@ def test_a_subagent_does_the_work_and_says_which_tools_it_used(tmp_path, use_wor
     # the evidence rather than a summary it would have to take on trust.
     assert "What the tools returned:" in answer
     assert "Updated row 2" in answer
-    assert load_workbook(path).active["D2"].value == 99
+    assert sent
 
 
 # Choosing a variant
@@ -120,8 +119,8 @@ def test_a_name_that_is_neither_variant_is_refused():
 # The orchestrator through the runner
 
 
-def test_the_orchestrator_answers_through_the_same_events(tmp_path, use_workbook):
-    use_workbook(make_fixtures.clean_table(tmp_path))
+def test_the_orchestrator_answers_through_the_same_events(a_spreadsheet):
+    a_spreadsheet()
     analyst = next(spec for spec in SUBAGENTS if spec.name == "analyst")
     # A script each, so the test does not depend on the order the two of them
     # happen to reach for the model.
@@ -150,16 +149,3 @@ def test_the_orchestrator_answers_through_the_same_events(tmp_path, use_workbook
     # tool call names a subagent rather than a spreadsheet tool.
     assert events[0] == ToolCall("analyst", {"instruction": "how many rows?"})
     assert events[-1] == Answer("There are five rows.")
-
-
-def test_the_orchestrator_gets_the_file_tool_of_the_backend_in_use():
-    from excel_agent.config import BACKEND
-    from excel_agent.tools import select_tools
-
-    offered = {tool.name: tool for tool in select_tools(BACKEND)}
-
-    # Both backends have a tool called list_workbooks. Importing one of them
-    # by name gave the orchestrator the local one while every subagent under
-    # it talked to Drive, so it has to be picked out of the set in use.
-    assert "list_workbooks" in offered
-    assert offered["list_workbooks"] in select_tools(BACKEND)

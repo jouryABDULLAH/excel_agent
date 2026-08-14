@@ -1,9 +1,8 @@
 """subagents registry.
 
-Four subagents, whichever backend is in use. What changes between backends is
-what each one holds and what it is told, and both of those are looked up
-rather than named here: the tools by the names they answer to, the prompts and
-descriptions from the module for that backend.
+Four subagents. The tools are looked up by the names they answer to rather
+than imported one by one, so this reads as a division of labour and not as a
+second copy of the tool list.
 
 inspect_sheet belongs to several of them on purpose: an agent that writes
 without reading first is guessing, and a row number handed between two agents
@@ -12,9 +11,8 @@ is stale before it arrives.
 
 from dataclasses import dataclass
 
-from excel_agent.config import BACKEND
-from excel_agent.subagents.prompts import prompts_for
-from excel_agent.tools import select_tools
+from excel_agent.subagents import prompts
+from excel_agent.tools import TOOLS
 
 
 @dataclass(frozen=True)
@@ -27,17 +25,14 @@ class SubagentSpec:
     tools: tuple
 
 
-def subagents_for(backend: str) -> tuple[SubagentSpec, ...]:
-    """The four subagents, holding one backend's tools and told its rules.
+def subagents() -> tuple[SubagentSpec, ...]:
+    """The four subagents, each holding the tools its work needs.
 
-    The tools are picked out by name, which works for either backend because
-    the Google tools answer to the same names as the local ones. A backend
-    that grows a tool no subagent holds would leave the multi agent variant
-    unable to do something the single agent can, which is what the test on
-    that coverage is for.
+    A tool no subagent holds would leave the multi agent variant unable to do
+    something the single agent can, which is what the test on that coverage is
+    for.
     """
-    tools = {tool.name: tool for tool in select_tools(backend)}
-    prompts = prompts_for(backend)
+    tools = {tool.name: tool for tool in TOOLS}
 
     # Held by whoever might change something, and by the analyst as its whole
     # reason for being.
@@ -46,15 +41,11 @@ def subagents_for(backend: str) -> tuple[SubagentSpec, ...]:
     # Finding a row by what is in it is reading, and it gives back a row
     # number: whoever will act on that number should be the one who asked for
     # it, which is why this is not the orchestrator's.
-    reading_tools = [reading, tools["sheet_stats"]]
-    if "find_data" in tools:
-        reading_tools.append(tools["find_data"])
+    reading_tools = [reading, tools["sheet_stats"], tools["find_data"]]
 
     # Styling is structural work, so it goes to the subagent that already
     # changes the shape of the sheet rather than to a fifth one.
-    structural = [tools["modify_column"]]
-    if "modify_style" in tools:
-        structural.append(tools["modify_style"])
+    structural = [tools["modify_column"], tools["modify_style"]]
 
     return (
         SubagentSpec(
@@ -84,6 +75,5 @@ def subagents_for(backend: str) -> tuple[SubagentSpec, ...]:
     )
 
 
-# The four the orchestrator is built from. Which backend's they are comes from
-# config, so nothing downstream has to know there is more than one.
-SUBAGENTS = subagents_for(BACKEND)
+# The four the orchestrator is built from.
+SUBAGENTS = subagents()

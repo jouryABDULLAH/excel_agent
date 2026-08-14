@@ -1,8 +1,6 @@
 """Tool for how the sheet looks.
 
-Number formats, weight and colour, over a column or a run of rows. The local
-tools have no equivalent: this is one of the things the Sheets API can do
-that openpyxl makes hard.
+Number formats, weight and colour, over a column or a run of rows.
 """
 
 from googleapiclient.errors import HttpError
@@ -224,7 +222,7 @@ CASES = [
 
 
 def main() -> None:
-    """Try the refusals by hand with `python -m excel_agent.tools.sheets.style`.
+    """Try the refusals by hand with `python -m excel_agent.tools.style`.
 
     Only the calls that change nothing are here. Anything that writes belongs
     in a scratch spreadsheet, run by hand.

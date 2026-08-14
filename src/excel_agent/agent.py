@@ -4,9 +4,6 @@ Builds the model, gives it the tools from the tools package, and runs the
 loop that lets it call them until it has an answer.
 """
 
-from pathlib import Path
-from shutil import copyfile
-from tempfile import TemporaryDirectory
 from uuid import uuid4
 
 from langchain.agents import create_agent
@@ -18,8 +15,8 @@ from langgraph.errors import GraphRecursionError
 from excel_agent.config import (
     MAX_TURNS,
     MODEL,
+    SPREADSHEET,
     require_api_key,
-    resolve_workbook,
     use_utf8_output,
 )
 from excel_agent.prompts import SYSTEM_PROMPT
@@ -166,31 +163,24 @@ def run_case(agent, prompts: list[str]) -> None:
 def main() -> None:
     """Run every case with `python -m excel_agent.agent`.
 
-    Some of these change the sheet, so the file is copied first and put back
-    afterwards. That means the cases can be run again and again and always
-    start from the same data. It does make one Groq request per turn, plus
-    one per tool call, so it is not free.
+    Said up front rather than left to be discovered: several of these cases
+    change the sheet, and a spreadsheet on Drive cannot be copied aside and put
+    back the way a file could. Point EXCEL_AGENT_SPREADSHEET at something you
+    are willing to lose. It also makes one Groq request per turn, plus one per
+    tool call, so it is not free.
     """
     use_utf8_output()
-    path = resolve_workbook()
 
-    # Kept outside the data folder. A copy left beside the workbook would be a
-    # workbook itself, and would show up as one more file to choose between.
-    with TemporaryDirectory() as folder:
-        snapshot = Path(folder) / path.name
-        copyfile(path, snapshot)
+    print(
+        f"These cases change {SPREADSHEET or '[no spreadsheet chosen]'}, and "
+        "nothing here puts it back. Use a copy.\n"
+    )
 
-        try:
-            agent = build_agent()
-            for label, prompts in CASES:
-                print(f"=== {label} ===")
-                run_case(agent, prompts)
-                print()
-        finally:
-            # Runs even if a case raises, so a crash cannot leave the sheet in
-            # a half changed state.
-            copyfile(snapshot, path)
-            print("The sheet has been put back to how it was before these cases ran.")
+    agent = build_agent()
+    for label, prompts in CASES:
+        print(f"=== {label} ===")
+        run_case(agent, prompts)
+        print()
 
 
 if __name__ == "__main__":

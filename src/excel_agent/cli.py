@@ -6,19 +6,18 @@ answer, and repeats.
 
 import argparse
 
-from excel_agent.subagents.factory import VARIANTS, agent_name, build
-from excel_agent import config
-from excel_agent.config import MODEL, resolve_workbook, use_utf8_output
-from excel_agent.tools.inspect import inspect_sheet
+from excel_agent import browsing
+from excel_agent.config import MODEL, use_utf8_output
 from excel_agent.runner import Answer, Session, Text, ToolCall, rendered
-from excel_agent.tools.workbooks import list_workbooks
+from excel_agent.subagents.factory import VARIANTS, agent_name, build
+from excel_agent.tools import inspect_sheet, list_workbooks
 
 HELP = """\
 Type what you want done to the sheet, in your own words.
 
-  /use [file]     work on another workbook, or list the ones there are
-  /sheet [name]   show a sheet without asking the model, the one the file
-                  opens on unless you name another
+  /use [name]     work on another spreadsheet, or list the ones there are
+  /sheet [name]   show a sheet without asking the model, the one the
+                  spreadsheet opens on unless you name another
   /tools          show or hide the tool calls behind each answer
   /reset          forget the conversation so far
   /help           show this
@@ -84,7 +83,7 @@ def main() -> None:
         return
 
     print(
-        f"Working on {config.WORKBOOK_PATH.name} with {MODEL}, "
+        f"Working on {browsing.where()} with {MODEL}, "
         f"{arguments.agents} agent. /help for commands."
     )
 
@@ -110,13 +109,9 @@ def main() -> None:
 
         if question == "/sheet" or question.startswith("/sheet "):
             # A name after the command picks a sheet; a wrong one is answered
-            # with the sheets the workbook does have.
+            # with the sheets the spreadsheet does have.
             wanted = question[len("/sheet"):].strip()
-            print(
-                inspect_sheet.invoke(
-                    {"workbook": config.WORKBOOK_PATH.name, "sheet": wanted or None}
-                )
-            )
+            print(inspect_sheet.invoke({"sheet": wanted or None}))
             continue
 
         if question == "/use" or question.startswith("/use "):
@@ -125,11 +120,13 @@ def main() -> None:
                 print(list_workbooks.invoke({}))
                 continue
             try:
-                config.WORKBOOK_PATH = resolve_workbook(wanted)
+                # Resolved against Drive, so what is stored is the name Drive
+                # really holds rather than the one that was typed.
+                browsing.choose(wanted)
             except ValueError as explanation:
                 print(explanation)
                 continue
-            print(f"Now working on {config.WORKBOOK_PATH.name}.")
+            print(f"Now working on {browsing.where()}.")
             continue
 
         if question == "/tools":

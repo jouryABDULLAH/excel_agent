@@ -1,215 +1,324 @@
-"""Tool for changing the columns of a sheet.
+"""Tool for changing columns.
 
-Adds, renames and deletes whole columns. A column is added at the right hand
-end rather than pushed in between two others, because openpyxl moves cells
-without moving the formulas that read them: anything that shifts columns
-sideways leaves every formula after the shift pointing at the wrong cells.
-Deleting shifts by its nature, which is why it is refused whenever a formula
-would be left behind reading the wrong thing.
+Columns are added, removed, moved and renamed through the Sheets API, so
+formulas and charts that referred to them are rewritten to follow.
 """
 
-from pathlib import Path
 from typing import Literal
 
+from googleapiclient.errors import HttpError
 from langchain_core.tools import tool
-from openpyxl.utils import get_column_letter
 
-from excel_agent.config import resolve_workbook
-from excel_agent.workbook import (
-    WRITE_LOCK,
-    columns_referenced,
+from excel_agent.sheets import (
+    a1,
+    batch,
+    column_letter,
     find_header_row,
-    formula_cells,
+    grid,
     header_map,
-    is_blank,
     last_data_row,
-    load_book,
-    location,
+    readable,
     resolve_sheet,
-    save,
+    resolve_spreadsheet,
+    to_dimension_range,
+    to_grid_range,
+    write_values,
 )
-
-
-def column_holding(cell, headers: dict[str, int]) -> str:
-    """The name of the column a cell sits in, or its letter if it has none."""
-    for name, number in headers.items():
-        if number == cell.column:
-            return f'"{name}"'
-    return f"column {get_column_letter(cell.column)}"
 
 
 @tool
 def modify_column(
-    action: Literal["add", "rename", "delete"],
-    name: str | None = None,
+    action: Literal["add", "remove", "move", "rename", "set_formula"],
+    column: str,
+    to_position: int | None = None,
     new_name: str | None = None,
-    workbook: str | None = None,
+    formula: str | None = None,
+    spreadsheet: str | None = None,
     sheet: str | None = None,
 ) -> str:
-    """Add, rename or delete a whole column.
+    """Add, remove, move or rename a column, or fill it with a formula.
 
     Call inspect_sheet first, so the column names you use are the real ones.
-    This changes the columns themselves, not the values in them: use
-    modify_row to put values into a column once it exists.
 
     Args:
-        action: What to do. "add" puts a new empty column after the last one,
-            "rename" changes a column's name and leaves its data alone,
-            "delete" removes a column and everything in it.
-        name: The column to act on. For "add" this is the name the new column
-            will have. For "rename" and "delete" it is the column that is
-            already there, spelled exactly as inspect_sheet reports it.
-        new_name: The name a renamed column takes. Only used by "rename".
-        workbook: Which workbook to change, by file name. Leave this out to
+        action: What to do. "set_formula" writes one formula and fills it
+            down the whole column.
+        column: The column to change, by the name in its header. For "add",
+            the name the new column should have.
+        to_position: Where the column should end up, counting from the left.
+            Needed for move only.
+        new_name: What the column should be called. Needed for rename only.
+        formula: The formula to fill down, written as it would be typed, such
+            as "=B2*C2". Needed for set_formula only.
+        spreadsheet: Which spreadsheet to change, by name. Leave this out to
             change the one being worked on.
         sheet: Which sheet to change, by name. Leave this out to change the
-            sheet the workbook opens on.
+            first sheet in the spreadsheet.
 
     Returns:
         A sentence saying what changed, or an explanation of why nothing was
-        changed. Nothing is written to the file when the answer is an
-        explanation, so you are free to correct the arguments and try again.
-
-        Deleting a column throws its data away for good. A column that some
-        formula depends on cannot be deleted at all, and the explanation says
-        which formula is in the way.
+        changed. Nothing is written when the answer is an explanation, so you
+        are free to correct the arguments and try again.
 
     Examples:
-        modify_column(action="add", name="Notes")
-        modify_column(action="rename", name="Units", new_name="Quantity")
-        modify_column(action="delete", name="Notes")
+        modify_column(action="add", column="Profit")
+        modify_column(action="rename", column="Units", new_name="Quantity")
+        modify_column(action="move", column="Notes", to_position=2)
+        modify_column(action="set_formula", column="Profit", formula="=I2-J2")
+        modify_column(action="remove", column="Profit")
     """
-    try:
-        path = resolve_workbook(workbook)
-    except ValueError as explanation:
-        return str(explanation)
+    if not column or not column.strip():
+        return f"The {action} action needs the name of a column."
 
-    with WRITE_LOCK:
-        return apply_column_change(action, name, new_name, path, sheet)
-
-
-def apply_column_change(
-    action: str,
-    name: str | None,
-    new_name: str | None,
-    path: Path,
-    sheet_name: str | None = None,
-) -> str:
-    """Do the work of modify_column, with the write lock already held."""
-    book = load_book(path)
+    column = column.strip()
 
     try:
-        sheet = resolve_sheet(book, sheet_name)
+        spreadsheet_id, name = resolve_spreadsheet(spreadsheet)
+        properties = resolve_sheet(spreadsheet_id, sheet)
+        rows = grid(spreadsheet_id, properties["title"])
     except ValueError as explanation:
         return str(explanation)
+    except HttpError as failure:
+        return readable(failure)
 
-    header_row = find_header_row(sheet)
-    headers = header_map(sheet, header_row)
+    title = properties["title"]
+    sheet_id = properties["sheetId"]
+    where = f"({title} in {name})"
+
+    header_row = find_header_row(rows)
+    headers = header_map(rows, header_row)
     if not headers:
         return (
             f"No column names were found. Row {header_row} is empty, and no "
-            "row near the top of the sheet looks like a header."
+            f"row near the top of the sheet looks like a header. {where}"
         )
 
-    if is_blank(name):
-        return f"The {action} action needs the name of a column."
-
-    assert name is not None
-    name = name.strip()
-
-    if action in ("rename", "delete") and name not in headers:
-        return (
-            f'There is no column called "{name}". '
-            f"The sheet has: {', '.join(headers)}."
-        )
-
+    # Everything is checked before anything is written, so a rejected call
+    # leaves the sheet exactly as it was.
     if action == "add":
-        if name in headers:
+        if column in headers:
             return (
-                f'There is already a column called "{name}". '
-                "Two columns of one name cannot be told apart."
+                f'There is already a column called "{column}". Two columns of '
+                f"one name cannot be told apart. {where}"
             )
-
-        column = max(headers.values()) + 1
-        sheet.cell(row=header_row, column=column).value = name
-        save(book, path)
+    elif column not in headers:
         return (
-            f'Added a column called "{name}", at {get_column_letter(column)}. '
-            "It is empty: use modify_row to put values into it."
-        ) + location(sheet, path)
+            f'There is no column called "{column}". '
+            f"The sheet has: {', '.join(headers)}. {where}"
+        )
 
     if action == "rename":
-        if is_blank(new_name):
+        if not new_name or not new_name.strip():
             return "The rename action needs a new_name to give the column."
-
-        assert new_name is not None
         new_name = new_name.strip()
-
-        if new_name in headers and new_name != name:
+        if new_name in headers and new_name != column:
             return (
-                f'There is already a column called "{new_name}". '
-                "Two columns of one name cannot be told apart."
+                f'There is already a column called "{new_name}". Two columns '
+                f"of one name cannot be told apart. {where}"
             )
 
-        sheet.cell(row=header_row, column=headers[name]).value = new_name
-        save(book, path)
-        return (
-            f'Renamed the column "{name}" to "{new_name}". '
-            "Its data has not moved, and the values in it are unchanged."
-        ) + location(sheet, path)
+    if action == "move":
+        if to_position is None:
+            return (
+                "The move action needs to_position, the place the column "
+                "should end up, counting from the left."
+            )
+        if to_position < 1 or to_position > len(headers):
+            return (
+                f"Position {to_position} is not somewhere a column can go. The "
+                f"sheet has {len(headers)} columns. {where}"
+            )
+        if to_position == headers[column]:
+            return f'"{column}" is already there. Nothing changed. {where}'
 
-    if action == "delete":
-        target = headers[name]
-        last_row = last_data_row(sheet, header_row)
+    if action == "set_formula":
+        if not formula or not formula.strip():
+            return "The set_formula action needs a formula to fill down."
+        formula = formula.strip()
+        if not formula.startswith("="):
+            return (
+                f'A formula starts with "=". "{formula}" would be written as '
+                "text. Use modify_row to put a plain value in a cell."
+            )
 
-        # A formula in the column being deleted goes with it, so only the ones
-        # that will still be there afterwards matter.
-        for cell in formula_cells(sheet, header_row, last_row):
-            if cell.column == target:
-                continue
-            if any(read >= target for read in columns_referenced(str(cell.value))):
+    last_row = last_data_row(rows, header_row)
+
+    try:
+        if action == "add":
+            # Written into the first column past the last named one, which is
+            # empty already, so nothing has to shift and no formula moves.
+            position = max(headers.values()) + 1
+            width = properties.get("gridProperties", {}).get("columnCount", 0)
+            if position > width:
+                batch(
+                    spreadsheet_id,
+                    [
+                        {
+                            "insertDimension": {
+                                "range": to_dimension_range(
+                                    sheet_id, "COLUMNS", position, position
+                                )
+                            }
+                        }
+                    ],
+                )
+            write_values(
+                spreadsheet_id,
+                [
+                    {
+                        "range": a1(title, header_row, header_row, position, position),
+                        "values": [[column]],
+                    }
+                ],
+            )
+            return (
+                f'Added a column called "{column}", at {column_letter(position)}. '
+                f"It is empty: use modify_row to put values into it, or "
+                f"set_formula to work them out. {where}"
+            )
+
+        if action == "rename":
+            assert new_name is not None
+            write_values(
+                spreadsheet_id,
+                [
+                    {
+                        "range": a1(
+                            title,
+                            header_row,
+                            header_row,
+                            headers[column],
+                            headers[column],
+                        ),
+                        "values": [[new_name]],
+                    }
+                ],
+            )
+            return (
+                f'Renamed the column "{column}" to "{new_name}". Its data has '
+                f"not moved. {where}"
+            )
+
+        if action == "remove":
+            batch(
+                spreadsheet_id,
+                [
+                    {
+                        "deleteDimension": {
+                            "range": to_dimension_range(
+                                sheet_id, "COLUMNS", headers[column], headers[column]
+                            )
+                        }
+                    }
+                ],
+            )
+            return (
+                f'Deleted the column "{column}" and everything in it. The '
+                "columns to its right have moved one place left, and any "
+                "formula that read it now shows #REF!, the way it would if the "
+                f"column had been deleted by hand. {where}"
+            )
+
+        if action == "move":
+            assert to_position is not None
+            from_position = headers[column]
+            # Google counts the destination in the columns as they are now,
+            # before the one being moved is lifted out.
+            destination = (
+                to_position if to_position > from_position else to_position - 1
+            )
+            batch(
+                spreadsheet_id,
+                [
+                    {
+                        "moveDimension": {
+                            "source": to_dimension_range(
+                                sheet_id, "COLUMNS", from_position, from_position
+                            ),
+                            "destinationIndex": destination,
+                        }
+                    }
+                ],
+            )
+            return (
+                f'Moved "{column}" to position {to_position}, '
+                f"{column_letter(to_position)}. The columns between have "
+                f"shifted by one. {where}"
+            )
+
+        if action == "set_formula":
+            assert formula is not None
+            position = headers[column]
+            first = header_row + 1
+            if last_row < first:
                 return (
-                    f'"{name}" cannot be deleted. {column_holding(cell, headers)} '
-                    f"is worked out by a formula that reads it, or a column to "
-                    f"the right of it ({cell.coordinate}: {cell.value}). "
-                    "Deleting a column slides everything after it one place to "
-                    "the left without moving the formulas as well, so that "
-                    "formula would end up reading the wrong cells."
+                    f"There are no rows of data to fill, so the formula was "
+                    f"not written. {where}"
                 )
 
-        sheet.delete_cols(target)
-        save(book, path)
-        return (
-            f'Deleted the column "{name}" and everything in it, which cannot '
-            "be brought back. Every column that was to its right has moved one "
-            "place left."
-        ) + location(sheet, path)
+            write_values(
+                spreadsheet_id,
+                [
+                    {
+                        "range": a1(title, first, first, position, position),
+                        "values": [[formula]],
+                    }
+                ],
+            )
 
-    return f'Unknown action "{action}". Use add, rename or delete.'
+            filled = 1
+            if last_row > first:
+                # Copied rather than repeated, because copying is what shifts
+                # =B2*C2 into =B3*C3 as it goes down. Writing the same text
+                # into every row would leave all of them reading row 2.
+                batch(
+                    spreadsheet_id,
+                    [
+                        {
+                            "copyPaste": {
+                                "source": to_grid_range(
+                                    sheet_id, first, first, position, position
+                                ),
+                                "destination": to_grid_range(
+                                    sheet_id, first + 1, last_row, position, position
+                                ),
+                                "pasteType": "PASTE_FORMULA",
+                            }
+                        }
+                    ],
+                )
+                filled = last_row - first + 1
+
+            return (
+                f'Filled "{column}" with {formula}, down {filled} row(s) from '
+                f"row {first} to row {last_row}. Each row reads its own, so "
+                f"row {first + 1} uses row {first + 1}. {where}"
+            )
+    except HttpError as failure:
+        return readable(failure)
+
+    return f'Unknown action "{action}". Use add, remove, move, rename or set_formula.'
+
+
+CASES = [
+    ("a column that does not exist", {"action": "rename", "column": "Nonsense", "new_name": "X"}),
+    ("a name already taken", {"action": "add", "column": "Region"}),
+    ("rename with no new name", {"action": "rename", "column": "Region"}),
+    ("move with nowhere to go", {"action": "move", "column": "Region"}),
+    ("a formula that is not one", {"action": "set_formula", "column": "Region", "formula": "B2*C2"}),
+]
 
 
 def main() -> None:
-    """Try the tool by hand with `python -m excel_agent.tools.columns`.
+    """Try the refusals by hand with `python -m excel_agent.tools.columns`.
 
-    Refuses one deletion, then adds a column, renames it and deletes it again,
-    so the sheet is left as it was found. Close the file in Excel first,
-    otherwise saving fails because Excel holds a lock on it while it is open.
+    Only the calls that change nothing are here. Anything that writes belongs
+    in a scratch spreadsheet, run by hand.
     """
-    print("--- a column a formula depends on, so nothing is written ---")
-    print(modify_column.invoke({"action": "delete", "name": "Units"}))
-
-    print("\n--- add a column ---")
-    print(modify_column.invoke({"action": "add", "name": "Test Column"}))
-
-    print("\n--- rename it ---")
-    print(
-        modify_column.invoke(
-            {"action": "rename", "name": "Test Column", "new_name": "Renamed Column"}
-        )
-    )
-
-    print("\n--- delete it again ---")
-    print(modify_column.invoke({"action": "delete", "name": "Renamed Column"}))
+    for label, arguments in CASES:
+        print(f"--- {label}: {arguments} ---")
+        print(modify_column.invoke(arguments))
+        print()
 
 
 if __name__ == "__main__":

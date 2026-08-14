@@ -14,8 +14,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from excel_agent.agent import RECURSION_LIMIT, build_agent, build_model
 from excel_agent.subagents.prompts import ORCHESTRATOR_PROMPT
 from excel_agent.subagents.registry import SUBAGENTS, SubagentSpec
-from excel_agent.config import BACKEND
-from excel_agent.tools import select_tools
+from excel_agent.tools import find_spreadsheet, list_workbooks, use_spreadsheet
 
 VARIANTS = ("single", "multi")
 
@@ -85,19 +84,10 @@ def build_orchestrator():
     model = build_model()
     delegates = [as_tool(spec, model) for spec in SUBAGENTS]
 
-    # Picked out of the backend in use rather than imported by name. Both
-    # backends have a tool called list_workbooks, and importing one of them
-    # here gave the orchestrator the local one (/Data) while everything under it
-    # talked to Drive.
-    tools = {tool.name: tool for tool in select_tools(BACKEND)}
-
     # Choosing which file to work on is the orchestrator's own question, and
-    # neither of these gives back a row number, so neither of them tempts it
-    # into work that belongs to a subagent.
-    choosing = [tools["list_workbooks"]]
-    for name in ("find_spreadsheet", "use_spreadsheet"):
-        if name in tools:
-            choosing.append(tools[name])
+    # none of these gives back a row number, so none of them tempts it into
+    # work that belongs to a subagent.
+    choosing = [list_workbooks, find_spreadsheet, use_spreadsheet]
 
     return create_agent(
         model,
