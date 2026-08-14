@@ -11,6 +11,8 @@ is stale before it arrives.
 
 from dataclasses import dataclass
 
+from langchain.tools import BaseTool
+
 from excel_agent.subagents import prompts
 from excel_agent.tools import TOOLS
 
@@ -22,7 +24,7 @@ class SubagentSpec:
     name: str
     description: str
     system_prompt: str
-    tools: tuple
+    tools: tuple[BaseTool, ...]
 
 
 def subagents() -> tuple[SubagentSpec, ...]:
