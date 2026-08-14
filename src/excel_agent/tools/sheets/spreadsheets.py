@@ -21,11 +21,9 @@ from excel_agent.sheets import (
     search,
     sheets_in,
 )
-from excel_agent.tracing import traced
 
 
 @tool
-@traced
 def list_workbooks(name: str | None = None) -> str:
     """List the Google spreadsheets that can be worked on.
 
@@ -86,7 +84,6 @@ def list_workbooks(name: str | None = None) -> str:
 
 
 @tool
-@traced
 def use_spreadsheet(name: str) -> str:
     """Work on this spreadsheet from now on.
 
@@ -157,7 +154,6 @@ def use_spreadsheet(name: str) -> str:
 # - A value written a moment ago may not be findable
 
 @tool
-@traced
 def find_spreadsheet(text: str) -> str:
     """Find which spreadsheets hold some text anywhere inside them.
 

@@ -1,14 +1,20 @@
 """Shared fixtures.
 
-Four jobs: point the tools at a workbook the test owns, keep backups and
-traces out of the project, and prove the real workbook was never touched.
+Four jobs: keep test runs out of LangSmith, point the tools at a workbook the
+test owns, keep backups out of the project, and prove the real workbook was
+never touched.
 """
 
 import hashlib
+import os
 
-import pytest
+# Before excel_agent is imported, and so before LangChain is, because the
+# suite would otherwise be sent to LangSmith like any other run.
+os.environ["LANGSMITH_TRACING"] = "false"
 
-from excel_agent import config, tracing, workbook
+import pytest  # noqa: E402
+
+from excel_agent import config, workbook  # noqa: E402
 
 # Captured before any test can redirect it, so the guard below watches the
 # real file however a test moves the data folder around.
@@ -41,18 +47,6 @@ def backups_in_tmp(tmp_path, monkeypatch):
     is workbook's own name for the folder that has to be moved.
     """
     monkeypatch.setattr(workbook, "BACKUP_DIR", tmp_path / "backups")
-
-
-@pytest.fixture(autouse=True)
-def no_traces(monkeypatch):
-    """Keep test runs out of the traces folder.
-
-    tracing.py reads the setting from config when it is imported, so it is
-    tracing's own name for it that has to be turned off. Every tool call a
-    test makes would otherwise be recorded, and a run leaves hundreds: the
-    traces kept for debugging would be buried in fixture data.
-    """
-    monkeypatch.setattr(tracing, "TRACING", False)
 
 
 @pytest.fixture(autouse=True)

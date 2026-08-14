@@ -85,7 +85,7 @@ Deciding what to change
   for it.
 
 Answering
-- Say what changed in a sentence or two, based on what the tool returned.
+- Say what changed based on what the tool returned.
 - When you have to refuse, name the closest thing you can do.
 - When a tool returns an explanation instead of a confirmation, nothing was
   written to the file. Correct the arguments and try again, or tell the user

@@ -24,11 +24,9 @@ from excel_agent.sheets import (
     to_grid_range,
     write_values,
 )
-from excel_agent.tracing import traced
 
 
 @tool
-@traced
 def modify_column(
     action: Literal["add", "remove", "move", "rename", "set_formula"],
     column: str,

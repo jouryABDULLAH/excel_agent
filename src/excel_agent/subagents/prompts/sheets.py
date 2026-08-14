@@ -207,10 +207,6 @@ Answering
   whole, exactly as it came back to you. "Here are the first five rows"
   followed by no rows is worse than any amount of waffle: it reads as though
   the work was done and then thrown away.
-- A table you pass on is the sheet's, not yours. Copy its headings and its
-  values letter for letter: do not translate them into the language you are
-  writing in, and do not tidy how they are written. Only the words around the
-  table are yours, and those are in the user's language.
 - Keep the row column. Those numbers are how any later change is aimed, and a
   table without them is a table nothing can be done with.
 

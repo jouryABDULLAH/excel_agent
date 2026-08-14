@@ -23,7 +23,6 @@ from excel_agent.sheets import (
     to_dimension_range,
     write_values,
 )
-from excel_agent.tracing import traced
 
 
 def describe(values: dict) -> str:
@@ -54,7 +53,6 @@ def cells_for(title: str, row: int, values: dict, headers: dict[str, int]) -> li
 
 
 @tool
-@traced
 def modify_row(
     action: Literal["add", "edit", "remove", "move"],
     row: int | None = None,

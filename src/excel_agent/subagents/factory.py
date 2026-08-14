@@ -16,7 +16,6 @@ from excel_agent.subagents.prompts import ORCHESTRATOR_PROMPT
 from excel_agent.subagents.registry import SUBAGENTS, SubagentSpec
 from excel_agent.config import BACKEND
 from excel_agent.tools import select_tools
-from excel_agent.tracing import caller, called_by, record
 
 VARIANTS = ("single", "multi")
 
@@ -43,22 +42,12 @@ def as_tool(spec: SubagentSpec, model):
     @tool(spec.name, description=spec.description)
     def delegate(instruction: str) -> str:
         """Hand one piece of work to this subagent and return what it says."""
-        record(
-            {
-                "event": "delegated",
-                "by": caller(),
-                "to": spec.name,
-                "instruction": instruction,
-            }
+        finished = agent.invoke(
+            {"messages": [{"role": "user", "content": instruction}]},
+            # Named for the subagent, so a trace says who was handed the work
+            # rather than showing a second "LangGraph" under the first.
+            config={"recursion_limit": RECURSION_LIMIT, "run_name": spec.name},
         )
-
-        # Everything the subagent's tools do is recorded against its name
-        # rather than the orchestrator's, so a trace says who did what.
-        with called_by(spec.name):
-            finished = agent.invoke(
-                {"messages": [{"role": "user", "content": instruction}]},
-                config={"recursion_limit": RECURSION_LIMIT},
-            )
         messages = finished["messages"]
         used = [
             call["name"]
@@ -77,6 +66,7 @@ def as_tool(spec: SubagentSpec, model):
         ]
 
         answer = str(messages[-1].content)
+        # an attempt to control hallucination
         if evidence:
             answer += "\n\nWhat the tools returned:\n" + "\n\n".join(evidence)
         if not used:
@@ -97,7 +87,7 @@ def build_orchestrator():
 
     # Picked out of the backend in use rather than imported by name. Both
     # backends have a tool called list_workbooks, and importing one of them
-    # here gave the orchestrator the local one while everything under it
+    # here gave the orchestrator the local one (/Data) while everything under it
     # talked to Drive.
     tools = {tool.name: tool for tool in select_tools(BACKEND)}
 

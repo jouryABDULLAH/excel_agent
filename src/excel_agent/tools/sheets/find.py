@@ -20,7 +20,6 @@ from excel_agent.sheets import (
     resolve_sheet,
     resolve_spreadsheet,
 )
-from excel_agent.tracing import traced
 
 # Enough to show what matched without turning an answer into a whole sheet.
 MATCH_LIMIT = 30
@@ -42,7 +41,6 @@ def matches(text: str, wanted: str, whole: bool) -> bool:
 
 
 @tool
-@traced
 def find_data(
     text: str,
     column: str | None = None,

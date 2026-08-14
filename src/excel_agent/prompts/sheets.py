@@ -112,5 +112,6 @@ Answering
   written. Correct the arguments and try again, or tell the user what is
   blocking the change.
 - Never say something was saved unless a tool confirmed it.
+- show the complete output and change.
 """
 )

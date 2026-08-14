@@ -16,7 +16,6 @@ from langchain_core.messages import AIMessage
 from langgraph.errors import GraphRecursionError
 
 from excel_agent.agent import GAVE_UP, RECURSION_LIMIT, new_thread
-from excel_agent.tracing import asked, record
 
 
 @dataclass
@@ -74,48 +73,35 @@ class Session:
         config = {
             "configurable": {"thread_id": self.thread_id},
             "recursion_limit": RECURSION_LIMIT,
+            "run_name": self.name,
         }
 
-        # Everything this turn does is recorded against the name of the agent
-        # answering it, and a subagent's work against that name and its own.
-        # The question and the answer bracket the tool calls, so a file reads
-        # as what was asked, what was done, and what came back.
-        with asked(self.name):
-            record({"event": "asked", "question": question})
+        spoken = ""
+        try:
+            for mode, payload in self.agent.stream(
+                {"messages": [{"role": "user", "content": question}]},
+                config=config,
+                stream_mode=["updates", "messages"],
+            ):
+                if mode == "messages":
+                    token, _ = payload
+                    if self.stream_text and token.content:
+                        yield Text(str(token.content))
+                    continue
 
-            spoken = ""
-            try:
-                for mode, payload in self.agent.stream(
-                    {"messages": [{"role": "user", "content": question}]},
-                    config=config,
-                    stream_mode=["updates", "messages"],
-                ):
-                    if mode == "messages":
-                        token, _ = payload
-                        if self.stream_text and token.content:
-                            yield Text(str(token.content))
+                for update in payload.values():
+                    if not isinstance(update, dict):
                         continue
+                    for message in update.get("messages") or []:
+                        for call in getattr(message, "tool_calls", None) or []:
+                            yield ToolCall(call["name"], dict(call["args"]))
+                        if isinstance(message, AIMessage) and message.content:
+                            spoken = str(message.content)
+        except GraphRecursionError:
+            yield Answer(GAVE_UP)
+            return
 
-                    for update in payload.values():
-                        if not isinstance(update, dict):
-                            continue
-                        for message in update.get("messages") or []:
-                            for call in getattr(message, "tool_calls", None) or []:
-                                yield ToolCall(call["name"], dict(call["args"]))
-                            # Only what the model said. A tool's result is a
-                            # message with content too, so taking any of them
-                            # meant that a turn the model ended in silence came
-                            # back carrying the last tool's output as though it
-                            # were the answer.
-                            if isinstance(message, AIMessage) and message.content:
-                                spoken = str(message.content)
-            except GraphRecursionError:
-                record({"event": "gave_up", "text": GAVE_UP})
-                yield Answer(GAVE_UP)
-                return
-
-            record({"event": "answered", "text": spoken})
-            yield Answer(spoken)
+        yield Answer(spoken)
 
 
 def rendered(call: ToolCall) -> str:

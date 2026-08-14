@@ -19,7 +19,6 @@ from excel_agent.sheets import (
     resolve_sheet,
     resolve_spreadsheet,
 )
-from excel_agent.tracing import traced
 
 # How many of the most common values to name for a column of text.
 COMMON_LIMIT = 3
@@ -88,7 +87,6 @@ def describe(cells: list[Cell]) -> str:
 
 
 @tool
-@traced
 def sheet_stats(
     column: str,
     spreadsheet: str | None = None,

@@ -22,7 +22,6 @@ from excel_agent.sheets import (
     resolve_sheet,
     resolve_spreadsheet,
 )
-from excel_agent.tracing import traced
 
 # Upper bound on max_rows, so one call cannot return the whole of a long sheet.
 ROW_LIMIT = 200
@@ -49,7 +48,6 @@ def as_text(one: Cell) -> str:
 
 
 @tool
-@traced
 def inspect_sheet(
     columns: list[str] | None = None,
     start_row: int = 1,

@@ -7,7 +7,6 @@ else in the project.
 
 import os
 import sys
-from datetime import datetime
 from pathlib import Path
 
 # To read the key from a .env file instead of the shell, install the dev
@@ -92,15 +91,7 @@ BACKEND = os.environ.get("EXCEL_AGENT_BACKEND", "local")
 # spreadsheet chosen part way through a conversation is the one that answers.
 SPREADSHEET = os.environ.get("EXCEL_AGENT_SPREADSHEET")
 
-# What the tools were asked for and what they returned, for debugging. Set
-# EXCEL_AGENT_TRACE=0 to turn it off.
-TRACE_DIR = PROJECT_ROOT / "traces"
-TRACING = os.environ.get("EXCEL_AGENT_TRACE", "1") != "0"
-
-# One file per run, named for when the run started. Two of them going at once,
-# a browser and a terminal say, would otherwise write into the same file and
-# leave calls from both interleaved with nothing to tell them apart.
-TRACE_FILE = TRACE_DIR / f"{datetime.now():%Y%m%d-%H%M%S}.jsonl"
+# Tracing is LangSmith's, switched on by the environment; see .env.example.
 
 
 MAX_TURNS = 10

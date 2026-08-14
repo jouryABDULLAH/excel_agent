@@ -19,7 +19,6 @@ from excel_agent.sheets import (
     resolve_spreadsheet,
     to_grid_range,
 )
-from excel_agent.tracing import traced
 
 # The colours a person is likely to ask for by name. Anything else has to be
 # given as a hex code, which is said in the refusal rather than guessed at.
@@ -78,7 +77,6 @@ def as_number_format(pattern: str) -> dict:
 
 
 @tool
-@traced
 def modify_style(
     column: str | None = None,
     first_row: int | None = None,

@@ -9,7 +9,6 @@ from datetime import date, datetime
 from langchain_core.tools import tool
 
 from excel_agent.config import resolve_workbook
-from excel_agent.tracing import traced
 from excel_agent.workbook import (
     find_header_row,
     header_map,
@@ -41,7 +40,6 @@ def as_text(value) -> str:
 
 
 @tool
-@traced
 def inspect_sheet(
     columns: list[str] | None = None,
     start_row: int | None = None,

@@ -11,11 +11,9 @@ from langchain_core.tools import tool
 
 from excel_agent import config
 from excel_agent.config import workbook_names
-from excel_agent.tracing import traced
 
 
 @tool
-@traced
 def list_workbooks() -> str:
     """List the workbooks that can be worked on, by name.
 

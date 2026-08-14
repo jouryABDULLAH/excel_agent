@@ -19,7 +19,6 @@ from excel_agent.sheets import (
     resolve_spreadsheet,
     to_grid_range,
 )
-from excel_agent.tracing import traced
 
 # A pie chart is described differently from the rest, so it is the one kind
 # that does not go through basicChart.
@@ -82,7 +81,6 @@ def spec_for(
 
 
 @tool
-@traced
 def modify_chart(
     action: Literal["add", "remove", "retitle"],
     kind: Literal["column", "bar", "line", "pie", "scatter"] | None = None,
