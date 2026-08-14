@@ -6,7 +6,7 @@ answer, and repeats.
 
 import argparse
 
-from excel_agent.subagents.factory import VARIANTS, build
+from excel_agent.subagents.factory import VARIANTS, agent_name, build
 from excel_agent import config
 from excel_agent.config import MODEL, resolve_workbook, use_utf8_output
 from excel_agent.tools.inspect import inspect_sheet
@@ -88,7 +88,7 @@ def main() -> None:
         f"{arguments.agents} agent. /help for commands."
     )
 
-    session = Session(agent)
+    session = Session(agent, name=agent_name(arguments.agents))
     show_tools = True
 
     while True:

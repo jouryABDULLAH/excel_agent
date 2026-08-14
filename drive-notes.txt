@@ -1,0 +1,167 @@
+DRIVE AND SHEETS NOTES
+======================
+
+What working against Google Drive does that working against a local file does
+not. Kept out of the code so a tool's docstring stays about the tool.
+
+
+2026-08-13  Two files can share a name, and a name is all a tool is given
+------------------------------------------------------------------------
+Drive lets two spreadsheets have the same name. Seen in this account:
+
+    TEST - Book Collection      x2
+    TEST - Simple Budget        x2
+    (10 spreadsheets in all, and one called "Untitled spreadsheet")
+
+Every tool takes a spreadsheet by name, so resolve_spreadsheet cannot pick one
+and refuses instead:
+
+    More than one spreadsheet is called "TEST - Simple Budget": TEST - Simple
+    Budget, TEST - Simple Budget. Say which one, by its id.
+
+That message asks for something no tool accepts: none of them takes an id.
+So a duplicated name is a dead end rather than a question the model can work
+its way out of. It is refusing rather than picking, which is the right way to
+be stuck, but it is still stuck.
+
+Ways out, none done yet:
+  - let the tools take an id as well as a name, and have list_workbooks show
+    the id when two files share a name;
+  - tell them apart by something else Drive knows, such as when each was last
+    changed or which folder it sits in, and say that in the refusal;
+  - leave it, and treat renaming one of the two as the answer.
+
+Checked again on 2026-08-13 after the duplicates were said to be deleted, and
+Drive still returned both of each. Deleting to Trash should drop them, since
+every query here asks for trashed = false, so it is worth another look before
+assuming the code is at fault.
+
+
+2026-08-13  Everything Google returns for display is a string
+------------------------------------------------------------------------
+formattedValue is what the sheet shows, so a number, a date and a currency all
+arrive as text. That is why as_text can render a table without knowing about
+any of them, and it is why find_header_row asks a cell for its value rather
+than for what it displays: a row of years would otherwise pass for a header,
+where the local backend refuses it.
+
+
+2026-08-13  A sheet is a grid whether or not anything is in it
+------------------------------------------------------------------------
+gridProperties reports a thousand rows for a sheet holding three, so the size
+of a sheet says nothing about how much of it is filled. last_data_row walks
+back up from the end for the same reason max_row cannot be trusted locally.
+
+
+2026-08-13  Drive's own search lags, and matches whole words
+------------------------------------------------------------------------
+fullText search finds a spreadsheet by what is inside it, which is what makes
+finding a file without opening each one possible. Two things to expect: a file
+is indexed after it is written rather than as it is written, so a change made
+a moment ago may not be findable yet; and it matches whole words, so a part of
+one will not find it.
+
+
+2026-08-13  What Drive's full text search does and does not find
+------------------------------------------------------------------------
+Measured against the account, one call each:
+
+    ORD-1042         -> TEST - Sales Orders
+    Sales Rep        -> TEST - Sales Orders
+    Charlie          -> TEST - Sales Orders, TEST - Raw Contacts
+    Warehouse        -> TEST - Warehouse Inventory
+    12240            -> nothing
+
+So identifiers, words and column headings all work, and a header match means
+"which file has a Region column" is answerable without opening anything.
+
+Numbers do not. 12240 found nothing although the sheet holds $12,240.00: Drive
+indexes what is displayed, and the formatting breaks the number into something
+the search does not match. Anyone demonstrating "find the file with the 12,240
+total" will watch it fail.
+
+Two more limits, both Drive's own: it matches whole words, so Ware does not
+find Warehouse; and it indexes a file after it is written rather than as it is
+written, so a value added a moment ago may not be findable yet. That last one
+will matter more once the write tools exist, since "add this row, now find
+which file has it" is a natural thing to try.
+
+What each of the three finding tools is for, which the split was made to keep
+clear:
+    a name, or browsing            list_workbooks
+    a value, an id, a column name  find_spreadsheet
+    which row holds it             find_data, and only once a file is settled
+
+
+2026-08-13  A format can be set but not taken away
+------------------------------------------------------------------------
+modify_style always sends a type and a pattern, so it can make a column read
+as #,##0.00 but has no way of saying "however the sheet would show it", which
+is what a column with no format set is doing. Google clears one by sending an
+empty format with the number format in the field mask; no tool does that.
+
+So a format the agent sets, the agent cannot undo. Putting the scratch file
+back after testing took a batchUpdate written by hand. Worth a "plain" or
+"automatic" value on number_format if this ever bites.
+
+
+2026-08-13  Styling every column fills in cells that had none
+------------------------------------------------------------------------
+Styling a run of rows with no column named covers the whole width of the
+sheet, and Google then keeps a format record for cells that had none before.
+Nothing looks different: the record holds the defaults. But a cell that was
+absent from rowData is afterwards present in it, so a before-and-after
+comparison of a sheet's formats will show a row grown by a cell. Seen on row 2
+of the scratch file, which went from 12 cells to 13.
+
+
+2026-08-13  Formatting can be written but not read, and that caused a lie
+------------------------------------------------------------------------
+GRID_FIELDS asks for formattedValue, the formula, effectiveValue and the type
+of the number format. Not bold, not background. So modify_style can set how a
+cell looks while nothing in the project can see how any cell already looks.
+
+Asked to "make the Notes header match the other headers", the run went:
+structure_editor read the sheet twice and could not find out what to match;
+the orchestrator asked the analyst what colour and weight the header row was;
+the analyst holds the same blind tools and invented "the default light-grey
+header shade"; the orchestrator reported the change as done. modify_style was
+never called and nothing was written.
+
+The rule against claiming an unconfirmed change was already in the prompt. It
+did not help, because a confident subagent report reads exactly like a
+subagent confirming something. A gap in what can be known gets filled in
+rather than reported, so the gap has to be named where the agent will see it:
+CANNOT_DO now says formatting cannot be read.
+
+The way out is not a reader. copyPaste with pasteType PASTE_FORMAT copies one
+cell's look onto another without anyone having to see it, which answers "match
+the other headers" without answering "what colour is it".
+
+
+2026-08-13  A grouped chart needs a table nothing here can build
+------------------------------------------------------------------------
+"A chart of revenue by region, with each region appearing once" cannot be done
+with these tools, and the near miss is worth writing down because it looked
+like a success.
+
+Told that a totals column was the answer, the agent added one: a SUMIF worked
+out for every row. The formula was right and the references shifted correctly.
+But a per-row total is still one value per row, so the chart drew fifty points
+with each region ten times over, flat. It then reported the chart as made,
+truthfully, having not done what was asked.
+
+A grouped chart wants a block of its own: one row per region, its total beside
+it. Nothing writes an arbitrary cell at an arbitrary place, so nothing can
+build one. The chart prompt now says so instead of sending it down the column
+route.
+
+
+2026-08-13  What the field mask is worth, measured
+------------------------------------------------------------------------
+The Profit column on the scratch file has a green fill. Making row 2 bold and
+then not bold again left that green exactly as it was, on the live API and not
+only in a test. That is the fields mask doing its job: without it, setting one
+part of a format clears every other part, and a single bold would have wiped
+the colouring off the sheet.
+

@@ -10,14 +10,16 @@ import pathlib
 import make_fixtures
 from langchain.agents import create_agent
 from langchain_core.messages import AIMessage
+from langchain_core.tools import tool
 from langgraph.checkpoint.memory import InMemorySaver
-from scripted import ScriptedModel
+from scripted import ScriptedModel, calling
 from streamlit.testing.v1 import AppTest
 
 from excel_agent.runner import Session
+from excel_agent.tools import LOCAL_TOOLS
 
 import excel_agent.ui
-from excel_agent.ui import save_upload, suggestions
+from excel_agent.ui import save_upload
 
 # AppTest resolves a relative path against this file, so the page is found
 # through the module rather than by guessing at the layout of the repo.
@@ -103,53 +105,132 @@ def test_the_sidebar_offers_the_workbooks_and_the_two_variants(tmp_path, use_wor
 
     page = AppTest.from_file(PAGE, default_timeout=60).run()
 
+    files = {one.label: list(one.options) for one in page.sidebar.selectbox}
+    assert files["Working on"] == ["clean_table.xlsx", "multi_sheet.xlsx"]
+
     offered = {radio.label: list(radio.options) for radio in page.sidebar.radio}
-    assert offered["Working on"] == ["clean_table.xlsx", "multi_sheet.xlsx"]
     assert offered["Agents"] == ["single", "multi"]
     # The workbook in use is named on the page, so it is never a guess which
     # file a change would land in.
     assert any("clean_table.xlsx" in caption.value for caption in page.caption)
 
 
-# What to offer someone who has not typed anything yet
+def page_with_a_scripted_agent(says: str, script=None, tools=()) -> AppTest:
+    """The page with an agent already in place, so no Groq request is made.
 
-
-def test_the_suggestions_are_built_from_the_columns_that_are_there(tmp_path):
-    asks = suggestions(make_fixtures.clean_table(tmp_path))
-
-    assert asks[:2] == ["Show me the first few rows", "Summarise every column"]
-    assert "What is the total Unit Price?" in asks
-    assert "Draw a bar chart of Unit Price by Product" in asks
-
-
-def test_a_sheet_whose_only_numbers_are_identifiers_is_offered_neither(tmp_path):
-    asks = suggestions(make_fixtures.multi_sheet(tmp_path))
-
-    # ID is a number, and a total of it would mean nothing.
-    assert asks == ["Show me the first few rows", "Summarise every column"]
-
-
-def test_a_workbook_that_will_not_open_still_offers_something(tmp_path):
-    broken = tmp_path / "broken.xlsx"
-    broken.write_bytes(b"not a workbook at all")
-
-    assert suggestions(broken) == ["Show me the first few rows", "Summarise every column"]
-
-
-def page_with_a_scripted_agent(says: str) -> AppTest:
-    """The page with an agent already in place, so no Groq request is made."""
+    Given a script it runs that instead, which is how a turn that calls a tool
+    is put through the page: the plain form holds no tools and so can only
+    ever answer straight away.
+    """
     page = AppTest.from_file(PAGE, default_timeout=60)
     page.session_state["variant"] = "single"
     page.session_state["transcript"] = []
     page.session_state["session"] = Session(
         create_agent(
-            ScriptedModel(script=[AIMessage(says)]),
-            [],
+            ScriptedModel(script=list(script) if script else [AIMessage(says)]),
+            list(tools),
             system_prompt="terse",
             checkpointer=InMemorySaver(),
         )
     )
     return page
+
+
+def test_a_turn_that_calls_a_tool_is_drawn_whole(tmp_path, use_workbook):
+    use_workbook(make_fixtures.clean_table(tmp_path))
+    page = page_with_a_scripted_agent(
+        "",
+        script=[
+            calling("modify_row", "1", action="edit", row=2, values={"Units": 99}),
+            AIMessage("Set row 2 to 99."),
+        ],
+        tools=LOCAL_TOOLS,
+    ).run()
+
+    page.chat_input[0].set_value("set row 2 units to 99").run()
+
+    # The answer reaches the page, and the call behind it is counted. Every
+    # scripted page before this one held no tools, so a turn that used one had
+    # never been drawn at all.
+    said = page.session_state["transcript"][-1]
+    assert said["text"] == "Set row 2 to 99."
+    assert said["calls"] == ["modify_row(action='edit', row=2, values={'Units': 99})"]
+    assert any("Set row 2 to 99." in one.value for one in page.markdown)
+
+
+def test_a_turn_that_moves_to_another_file_is_still_drawn(
+    tmp_path, use_workbook, monkeypatch
+):
+    use_workbook(make_fixtures.clean_table(tmp_path))
+
+    # The agent can move to another file part way through a turn, and the page
+    # redraws when it does. Standing in for that here, because no local tool
+    # moves anywhere: the move has to happen while the turn is running, which
+    # is the whole point, so a tool is what does it.
+    where = {"file": "clean_table.xlsx"}
+
+    @tool
+    def move_along() -> str:
+        """Work on another file from now on."""
+        where["file"] = "multi_sheet.xlsx"
+        return "Moved."
+
+    monkeypatch.setitem(excel_agent.ui.IN_USE, "in_use", lambda: where["file"])
+
+    page = page_with_a_scripted_agent(
+        "",
+        script=[calling("move_along", "1"), AIMessage("Moved along.")],
+        tools=[move_along],
+    ).run()
+
+    page.chat_input[0].set_value("work on the other file").run()
+
+    # Redrawing must not throw the turn away: what was asked and what came
+    # back are both in the transcript, and both are on the page.
+    assert [said["text"] for said in page.session_state["transcript"]] == [
+        "work on the other file",
+        "Moved along.",
+    ]
+    assert any("Moved along." in one.value for one in page.markdown)
+
+
+def test_a_turn_that_says_nothing_says_that(tmp_path, use_workbook):
+    use_workbook(make_fixtures.clean_table(tmp_path))
+    page = page_with_a_scripted_agent(
+        "",
+        script=[
+            calling("modify_row", "1", action="edit", row=2, values={"Units": 99}),
+            AIMessage(""),
+        ],
+        tools=LOCAL_TOOLS,
+    ).run()
+
+    page.chat_input[0].set_value("set row 2 units to 99").run()
+
+    # An empty bubble reads as the page having lost the answer. It must not
+    # claim nothing happened either: the call above it did edit the sheet.
+    said = page.session_state["transcript"][-1]
+    assert "ended without anything being said" in said["text"]
+    assert said["calls"] == ["modify_row(action='edit', row=2, values={'Units': 99})"]
+
+
+def test_a_turn_that_falls_over_stays_on_the_page(tmp_path, use_workbook, monkeypatch):
+    use_workbook(make_fixtures.clean_table(tmp_path))
+    page = page_with_a_scripted_agent("never reached").run()
+
+    def fall_over(question):
+        raise RuntimeError("Groq said no")
+
+    monkeypatch.setattr(page.session_state["session"], "ask", fall_over)
+
+    page.chat_input[0].set_value("do something").run()
+
+    # Dropped, it would leave the question with nothing under it the next time
+    # anything redrew, which reads as an answer going missing.
+    assert [said["text"] for said in page.session_state["transcript"]] == [
+        "do something",
+        "That went wrong: Groq said no",
+    ]
 
 
 def test_clicking_a_suggestion_asks_it(tmp_path, use_workbook):

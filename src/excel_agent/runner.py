@@ -12,6 +12,7 @@ of a thread, and the agent keeps everything said under it.
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 
+from langchain_core.messages import AIMessage
 from langgraph.errors import GraphRecursionError
 
 from excel_agent.agent import GAVE_UP, RECURSION_LIMIT, new_thread
@@ -52,10 +53,13 @@ class Session:
     on. 
     """
 
-    def __init__(self, agent, stream_text: bool = False):
+    def __init__(self, agent, stream_text: bool = False, name: str = "agent"):
         self.agent = agent
         self.stream_text = stream_text
         self.thread_id = new_thread()
+        # What the agent answering is called in a trace. Only tracing reads
+        # it, and factory.agent_name() is where the names come from.
+        self.name = name
 
     def reset(self) -> None:
         """Forget the conversation by starting another one.
@@ -69,6 +73,7 @@ class Session:
         config = {
             "configurable": {"thread_id": self.thread_id},
             "recursion_limit": RECURSION_LIMIT,
+            "run_name": self.name,
         }
 
         spoken = ""
@@ -90,7 +95,7 @@ class Session:
                     for message in update.get("messages") or []:
                         for call in getattr(message, "tool_calls", None) or []:
                             yield ToolCall(call["name"], dict(call["args"]))
-                        if message.content:
+                        if isinstance(message, AIMessage) and message.content:
                             spoken = str(message.content)
         except GraphRecursionError:
             yield Answer(GAVE_UP)

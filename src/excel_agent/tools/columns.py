@@ -50,7 +50,7 @@ def modify_column(
 
     Call inspect_sheet first, so the column names you use are the real ones.
     This changes the columns themselves, not the values in them: use
-    modify_sheet to put values into a column once it exists.
+    modify_row to put values into a column once it exists.
 
     Args:
         action: What to do. "add" puts a new empty column after the last one,
@@ -135,7 +135,7 @@ def apply_column_change(
         save(book, path)
         return (
             f'Added a column called "{name}", at {get_column_letter(column)}. '
-            "It is empty: use modify_sheet to put values into it."
+            "It is empty: use modify_row to put values into it."
         ) + location(sheet, path)
 
     if action == "rename":

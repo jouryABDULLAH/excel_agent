@@ -96,9 +96,9 @@ def test_a_chart_survives_a_later_edit(tmp_path, use_workbook):
     path = use_workbook(make_fixtures.clean_table(tmp_path))
     modify_chart.invoke({"action": "add", "values": "Units"})
 
-    from excel_agent.tools.modify import modify_sheet
+    from excel_agent.tools.modify import modify_row
 
-    modify_sheet.invoke({"action": "edit", "row": 2, "values": {"Units": 99}})
+    modify_row.invoke({"action": "edit", "row": 2, "values": {"Units": 99}})
 
     # Every tool call loads the file and saves it again. A chart that did not
     # survive that would vanish the moment anything else was changed.

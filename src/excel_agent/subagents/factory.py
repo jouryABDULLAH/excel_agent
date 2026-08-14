@@ -14,9 +14,19 @@ from langgraph.checkpoint.memory import InMemorySaver
 from excel_agent.agent import RECURSION_LIMIT, build_agent, build_model
 from excel_agent.subagents.prompts import ORCHESTRATOR_PROMPT
 from excel_agent.subagents.registry import SUBAGENTS, SubagentSpec
-from excel_agent.tools.workbooks import list_workbooks
+from excel_agent.config import BACKEND
+from excel_agent.tools import select_tools
 
 VARIANTS = ("single", "multi")
+
+# What the agent at the top of each variant is called in a trace. Handed to a
+# Session, so a turn is recorded against the name of whoever answered it.
+ROOT_NAME = {"single": "agent", "multi": "orchestrator"}
+
+
+def agent_name(variant: str) -> str:
+    """What to call the agent at the top of one variant, for traces."""
+    return ROOT_NAME.get(variant, "agent")
 
 
 def as_tool(spec: SubagentSpec, model):
@@ -34,7 +44,9 @@ def as_tool(spec: SubagentSpec, model):
         """Hand one piece of work to this subagent and return what it says."""
         finished = agent.invoke(
             {"messages": [{"role": "user", "content": instruction}]},
-            config={"recursion_limit": RECURSION_LIMIT},
+            # Named for the subagent, so a trace says who was handed the work
+            # rather than showing a second "LangGraph" under the first.
+            config={"recursion_limit": RECURSION_LIMIT, "run_name": spec.name},
         )
         messages = finished["messages"]
         used = [
@@ -54,6 +66,7 @@ def as_tool(spec: SubagentSpec, model):
         ]
 
         answer = str(messages[-1].content)
+        # an attempt to control hallucination
         if evidence:
             answer += "\n\nWhat the tools returned:\n" + "\n\n".join(evidence)
         if not used:
@@ -72,9 +85,23 @@ def build_orchestrator():
     model = build_model()
     delegates = [as_tool(spec, model) for spec in SUBAGENTS]
 
+    # Picked out of the backend in use rather than imported by name. Both
+    # backends have a tool called list_workbooks, and importing one of them
+    # here gave the orchestrator the local one (/Data) while everything under it
+    # talked to Drive.
+    tools = {tool.name: tool for tool in select_tools(BACKEND)}
+
+    # Choosing which file to work on is the orchestrator's own question, and
+    # neither of these gives back a row number, so neither of them tempts it
+    # into work that belongs to a subagent.
+    choosing = [tools["list_workbooks"]]
+    for name in ("find_spreadsheet", "use_spreadsheet"):
+        if name in tools:
+            choosing.append(tools[name])
+
     return create_agent(
         model,
-        [list_workbooks, *delegates],
+        [*choosing, *delegates],
         system_prompt=ORCHESTRATOR_PROMPT,
         checkpointer=InMemorySaver(),
     )
