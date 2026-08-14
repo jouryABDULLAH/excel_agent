@@ -77,9 +77,6 @@ def as_tool(spec: SubagentSpec, model):
 
 def build_orchestrator():
     """Build the orchestrator and the subagents it hands work to.
-
-    One model serves all of them, so the orchestrator and every subagent run
-    on the same settings as the single agent they are being compared against.
     """
     model = build_model()
     delegates = [as_tool(spec, model) for spec in SUBAGENTS]
@@ -91,7 +88,8 @@ def build_orchestrator():
 
     return create_agent(
         model,
-        [*choosing, *delegates],
+        # [*choosing, *delegates],
+        [list_workbooks, find_spreadsheet, use_spreadsheet, *delegates],
         system_prompt=ORCHESTRATOR_PROMPT,
         checkpointer=InMemorySaver(),
     )
