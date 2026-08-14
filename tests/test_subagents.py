@@ -1,19 +1,18 @@
-"""Tests for the multi agent variant.
+"""Tests for the orchestrator and its subagents.
 
 The model is a script here, so nothing below tests whether an orchestrator
-routes sensibly: that is what the comparison run is for. What is tested is the
-wiring, which is what would make a comparison meaningless if it were wrong.
+routes sensibly: that is what a run by hand is for. What is tested is the
+wiring, which is what would make such a run meaningless if it were wrong.
 """
 
-import pytest
 from langchain.agents import create_agent
 from langchain_core.messages import AIMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from scripted import ScriptedModel, calling
 
-from excel_agent.prompts import CANNOT_DO, SYSTEM_PROMPT
+from excel_agent.prompts import CANNOT_DO
 from excel_agent.runner import Answer, Session, ToolCall
-from excel_agent.subagents import SUBAGENTS, build
+from excel_agent.subagents import SUBAGENTS
 from excel_agent.subagents.factory import as_tool
 from excel_agent.subagents.prompts import ORCHESTRATOR_PROMPT
 from excel_agent.tools import TOOLS
@@ -30,9 +29,8 @@ def test_every_tool_reaches_some_subagent():
     covered = {tool.name for spec in SUBAGENTS for tool in spec.tools}
     everything = {tool.name for tool in TOOLS} - ORCHESTRATOR_ONLY
 
-    # A tool added to TOOLS and forgotten here would leave the multi agent
-    # variant quietly unable to do something the single agent can, and the
-    # comparison would read it as a routing failure.
+    # A tool added to TOOLS and forgotten here can never be called at all: the
+    # orchestrator does not hold it, and neither does anyone it can delegate to.
     assert everything <= covered
 
 
@@ -55,14 +53,13 @@ def test_each_subagent_is_described_and_told_what_it_cannot_do():
     for spec in SUBAGENTS:
         assert spec.description.strip()
         assert isinstance(spec.tools, tuple)
-        # The refusals are shared so a subagent cannot claim it can do
-        # something the single agent refuses.
+        # The refusals are shared, so a subagent cannot claim it can do
+        # something the orchestrator would refuse.
         assert CANNOT_DO in spec.system_prompt
 
 
 def test_the_orchestrator_is_told_the_same_refusals():
     assert CANNOT_DO in ORCHESTRATOR_PROMPT
-    assert CANNOT_DO in SYSTEM_PROMPT
 
 
 def test_the_names_are_the_ones_the_orchestrator_will_call():
@@ -108,14 +105,6 @@ def test_a_subagent_does_the_work_and_says_which_tools_it_used(a_spreadsheet):
     assert sent
 
 
-# Choosing a variant
-
-
-def test_a_name_that_is_neither_variant_is_refused():
-    with pytest.raises(ValueError, match="single, multi"):
-        build("both")
-
-
 # The orchestrator through the runner
 
 
@@ -145,7 +134,7 @@ def test_the_orchestrator_answers_through_the_same_events(a_spreadsheet):
 
     events = list(Session(orchestrator).ask("how many rows?"))
 
-    # The events look the same as the single agent's. What changed is that the
-    # tool call names a subagent rather than a spreadsheet tool.
+    # Delegating changes nothing about what crosses the runner: a tool call
+    # naming a subagent, then the answer, the same as any other turn.
     assert events[0] == ToolCall("analyst", {"instruction": "how many rows?"})
     assert events[-1] == Answer("There are five rows.")

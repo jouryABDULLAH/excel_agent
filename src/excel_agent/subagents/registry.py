@@ -28,9 +28,8 @@ class SubagentSpec:
 def subagents() -> tuple[SubagentSpec, ...]:
     """The four subagents, each holding the tools its work needs.
 
-    A tool no subagent holds would leave the multi agent variant unable to do
-    something the single agent can, which is what the test on that coverage is
-    for.
+    Every tool the orchestrator does not hold itself has to reach some subagent,
+    or it can never be called at all. That is what the test on coverage is for.
     """
     tools = {tool.name: tool for tool in TOOLS}
 

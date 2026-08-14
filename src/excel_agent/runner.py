@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from langchain_core.messages import AIMessage
 from langgraph.errors import GraphRecursionError
 
-from excel_agent.agent import GAVE_UP, RECURSION_LIMIT, new_thread
+from excel_agent.model import GAVE_UP, RECURSION_LIMIT, new_thread
 
 
 @dataclass
@@ -53,12 +53,11 @@ class Session:
     on. 
     """
 
-    def __init__(self, agent, stream_text: bool = False, name: str = "agent"):
+    def __init__(self, agent, stream_text: bool = False, name: str = "orchestrator"):
         self.agent = agent
         self.stream_text = stream_text
         self.thread_id = new_thread()
-        # What the agent answering is called in a trace. Only tracing reads
-        # it, and factory.agent_name() is where the names come from.
+        # What the agent answering is called in a trace. Only tracing reads it.
         self.name = name
 
     def reset(self) -> None:

@@ -2,8 +2,8 @@
 
 A subagent is wrapped as a tool the orchestrator can call with an instruction
 in plain English. That keeps the orchestrator an ordinary agent, so the same
-Session, the same events and the same command line drive either variant and
-the two can be compared without being two programs.
+Session, the same events and the same command line drive it as would drive any
+other, and nothing above here knows there is more than one agent underneath.
 """
 
 from langchain.agents import create_agent
@@ -12,16 +12,10 @@ from langchain_core.messages import ToolMessage
 from langchain_core.tools import tool
 from langgraph.checkpoint.memory import InMemorySaver
 
-from excel_agent.agent import RECURSION_LIMIT, build_agent, build_model
+from excel_agent.model import RECURSION_LIMIT, build_model
 from excel_agent.subagents.prompts import ORCHESTRATOR_PROMPT
 from excel_agent.subagents.registry import SUBAGENTS, SubagentSpec
 from excel_agent.tools import find_spreadsheet, list_workbooks, use_spreadsheet
-
-VARIANTS = ("single", "multi")
-
-# What the agent at the top of each variant is called in a trace. Handed to a
-# Session, so a turn is recorded against the name of whoever answered it.
-ROOT_NAME = {"single": "agent", "multi": "orchestrator"}
 
 
 # Define Orchestrator's state:
@@ -30,10 +24,6 @@ ROOT_NAME = {"single": "agent", "multi": "orchestrator"}
     #     spreadsheet_name: str | None
     #     active_sheet_id: int | None
     #     active_sheet_name: str | None
-
-def agent_name(variant: str) -> str:
-    """What to call the agent at the top of one variant, for traces."""
-    return ROOT_NAME.get(variant, "agent")
 
 
 def as_tool(spec: SubagentSpec, model):
@@ -56,6 +46,7 @@ def as_tool(spec: SubagentSpec, model):
         # spreadsheet_id = runtime.state.get("spreadsheet_id")
         # spreadsheet_name = runtime.state.get("spreadsheet_name")
 
+        # How does this play out with the prompts in subagents/prompts.py?  
         # subagent_instruction = f"""
         # Current spreadsheet:
         # {spreadsheet_name}
@@ -106,17 +97,3 @@ def build_orchestrator():
         system_prompt=ORCHESTRATOR_PROMPT,
         checkpointer=InMemorySaver(),
     )
-
-
-def build(variant: str = "single"):
-    """Build one of the two ways of working, by name.
-
-    Both come back as something a Session can be handed, which is what lets
-    the command line and the measurements stay the same either way.
-    """
-    if variant == "single":
-        return build_agent()
-    if variant == "multi":
-        return build_orchestrator()
-
-    raise ValueError(f'Unknown variant "{variant}". Use one of: {", ".join(VARIANTS)}.')

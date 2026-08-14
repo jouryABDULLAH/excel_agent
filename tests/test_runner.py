@@ -172,3 +172,35 @@ def test_a_turn_that_writes_still_writes(a_spreadsheet):
     # The events are only half of a turn. What the runner hands back says
     # nothing about whether the write went out, so this looks at what did.
     assert sent
+
+
+def test_a_row_added_in_one_turn_can_be_removed_in_the_next(a_spreadsheet):
+    sent = a_spreadsheet()
+    session = session_reading(
+        [
+            calling(
+                "modify_row", "1", action="add",
+                values={"Product": "Monitor Arm", "Region": "US"},
+            ),
+            AIMessage("Added it as row 7."),
+            # Row 6, not the 7 just added: the sheet these tools read is built
+            # by hand and does not grow, so 7 is not there to be removed.
+            calling("modify_row", "2", action="remove", row=6),
+            AIMessage("Removed it again."),
+        ],
+        tools=TOOLS,
+    )
+
+    list(session.ask("add a row for a Monitor Arm in the US"))
+    assert any("Monitor Arm" in str(write) for write in sent)
+
+    # The second turn only makes sense against what the first one left behind,
+    # which is the conversation the session is holding.
+    list(session.ask("actually, remove that row again"))
+    assert any("deleteDimension" in str(write) for write in sent)
+
+    said = session.agent.get_state(
+        {"configurable": {"thread_id": session.thread_id}}
+    ).values["messages"]
+    assert len(said) == 8
+    assert sum(1 for message in said if getattr(message, "tool_calls", None)) == 2

@@ -31,7 +31,7 @@ sidebar.
 Two ways in:
 
 ```powershell
-excel-agent                            # the command line, --agents multi for subagents
+excel-agent                            # the command line
 streamlit run src/excel_agent/ui.py    # the page
 ```
 
@@ -48,6 +48,5 @@ $env:LANGSMITH_PROJECT = "excel-agent"
 
 A turn arrives as a tree: the question at the root, named for whichever agent
 answered it, each model call under that with the prompt it saw and what it
-cost, and each tool call with its arguments and what it returned. Under
-`--agents multi` a subagent's whole conversation sits inside the tool call
-that handed it the work.
+cost, and each tool call with its arguments and what it returned. A subagent's
+whole conversation sits inside the tool call that handed it the work.

@@ -16,7 +16,7 @@ import streamlit as st
 from excel_agent import browsing
 from excel_agent.config import MODEL
 from excel_agent.runner import Answer, Session, ToolCall, rendered
-from excel_agent.subagents.factory import VARIANTS, agent_name, build
+from excel_agent.subagents.factory import build_orchestrator
 
 # Reading Drive costs a call over the network, and Streamlit runs this file
 # again on every click. Held for a minute, so clicking about the page does not
@@ -77,10 +77,9 @@ def heading() -> str:
     return said
 
 
-def start(variant: str) -> None:
+def start() -> None:
     """Build the agent and forget whatever was said to the last one."""
-    st.session_state.variant = variant
-    st.session_state.session = Session(build(variant), name=agent_name(variant))
+    st.session_state.session = Session(build_orchestrator())
     st.session_state.transcript = []
 
 
@@ -168,17 +167,6 @@ def sidebar() -> None:
         st.caption("Spreadsheets come from your Drive. Add one there.")
 
         st.divider()
-        st.subheader("Agent")
-        variant = st.radio(
-            "Agents",
-            VARIANTS,
-            index=VARIANTS.index(st.session_state.variant),
-            label_visibility="collapsed",
-            help="single is one agent holding every tool, multi delegates to subagents",
-        )
-        if variant != st.session_state.variant:
-            start(variant)
-            st.rerun()
 
         if st.button("New conversation"):
             st.session_state.session.reset()
@@ -202,7 +190,7 @@ def main() -> None:
 
     if "session" not in st.session_state:
         try:
-            start("single")
+            start()
         except RuntimeError as explanation:
             # A missing API key explains itself. Better said here than as a
             # stack trace in front of an audience.

@@ -9,8 +9,7 @@ import argparse
 from excel_agent import browsing
 from excel_agent.config import MODEL, use_utf8_output
 from excel_agent.runner import Answer, Session, Text, ToolCall, rendered
-from excel_agent.subagents.factory import VARIANTS, agent_name, build
-from excel_agent.tools import inspect_sheet, list_workbooks
+from excel_agent.subagents.factory import build_orchestrator
 
 HELP = """\
 Type what you want done to the sheet, in your own words.
@@ -41,15 +40,6 @@ def read_arguments() -> argparse.Namespace:
         description="Change an Excel sheet by saying what you want in your own words.",
     )
     parser.add_argument(
-        "--agents",
-        choices=VARIANTS,
-        default="single",
-        help=(
-            "single asks one agent holding every tool; multi asks an "
-            "orchestrator that hands the work to subagents"
-        ),
-    )
-    parser.add_argument(
         "--debug",
         action="store_true",
         help=(
@@ -67,19 +57,16 @@ def main() -> None:
     debug = arguments.debug
 
     try:
-        agent = build(arguments.agents)
+        agent = build_orchestrator()
     except RuntimeError as e:
         if debug:
             raise
         print(e)
         return
 
-    print(
-        f"Working on {browsing.where()} with {MODEL}, "
-        f"{arguments.agents} agent."
-    )
+    print(f"Working on {browsing.where()} with {MODEL}.")
 
-    session = Session(agent, name=agent_name(arguments.agents))
+    session = Session(agent)
     show_tools = True
 
     while True:
