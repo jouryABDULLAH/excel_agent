@@ -1,99 +1,80 @@
-"""Factory for building the agents.
+"""Factory for building the agents."""
 
-A subagent is wrapped as a tool the orchestrator can call with an instruction
-in plain English. That keeps the orchestrator an ordinary agent, so the same
-Session, the same events and the same command line drive it as would drive any
-other, and nothing above here knows there is more than one agent underneath.
-"""
-
-from langchain.agents import create_agent
+from langchain.agents import create_agent, AgentState
 from langchain.tools import ToolRuntime
-from langchain_core.messages import ToolMessage
 from langchain_core.tools import tool
 from langgraph.checkpoint.memory import InMemorySaver
-
 from excel_agent.model import RECURSION_LIMIT, build_model
 from excel_agent.subagents.prompts import ORCHESTRATOR_PROMPT
 from excel_agent.subagents.registry import SUBAGENTS, SubagentSpec
 from excel_agent.tools import find_spreadsheet, list_workbooks, use_spreadsheet
 
 
-# Define Orchestrator's state:
-    # class AgentState(AgentState):
-    #     spreadsheet_id: str | None
-    #     spreadsheet_name: str | None
-    #     active_sheet_id: int | None
-    #     active_sheet_name: str | None
+class OrchestratorState(AgentState):
+    """State that belongs to the user's spreadsheet session."""
+    
+    spreadsheet_id: str | None
+    spreadsheet_name: str | None
+    # active_sheet_id: int | None
+    # active_sheet_name: str | None
 
 
 def as_tool(spec: SubagentSpec, model):
-    """Wrap a subagent so the orchestrator can hand it work.
+    """Create a tool that delegates one task to a specialized subagent."""
 
-    The subagent keeps no conversation of its own: each instruction is answered
-    on its own, and what was said before lives in the orchestrator's thread.
-    Four more threads per turn would double the cost of a comparison that is
-    about cost.
-    """
-    agent = create_agent(model, list(spec.tools), system_prompt=spec.system_prompt)
+    agent = create_agent(
+        model=model, 
+        tools=list(spec.tools), 
+        system_prompt=spec.system_prompt
+    )
 
     @tool(spec.name, description=spec.description)
     def delegate(
         instruction: str,
-        # runtime: ToolRuntime
+        runtime: ToolRuntime
     ) -> str:
-        """Hand one piece of work to this subagent and return what it says."""
+        """Delegate a spreadsheet task to this specialized subagent."""
 
-        # spreadsheet_id = runtime.state.get("spreadsheet_id")
-        # spreadsheet_name = runtime.state.get("spreadsheet_name")
+        spreadsheet_id = runtime.state.get("spreadsheet_id")
+        spreadsheet_name = runtime.state.get("spreadsheet_name")
 
-        # How does this play out with the prompts in subagents/prompts.py?  
-        # subagent_instruction = f"""
-        # Current spreadsheet:
-        # {spreadsheet_name}
-        # Spreadsheet ID:
-        # {spreadsheet_id}
+        subagent_instruction = f"""
+        Current spreadsheet:
+         - Name: {spreadsheet_name or "Not selected"}
+         - ID: {spreadsheet_id or "Not selected"}
 
-        # Task:
-        # {instruction}
-        # """
+        Task:
+        {instruction}
+        """.strip()
+
         result = agent.invoke(
-            {"messages": [{"role": "user", "content": instruction}]},
+            {"messages": [{"role": "user", "content": subagent_instruction}]},
              config={"recursion_limit": RECURSION_LIMIT, "run_name": spec.name},
         )
 
-        # Chane this: by defining the subagent's output contract
-        messages = result["messages"]
-        used = [
-            call["name"]
-            for message in messages
-            for call in getattr(message, "tool_calls", None) or []
-        ]
-
-        evidence = [
-            str(message.content)
-            for message in messages
-            if isinstance(message, ToolMessage)
-        ]
-
-        answer = str(messages[-1].content)
-        if evidence:
-            answer += "\n\nWhat the tools returned:\n" + "\n\n".join(evidence)
-        if not used:
-            answer += "\n\n(No tool was used. Nothing here was read from the file.)"
-        return answer
-
+        return str(result["messages"][-1].content)
+   
     return delegate
 
-
 def build_orchestrator():
-    """Build the orchestrator and the subagents it hands work to.
-    """
+    """Build the orchestrator and its specialized subagents."""
+
     model = build_model()
-    delegates = [as_tool(spec, model) for spec in SUBAGENTS]
+
+    delegates = [
+        as_tool(spec, model) 
+        for spec in SUBAGENTS
+    ]
 
     return create_agent(
-        model,
-        [list_workbooks, find_spreadsheet, use_spreadsheet, *delegates],
+        model=model,
+        tools=[
+            list_workbooks, 
+            find_spreadsheet, 
+            use_spreadsheet, 
+            *delegates
+        ],
         system_prompt=ORCHESTRATOR_PROMPT,
+        state_schema=OrchestratorState,
         checkpointer=InMemorySaver(),
     )
