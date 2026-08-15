@@ -20,7 +20,7 @@ class OrchestratorState(AgentState):
 
 
 def as_tool(spec: SubagentSpec, model):
-    """Create a tool that delegates one task to a specialized subagent."""
+    """Wrap one subagent as a tool available to the orchestrator."""
 
     agent = create_agent(
         model=model, 
@@ -38,14 +38,13 @@ def as_tool(spec: SubagentSpec, model):
         spreadsheet_id = runtime.state.get("spreadsheet_id")
         spreadsheet_name = runtime.state.get("spreadsheet_name")
 
-        subagent_instruction = f"""
-        Current spreadsheet:
-         - Name: {spreadsheet_name or "Not selected"}
-         - ID: {spreadsheet_id or "Not selected"}
-
-        Task:
-        {instruction}
-        """.strip()
+        subagent_instruction = (
+            f"Current spreadsheet: "
+            f"{spreadsheet_name or 'Not selected'}\n"
+            f"Current spreadsheet ID: "
+            f"{spreadsheet_id or 'Not selected'}\n\n"
+            f"Task:\n{instruction}"
+        )
 
         result = agent.invoke(
             {"messages": [{"role": "user", "content": subagent_instruction}]},

@@ -25,21 +25,21 @@ class SubagentSpec:
     description: str
     system_prompt: str
     tools: tuple[BaseTool, ...]
-
+    return_tool_results: bool = False
 
 def subagents() -> tuple[SubagentSpec, ...]:
-    """The four subagents, each holding the tools its work needs."""
+    """Define the subagents and the capabilities each one receives."""
 
     tools = {tool.name: tool for tool in TOOLS}
 
 
     reading = tools["inspect_sheet"]
 
-    reading_tools = [
+    reading_tools = (
         reading, 
         tools["sheet_stats"], 
         tools["find_data"]
-    ]
+    )
 
     row_tools = (
         reading,
@@ -51,38 +51,38 @@ def subagents() -> tuple[SubagentSpec, ...]:
         tools["move_row"],
     )
 
-    structural = [
+    structural = (
         tools["modify_column"], 
         tools["modify_style"]
-    ]
+    )
 
     return (
         SubagentSpec(
-            "analyst",
-            prompts.ANALYST_DESCRIPTION,
-            prompts.ANALYST_PROMPT,
-            tuple(reading_tools),
+            name="analyst",
+            description=prompts.ANALYST_DESCRIPTION,
+            system_prompt=prompts.ANALYST_PROMPT,
+            tools=reading_tools,
+            return_tool_results=True,
         ),
         SubagentSpec(
-            "row_editor",
-            prompts.ROW_EDITOR_DESCRIPTION,
-            prompts.ROW_EDITOR_PROMPT,
-            row_tools,
+            name="row_editor",
+            description=prompts.ROW_EDITOR_DESCRIPTION,
+            system_prompt=prompts.ROW_EDITOR_PROMPT,
+            tools=row_tools,
         ),
         SubagentSpec(
-            "structure_editor",
-            prompts.STRUCTURE_DESCRIPTION,
-            prompts.STRUCTURE_PROMPT,
-            (reading, *structural),
+            name="structure_editor",
+            description=prompts.STRUCTURE_DESCRIPTION,
+            system_prompt=prompts.STRUCTURE_PROMPT,
+            tools=(reading, *structural),
         ),
         SubagentSpec(
-            "chart_maker",
-            prompts.CHART_DESCRIPTION,
-            prompts.CHART_PROMPT,
-            (reading, tools["modify_chart"]),
+            name="chart_maker",
+            description=prompts.CHART_DESCRIPTION,
+            system_prompt=prompts.CHART_PROMPT,
+            tools=(reading, tools["modify_chart"]),
         ),
     )
 
 
-# The four the orchestrator is built from.
 SUBAGENTS = subagents()
