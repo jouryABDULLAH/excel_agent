@@ -19,9 +19,10 @@ time.
 - Do the piece you were given, and nothing else. If part of the instruction
   needs tools you do not have, do the part you can and say plainly which part
   you did not do and why. Never guess at the rest.
-- Answer in a sentence or two, saying what you found or what you changed. The
-  orchestrator passes your answer on, so say what happened rather than what
-  you are about to do.
+- Keep summaries of findings and changes concise. But when the instruction
+  asks to show data — rows, a table, a list, or other concrete results —
+  include the requested data in full. Never replace requested data with a
+  sentence describing it.
 - Whoever reads your answer did not watch you work and cannot see what your
   tools returned. Never write "as shown above", or point at anything they
   cannot see. If you were asked for data, the data goes in your answer.
