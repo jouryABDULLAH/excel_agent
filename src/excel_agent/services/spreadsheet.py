@@ -503,36 +503,33 @@ class SpreadsheetService:
     def format_range(
         self,
         spreadsheet_id: str,
-        sheet_id: int,
-        start_row: int,
-        end_row: int,
-        start_column: int,
-        end_column: int,
-        user_entered_format: dict,
+        ranges: list[dict],
+        cell_format: dict,
+        fields: list[str],
     ) -> dict:
-        """Apply formatting to a rectangular 1-based range."""
-        self._validate_range(start_row, end_row)
-        self._validate_range(start_column, end_column)
+        """Apply the same cell format to one or more grid ranges."""
+        if not ranges:
+            raise ValueError("At least one range is required.")
 
-        request = {
-            "repeatCell": {
-                "range": {
-                    "sheetId": sheet_id,
-                    "startRowIndex": start_row - 1,
-                    "endRowIndex": end_row,
-                    "startColumnIndex": start_column - 1,
-                    "endColumnIndex": end_column,
-                },
-                "cell": {
-                    "userEnteredFormat": user_entered_format,
-                },
-                "fields": "userEnteredFormat",
+        if not fields:
+            raise ValueError("At least one formatting field is required.")
+
+        requests = [
+            {
+                "repeatCell": {
+                    "range": grid_range,
+                    "cell": {
+                        "userEnteredFormat": cell_format,
+                    },
+                    "fields": ",".join(fields),
+                }
             }
-        }
+            for grid_range in ranges
+        ]
 
         return self.batch_update(
             spreadsheet_id,
-            [request],
+            requests,
         )
 
     # ------------------------------------------------------------------

@@ -57,7 +57,8 @@ def subagents() -> tuple[SubagentSpec, ...]:
         tools["delete_column"],
         tools["move_column"],
         tools["set_column_formula"],
-        tools["modify_style"],
+        tools["format_range"],
+        tools["copy_format"],
     )
 
     return (
