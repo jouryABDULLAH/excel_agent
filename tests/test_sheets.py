@@ -36,10 +36,14 @@ def a_drive(monkeypatch):
 
     Drive matches a name by what contains it, so what search gives back here
     is every file whose name holds the one asked for, the way Drive would.
+
+    Patched on the DriveService that sheets.py holds, rather than on
+    sheets.search: resolving goes straight to the service now, so the module
+    level function is no longer on the path this exercises.
     """
 
     def use(*titles: str):
-        monkeypatch.setattr(sheets_module, "_spreadsheet_ids", {})
+        sheets_module._drive._spreadsheet_ids.clear()
 
         def search(name=None):
             return [
@@ -48,7 +52,7 @@ def a_drive(monkeypatch):
                 if not name or name.lower() in title.lower()
             ]
 
-        monkeypatch.setattr(sheets_module, "search", search)
+        monkeypatch.setattr(sheets_module._drive, "search_spreadsheets", search)
 
     return use
 

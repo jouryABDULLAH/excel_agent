@@ -14,6 +14,7 @@ import pytest  # noqa: E402
 
 import fake_sheets  # noqa: E402
 from excel_agent import sheets  # noqa: E402
+from excel_agent.services.google import GoogleAPI, google_api  # noqa: E402
 
 SPREADSHEET = "TEST - Sales Orders"
 SHEET = "Sales Orders"
@@ -23,18 +24,70 @@ SHEET = "Sales Orders"
 def no_google(monkeypatch):
     """Fail any test that reaches Google instead of stubbing it.
 
-    Every call goes through service() to get a client, so refusing there
-    catches the lot. A test that forgets to stub would otherwise sit waiting on
-    the network, or worse, write to somebody's real spreadsheet.
+    Every client is built in GoogleAPI.service, and both the sheets and drive
+    properties go through it, so refusing there catches the lot however a
+    caller arrived. Patched on the class rather than on the shared instance,
+    because a test that builds a GoogleAPI of its own must be refused too.
+
+    A test that forgets to stub would otherwise sit waiting on the network,
+    or worse, write to somebody's real spreadsheet.
     """
 
-    def refuse(api, version):
+    def refuse(self, api, version):
         raise AssertionError(
-            f"This test asked Google for the {api} client. Tests must work on "
-            "sheets built by hand, through the a_sheet or a_drive fixture."
+            f"This test asked Google for the {api} {version} client. Tests "
+            "must work on sheets built by hand, through the a_spreadsheet, "
+            "a_drive or fake_google fixtures."
         )
 
-    monkeypatch.setattr(sheets, "service", refuse)
+    monkeypatch.setattr(GoogleAPI, "service", refuse)
+
+
+@pytest.fixture(autouse=True)
+def nothing_remembered_between_tests():
+    """Empty every cache that outlives a test.
+
+    All three live on module level objects built once at import: the built
+    clients, the spreadsheet names DriveService has resolved, and the sheets
+    read out of a spreadsheet. Left alone, what one test put there answers the
+    next one's question, and the order tests happen to run in starts deciding
+    whether they pass.
+    """
+    for cache in (
+        google_api._services,
+        sheets._drive._spreadsheet_ids,
+        sheets._sheets_in,
+    ):
+        cache.clear()
+
+    yield
+
+    for cache in (
+        google_api._services,
+        sheets._drive._spreadsheet_ids,
+        sheets._sheets_in,
+    ):
+        cache.clear()
+
+
+@pytest.fixture
+def fake_google(monkeypatch):
+    """Put a Google built by hand behind sheets.py and its DriveService.
+
+    Both seams are moved together on purpose: sheets.py reaches Google through
+    the shared google_api, and DriveService holds its own reference taken when
+    it was built, so patching one and not the other leaves half the module
+    talking to the real thing.
+    """
+    import fake_google as builder
+
+    def use(files=None, spreadsheets=None):
+        pretend = builder.FakeGoogle(files=files, spreadsheets=spreadsheets)
+        monkeypatch.setattr(sheets, "google_api", pretend)
+        monkeypatch.setattr(sheets._drive, "_google", pretend)
+        return pretend
+
+    return use
 
 
 @pytest.fixture
