@@ -132,7 +132,12 @@ class DriveService:
         return spreadsheet_id, title
 
     def forget(self, spreadsheet_id: str) -> None:
-        """Forget cached information about a spreadsheet."""
+        """Forget cached information about a spreadsheet.
+
+        Nothing calls this yet. An id does not change while the agent runs, so
+        a write is no reason to drop one; it is here for a rename or a delete,
+        which is the only way what is remembered here can go wrong.
+        """
         stale_names = [
             name
             for name, cached_id in self._spreadsheet_ids.items()
