@@ -1,0 +1,181 @@
+"""Tests for the arithmetic SpreadsheetService does on the way to Google.
+
+The tools count rows and columns from 1, the way the sheet shows them. Google
+counts from 0 and leaves the end of a range out. This module is the only place
+that knows both, so a mistake here deletes the row next to the one meant, and
+no test above it would notice: a tool asks for row 4 and is told row 4 went.
+
+That arithmetic used to sit in the row tools and was covered there. It moved
+when they were rewritten against the service, so it is covered here now,
+against a Google built by hand.
+"""
+
+import pytest
+
+from excel_agent.services.spreadsheet import SpreadsheetService
+
+from fake_google import Endpoint, FakeGoogle
+
+
+def a_service(answers=None):
+    """A service talking to a Google that records what it was asked."""
+    pretend = FakeGoogle(spreadsheets=Endpoint(answers=answers or {}))
+    return SpreadsheetService(google=pretend), pretend
+
+
+def only_request(pretend) -> dict:
+    """The single request of the last batchUpdate."""
+    method, asked = pretend.spreadsheets_endpoint.calls[-1]
+    assert method == "batchUpdate"
+    requests = asked["body"]["requests"]
+    assert len(requests) == 1
+    return requests[0]
+
+
+# Deleting
+
+
+def test_deleting_one_row_asks_for_that_row_alone():
+    service, pretend = a_service()
+
+    service.delete_rows("an-id", sheet_id=0, start_row=4)
+
+    # Row 4 alone: counting from 0 makes the start 3, and leaving the end out
+    # makes it 4. An end of 3 would delete row 3 instead.
+    assert only_request(pretend) == {
+        "deleteDimension": {
+            "range": {
+                "sheetId": 0,
+                "dimension": "ROWS",
+                "startIndex": 3,
+                "endIndex": 4,
+            }
+        }
+    }
+
+
+def test_deleting_a_run_of_rows_covers_both_ends():
+    service, pretend = a_service()
+
+    service.delete_rows("an-id", sheet_id=0, start_row=4, end_row=6)
+
+    deleted = only_request(pretend)["deleteDimension"]["range"]
+    assert (deleted["startIndex"], deleted["endIndex"]) == (3, 6)
+
+
+@pytest.mark.parametrize("start,end", [(0, 4), (4, 3)])
+def test_a_range_that_makes_no_sense_is_refused_before_google_sees_it(start, end):
+    service, pretend = a_service()
+
+    with pytest.raises(ValueError):
+        service.delete_rows("an-id", sheet_id=0, start_row=start, end_row=end)
+
+    assert pretend.spreadsheets_endpoint.calls == []
+
+
+# Inserting
+
+
+def test_inserting_makes_the_gap_above_the_row_asked_for():
+    service, pretend = a_service()
+
+    service.insert_rows("an-id", sheet_id=0, start_row=3)
+
+    inserted = only_request(pretend)["insertDimension"]
+    assert inserted["range"]["startIndex"] == 2
+    assert inserted["range"]["endIndex"] == 3
+    # Inheriting from below rather than above, which is the only choice there
+    # is when the new row is row 1.
+    assert inserted["inheritFromBefore"] is False
+
+
+def test_inserting_several_rows_widens_the_gap():
+    service, pretend = a_service()
+
+    service.insert_rows("an-id", sheet_id=0, start_row=3, count=4)
+
+    gap = only_request(pretend)["insertDimension"]["range"]
+    assert (gap["startIndex"], gap["endIndex"]) == (2, 6)
+
+
+def test_inserting_nothing_is_refused():
+    service, pretend = a_service()
+
+    with pytest.raises(ValueError):
+        service.insert_rows("an-id", sheet_id=0, start_row=3, count=0)
+
+    assert pretend.spreadsheets_endpoint.calls == []
+
+
+# Moving, which is where the counting is easiest to get wrong
+
+
+def test_moving_a_row_down_lands_it_where_it_was_asked_for():
+    service, pretend = a_service()
+
+    service.move_row("an-id", sheet_id=0, row=2, to_row=5)
+
+    # Google measures the destination against the grid before the row is
+    # lifted out, so moving down asks for the number it should end up at.
+    moved = only_request(pretend)["moveDimension"]
+    assert moved["source"]["startIndex"] == 1
+    assert moved["source"]["endIndex"] == 2
+    assert moved["destinationIndex"] == 5
+
+
+def test_moving_a_row_up_lands_it_where_it_was_asked_for():
+    service, pretend = a_service()
+
+    service.move_row("an-id", sheet_id=0, row=5, to_row=2)
+
+    # Moving up, the destination is the row before the one asked for, because
+    # nothing above it has been lifted out yet. Using 2 here would leave the
+    # row one place below where it was wanted.
+    moved = only_request(pretend)["moveDimension"]
+    assert moved["source"]["startIndex"] == 4
+    assert moved["destinationIndex"] == 1
+
+
+def test_moving_a_row_onto_itself_is_refused():
+    service, pretend = a_service()
+
+    with pytest.raises(ValueError):
+        service.move_row("an-id", sheet_id=0, row=3, to_row=3)
+
+    assert pretend.spreadsheets_endpoint.calls == []
+
+
+# What a structural change does to what is remembered
+
+
+def test_a_structural_change_forgets_the_sheets_it_may_have_moved():
+    service, pretend = a_service(
+        answers={
+            "get": {
+                "sheets": [
+                    {
+                        "properties": {
+                            "sheetId": 0,
+                            "title": "Sales",
+                            "gridProperties": {"rowCount": 10, "columnCount": 4},
+                        }
+                    }
+                ]
+            }
+        }
+    )
+
+    service.list_sheets("an-id")
+    service.list_sheets("an-id")
+    assert len(pretend.spreadsheets_endpoint.calls) == 1
+
+    service.delete_rows("an-id", sheet_id=0, start_row=4)
+    service.list_sheets("an-id")
+
+    # Read, write, read again: the write sent the next reader back to Google
+    # rather than answering out of what was true before it.
+    assert [method for method, _ in pretend.spreadsheets_endpoint.calls] == [
+        "get",
+        "batchUpdate",
+        "get",
+    ]

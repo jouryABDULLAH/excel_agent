@@ -1,6 +1,7 @@
 """Factory for building the agents."""
 
 from langchain.agents import create_agent, AgentState
+from langchain.messages import ToolMessage
 from langchain.tools import ToolRuntime
 from langchain_core.tools import tool
 from langgraph.checkpoint.memory import InMemorySaver
@@ -20,7 +21,7 @@ class OrchestratorState(AgentState):
 
 
 def as_tool(spec: SubagentSpec, model):
-    """Create a tool that delegates one task to a specialized subagent."""
+    """Wrap one subagent as a tool available to the orchestrator."""
 
     agent = create_agent(
         model=model, 
@@ -28,32 +29,65 @@ def as_tool(spec: SubagentSpec, model):
         system_prompt=spec.system_prompt
     )
 
-    @tool(spec.name, description=spec.description)
+    @tool(
+        spec.name,
+        description=spec.description,
+        response_format="content_and_artifact",
+    )
     def delegate(
         instruction: str,
         runtime: ToolRuntime
-    ) -> str:
+    ) -> tuple[str, dict | None]:
         """Delegate a spreadsheet task to this specialized subagent."""
 
         spreadsheet_id = runtime.state.get("spreadsheet_id")
         spreadsheet_name = runtime.state.get("spreadsheet_name")
 
-        subagent_instruction = f"""
-        Current spreadsheet:
-         - Name: {spreadsheet_name or "Not selected"}
-         - ID: {spreadsheet_id or "Not selected"}
-
-        Task:
-        {instruction}
-        """.strip()
-
-        result = agent.invoke(
-            {"messages": [{"role": "user", "content": subagent_instruction}]},
-             config={"recursion_limit": RECURSION_LIMIT, "run_name": spec.name},
+        subagent_instruction = (
+            f"Current spreadsheet: "
+            f"{spreadsheet_name or 'Not selected'}\n"
+            f"Current spreadsheet ID: "
+            f"{spreadsheet_id or 'Not selected'}\n\n"
+            f"Task:\n{instruction}"
         )
 
-        return str(result["messages"][-1].content)
-   
+        result = agent.invoke(
+            {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": subagent_instruction,
+                    }
+                ]
+            },
+            config={
+                "recursion_limit": RECURSION_LIMIT,
+                "run_name": spec.name,
+            },
+        )
+
+        messages = result["messages"]
+        response = str(messages[-1].content)
+
+        if not spec.return_tool_results:
+            return response, None
+
+        tool_results = [
+            message.content
+            for message in messages
+            if isinstance(message, ToolMessage)
+            and message.content
+        ]
+
+        return (
+            response,
+            {
+                "subagent": spec.name,
+                "response": response,
+                "tool_results": tool_results,
+            },
+        )
+
     return delegate
 
 def build_orchestrator():

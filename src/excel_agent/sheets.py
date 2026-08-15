@@ -6,7 +6,6 @@ How to deal with the Google Sheets and Drive APIs.
 
 import random
 import time
-from dataclasses import dataclass
 from typing import Any
 
 # from googleapiclient.discovery import build
@@ -15,9 +14,13 @@ from typing import Any
 from excel_agent import config
 from excel_agent.services.google import google_api, readable
 from excel_agent.services.drive import DriveService
-# The field mask grid() reads with. Taken from the service rather than kept
-# here as well, so there is one list of the fields a Cell is built from.
-from excel_agent.services.spreadsheet import GRID_FIELDS
+# Taken from the service rather than declared here as well. A second class of
+# the same name and the same fields is still a different class: read_sheet
+# returns the service's Cell, and a helper annotated with a local one does not
+# accept it, which is a type error on every tool that reads a sheet and then
+# measures it. GRID_FIELDS is here for the same reason: one list of the fields
+# a Cell is built from.
+from excel_agent.services.spreadsheet import Cell, EMPTY, GRID_FIELDS
 # from excel_agent.auth import get_credentials
 # from excel_agent.scopes import SCOPES
 
@@ -32,35 +35,6 @@ MAX_BACKOFF = 32.0
 
 SPREADSHEET_MIME = "application/vnd.google-apps.spreadsheet"
 
-
-# The number formats that mean a cell holds a date rather than a number. Both
-# arrive as a count of days, so without this a column of dates would be
-# summarised as arithmetic on five figure numbers.
-DATE_FORMATS = ("DATE", "DATE_TIME")
-
-
-@dataclass(frozen=True)
-class Cell:
-    """One cell, in the three ways a tool might need to read it.
-
-    displayed is what a person looking at the sheet sees, formula is what was
-    typed in if that was a formula, and value is what it works out to, as a
-    number or a string rather than as text. A tool showing the sheet wants the
-    first; a tool adding a column up wants the last.
-    """
-
-    displayed: str | None = None
-    formula: str | None = None
-    value: object = None
-    number_format: str | None = None
-
-    @property
-    def is_date(self) -> bool:
-        """Whether the sheet is treating this cell as a date."""
-        return self.number_format in DATE_FORMATS
-
-
-EMPTY = Cell()
 
 # Looked up once and kept, because none of it changes while the agent runs and
 # all of it costs a round trip.

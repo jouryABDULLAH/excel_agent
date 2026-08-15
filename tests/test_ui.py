@@ -102,7 +102,7 @@ def test_a_turn_that_calls_a_tool_is_drawn_whole(a_spreadsheet):
     page = page_with_a_scripted_agent(
         "",
         script=[
-            calling("modify_row", "1", action="edit", row=2, values={"Units": 99}),
+            calling("update_row", "1", row=2, values={"Units": 99}),
             AIMessage("Set row 2 to 99."),
         ],
         tools=TOOLS,
@@ -115,7 +115,7 @@ def test_a_turn_that_calls_a_tool_is_drawn_whole(a_spreadsheet):
     # never been drawn at all.
     said = page.session_state["transcript"][-1]
     assert said["text"] == "Set row 2 to 99."
-    assert said["calls"] == ["modify_row(action='edit', row=2, values={'Units': 99})"]
+    assert said["calls"] == ["update_row(row=2, values={'Units': 99})"]
     assert any("Set row 2 to 99." in one.value for one in page.markdown)
 
 
@@ -161,7 +161,7 @@ def test_a_turn_that_says_nothing_says_that(a_spreadsheet):
     page = page_with_a_scripted_agent(
         "",
         script=[
-            calling("modify_row", "1", action="edit", row=2, values={"Units": 99}),
+            calling("update_row", "1", row=2, values={"Units": 99}),
             AIMessage(""),
         ],
         tools=TOOLS,
@@ -173,7 +173,7 @@ def test_a_turn_that_says_nothing_says_that(a_spreadsheet):
     # claim nothing happened either: the call above it did edit the sheet.
     said = page.session_state["transcript"][-1]
     assert "ended without anything being said" in said["text"]
-    assert said["calls"] == ["modify_row(action='edit', row=2, values={'Units': 99})"]
+    assert said["calls"] == ["update_row(row=2, values={'Units': 99})"]
 
 
 def test_a_turn_that_falls_over_stays_on_the_page(monkeypatch):

@@ -12,7 +12,7 @@ of a thread, and the agent keeps everything said under it.
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.errors import GraphRecursionError
 
 from excel_agent.model import GAVE_UP, RECURSION_LIMIT, new_thread
@@ -43,6 +43,24 @@ class Answer:
     """The finished answer, at the end of the turn."""
 
     text: str
+
+
+def rendered_tool_results(artifact: dict) -> str | None:
+    """Turn preserved subagent tool results into user-displayable text."""
+    results = artifact.get("tool_results")
+
+    if not results:
+        return None
+
+    displayed = []
+
+    for result in results:
+        if isinstance(result, str):
+            displayed.append(result)
+        else:
+            displayed.append(str(result))
+
+    return "\n\n".join(displayed)
 
 
 class Session:
@@ -76,6 +94,12 @@ class Session:
         }
 
         spoken = ""
+
+        # If the final piece of work in this turn is an analyst call, keep the
+        # analyst's exact tool output here. It can then be returned directly
+        # instead of asking the orchestrator to reproduce it.
+        analyst_result: str | None = None
+
         try:
             for mode, payload in self.agent.stream(
                 {"messages": [{"role": "user", "content": question}]},
@@ -84,21 +108,60 @@ class Session:
             ):
                 if mode == "messages":
                     token, _ = payload
+
                     if self.stream_text and token.content:
                         yield Text(str(token.content))
+
                     continue
 
-                # Change: 
                 for update in payload.values():
                     if not isinstance(update, dict):
                         continue
+
                     for message in update.get("messages") or []:
-                        for call in getattr(message, "tool_calls", None) or []:
-                            yield ToolCall(call["name"], dict(call["args"]))
-                        if isinstance(message, AIMessage) and message.content:
+
+                        # A new tool call means any previous analyst result was
+                        # only an intermediate step in a larger workflow.
+                        calls = getattr(message, "tool_calls", None) or []
+
+                        if calls:
+                            analyst_result = None
+
+                            for call in calls:
+                                yield ToolCall(
+                                    call["name"],
+                                    dict(call["args"]),
+                                )
+
+                        # The delegate tool's artifact is not shown to the
+                        # orchestrator model, but it is available here.
+                        if isinstance(message, ToolMessage):
+                            artifact = getattr(message, "artifact", None)
+
+                            if (
+                                isinstance(artifact, dict)
+                                and artifact.get("subagent") == "analyst"
+                            ):
+                                preserved = rendered_tool_results(artifact)
+
+                                if preserved:
+                                    analyst_result = preserved
+
+                        if (
+                            isinstance(message, AIMessage)
+                            and message.content
+                        ):
                             spoken = str(message.content)
+
         except GraphRecursionError:
             yield Answer(GAVE_UP)
+            return
+
+        # If the analyst was the last operational step, its preserved tool
+        # result is the authoritative user-facing data. Do not make the
+        # orchestrator's regenerated version replace it.
+        if analyst_result is not None:
+            yield Answer(analyst_result)
             return
 
         yield Answer(spoken)

@@ -11,7 +11,7 @@ whole of what a tool gives it.
 import fake_sheets
 import pytest
 
-from excel_agent.tools import columns, find, inspect, modify, spreadsheets, stats
+from excel_agent.tools import columns, find, inspect, rows as row_tools, spreadsheets, stats
 
 SPREADSHEET = "TEST - Sales Orders"
 SHEET = "Sales Orders"
@@ -490,177 +490,191 @@ def test_a_number_that_is_nowhere_says_what_was_tried(monkeypatch):
 
 
 # Changing rows
+#
+# These tools reach Google through spreadsheet_service rather than through a
+# name imported from sheets.py, so what is stubbed is the service, and what is
+# asserted is the call it was asked to make. The 1-based to 0-based arithmetic
+# those calls turn into is the service's own, and is tested in
+# test_services_spreadsheet.py against a fake Google.
 
 
 @pytest.fixture
-def a_writable_sheet(a_sheet, monkeypatch):
-    """A sheet to change, recording what would have been sent to Google."""
-    sent: dict[str, list] = {"values": [], "requests": []}
+def a_writable_sheet(a_spreadsheet):
+    """A sheet to change, recording what the service was asked to do."""
 
     def use(rows=None):
-        a_sheet(rows or fake_sheets.orders(), module=modify)
-        monkeypatch.setattr(
-            modify, "write_values", lambda id, data: sent["values"].append(data)
-        )
-        monkeypatch.setattr(
-            modify, "batch", lambda id, requests: sent["requests"].append(requests)
-        )
-        return sent
+        return a_spreadsheet(rows=rows, modules=(row_tools,))
 
     return use
+
+
+def written(sent: list) -> dict:
+    """The cells of the first write, by the range each landed in."""
+    updates = next(one for one in sent if one["call"] in ("update_cells", "append_rows"))
+    if updates["call"] == "append_rows":
+        return updates["values"]
+
+    return {entry["range"]: entry["values"][0][0] for entry in updates["updates"]}
 
 
 def test_a_new_row_goes_under_the_last_one(a_writable_sheet):
     sent = a_writable_sheet()
 
-    answer = modify.modify_row.invoke(
-        {"action": "add", "values": {"Product": "Dock", "Region": "EU"}}
-    )
+    answer = row_tools.append_row.invoke({"values": {"Product": "Dock", "Region": "EU"}})
 
-    assert "Added row 7 with Product = Dock, Region = EU" in answer
-    # Written a cell at a time, so the columns in between are left alone.
-    written = {entry["range"]: entry["values"][0][0] for entry in sent["values"][0]}
-    assert written == {"'Sales Orders'!D7:D7": "Dock", "'Sales Orders'!B7:B7": "EU"}
+    assert answer["ok"] is True
+    assert answer["row"] == 7
+    # append lets Google place the row, so what goes out is the table it is
+    # being added to rather than a cell reference worked out here.
+    appended = next(one for one in sent if one["call"] == "append_rows")
+    assert appended["range_name"].startswith("'Sales Orders'!")
+    assert "Dock" in str(appended["values"])
+    assert "EU" in str(appended["values"])
+
+
+def test_a_row_can_be_put_at_a_chosen_position(a_writable_sheet):
+    sent = a_writable_sheet()
+
+    answer = row_tools.insert_row.invoke({"row": 3, "values": {"Region": "West"}})
+
+    assert answer["ok"] is True
+    assert answer["row_numbers_changed"] is True
+    # The gap is made first, then filled: filling first would overwrite row 3.
+    assert [one["call"] for one in sent] == ["insert_rows", "update_cells"]
+    assert sent[0]["start_row"] == 3
+    assert written(sent) == {"'Sales Orders'!B3:B3": "West"}
 
 
 def test_editing_writes_only_the_columns_given(a_writable_sheet):
     sent = a_writable_sheet()
 
-    answer = modify.modify_row.invoke(
-        {"action": "edit", "row": 3, "values": {"Region": "West"}}
-    )
+    answer = row_tools.update_row.invoke({"row": 3, "values": {"Region": "West"}})
 
-    assert "Updated row 3: Region = West" in answer
-    assert sent["values"][0] == [
-        {"range": "'Sales Orders'!B3:B3", "values": [["West"]]}
-    ]
+    assert answer["ok"] is True
+    assert answer["updated_columns"] == ["Region"]
+    assert written(sent) == {"'Sales Orders'!B3:B3": "West"}
 
 
 def test_a_cell_is_cleared_by_writing_nothing_into_it(a_writable_sheet):
     sent = a_writable_sheet()
 
-    answer = modify.modify_row.invoke(
-        {"action": "edit", "row": 3, "values": {"Region": None}}
-    )
+    row_tools.update_row.invoke({"row": 3, "values": {"Region": None}})
 
     # There is no way to send "no value", so an empty string is what empties
     # a cell.
-    assert "Region = (blank)" in answer
-    assert sent["values"][0][0]["values"] == [[""]]
+    assert written(sent) == {"'Sales Orders'!B3:B3": ""}
 
 
-def test_removing_a_row_asks_google_to_delete_that_row_alone(a_writable_sheet):
+def test_removing_a_row_asks_for_that_row_alone(a_writable_sheet):
     sent = a_writable_sheet()
 
-    answer = modify.modify_row.invoke({"action": "remove", "row": 4})
+    answer = row_tools.delete_row.invoke({"row": 4})
 
-    assert "Removed row 4" in answer
-    assert "now out of date" in answer
-    # Row 4 alone: Google counts from 0 and leaves the end out.
-    assert sent["requests"][0] == [
-        {
-            "deleteDimension": {
-                "range": {
-                    "sheetId": 0,
-                    "dimension": "ROWS",
-                    "startIndex": 3,
-                    "endIndex": 4,
-                }
-            }
-        }
-    ]
+    assert answer["ok"] is True
+    assert answer["deleted_row"] == 4
+    assert answer["row_numbers_changed"] is True
+    assert sent[0]["call"] == "delete_rows"
+    assert sent[0]["start_row"] == 4
 
 
-def test_moving_a_row_down_lands_it_where_it_was_asked_for(a_writable_sheet):
+def test_moving_a_row_says_where_it_came_from_and_went_to(a_writable_sheet):
     sent = a_writable_sheet()
 
-    modify.modify_row.invoke({"action": "move", "row": 2, "to_row": 5})
+    answer = row_tools.move_row.invoke({"row": 2, "to_row": 5})
 
-    # Google counts the destination before the row is lifted out, so moving
-    # down asks for the number the row should end up at.
-    moved = sent["requests"][0][0]["moveDimension"]
-    assert moved["source"]["startIndex"] == 1
-    assert moved["destinationIndex"] == 5
-
-
-def test_moving_a_row_up_lands_it_where_it_was_asked_for(a_writable_sheet):
-    sent = a_writable_sheet()
-
-    modify.modify_row.invoke({"action": "move", "row": 5, "to_row": 2})
-
-    # Moving up, the destination is the row before the one asked for, because
-    # nothing above it has been lifted out yet.
-    moved = sent["requests"][0][0]["moveDimension"]
-    assert moved["source"]["startIndex"] == 4
-    assert moved["destinationIndex"] == 1
+    assert (answer["from_row"], answer["to_row"]) == (2, 5)
+    assert answer["row_numbers_changed"] is True
+    assert sent[0]["call"] == "move_row"
+    assert (sent[0]["row"], sent[0]["to_row"]) == (2, 5)
 
 
 def test_a_row_that_does_not_exist_is_refused_and_nothing_is_sent(a_writable_sheet):
     sent = a_writable_sheet()
 
-    answer = modify.modify_row.invoke(
-        {"action": "edit", "row": 9999, "values": {"Region": "EU"}}
-    )
+    answer = row_tools.update_row.invoke({"row": 9999, "values": {"Region": "EU"}})
 
-    assert "Row 9999 does not exist. The sheet has rows 2 to 6." in answer
-    assert sent["values"] == [] and sent["requests"] == []
+    assert answer["error"] == "row_not_found"
+    assert (answer["first_data_row"], answer["last_data_row"]) == (2, 6)
+    assert sent == []
 
 
 def test_the_header_row_is_not_a_row_that_can_be_changed(a_writable_sheet):
     sent = a_writable_sheet()
 
-    answer = modify.modify_row.invoke(
-        {"action": "edit", "row": 1, "values": {"Region": "EU"}}
-    )
+    answer = row_tools.update_row.invoke({"row": 1, "values": {"Region": "EU"}})
 
-    assert "Row 1 does not exist" in answer
-    assert sent["values"] == []
+    assert answer["error"] == "row_not_found"
+    assert sent == []
 
 
 def test_an_unknown_column_is_refused_and_nothing_is_sent(a_writable_sheet):
     sent = a_writable_sheet()
 
-    answer = modify.modify_row.invoke({"action": "add", "values": {"Profit": 10}})
+    answer = row_tools.append_row.invoke({"values": {"Profit": 10}})
 
-    assert "Unknown column(s): Profit" in answer
-    assert sent["values"] == []
+    assert answer["error"] == "unknown_columns"
+    assert answer["unknown_columns"] == ["Profit"]
+    # Named, so the model can correct itself rather than guess again.
+    assert "Region" in answer["available_columns"]
+    assert sent == []
 
 
 def test_editing_needs_something_to_change(a_writable_sheet):
     sent = a_writable_sheet()
 
-    answer = modify.modify_row.invoke({"action": "edit", "row": 2, "values": {}})
+    answer = row_tools.update_row.invoke({"row": 2, "values": {}})
 
-    assert "needs at least one column in values" in answer
-    assert sent["values"] == []
-
-
-def test_moving_needs_somewhere_to_go(a_writable_sheet):
-    sent = a_writable_sheet()
-
-    assert "needs to_row" in modify.modify_row.invoke({"action": "move", "row": 2})
-    assert sent["requests"] == []
+    assert answer["error"] == "no_values"
+    assert sent == []
 
 
 def test_moving_a_row_to_where_it_already_is_changes_nothing(a_writable_sheet):
     sent = a_writable_sheet()
 
-    answer = modify.modify_row.invoke({"action": "move", "row": 3, "to_row": 3})
+    answer = row_tools.move_row.invoke({"row": 3, "to_row": 3})
 
-    assert "already where it should be" in answer
-    assert sent["requests"] == []
+    assert answer["ok"] is True
+    assert answer["changed"] is False
+    assert sent == []
+
+
+def test_a_destination_outside_the_data_is_refused(a_writable_sheet):
+    sent = a_writable_sheet()
+
+    answer = row_tools.move_row.invoke({"row": 3, "to_row": 9999})
+
+    assert answer["error"] == "invalid_destination"
+    assert sent == []
 
 
 def test_a_formula_is_written_as_a_formula(a_writable_sheet):
     sent = a_writable_sheet()
 
-    modify.modify_row.invoke(
-        {"action": "edit", "row": 2, "values": {"Units": "=B2*2"}}
-    )
+    row_tools.update_row.invoke({"row": 2, "values": {"Units": "=B2*2"}})
 
     # USER_ENTERED is what makes Google read this as a formula rather than
     # storing the characters.
-    assert sent["values"][0][0]["values"] == [["=B2*2"]]
+    write = next(one for one in sent if one["call"] == "update_cells")
+    assert write["value_input_option"] == "USER_ENTERED"
+    assert written(sent) == {"'Sales Orders'!C2:C2": "=B2*2"}
+
+
+def test_a_google_failure_comes_back_as_a_structured_error(a_writable_sheet, monkeypatch):
+    from excel_agent.services.spreadsheet import spreadsheet_service
+    from fake_google import error
+
+    a_writable_sheet()
+
+    def fail(**named):
+        raise error(403, "Insufficient permission")
+
+    monkeypatch.setattr(spreadsheet_service, "update_cells", fail)
+
+    answer = row_tools.update_row.invoke({"row": 2, "values": {"Region": "EU"}})
+
+    assert answer["ok"] is False
+    assert answer["error"] == "google_api_error"
+    assert "Google refused the request" in answer["message"]
 
 
 # Changing columns
