@@ -99,7 +99,7 @@ class DriveService:
         if not found:
             raise ValueError(
                 f'There is no spreadsheet called "{wanted}". '
-                "Call list_workbooks to see the spreadsheets available."
+                # "Call list_workbooks to see the spreadsheets available."
             )
 
         exact = [
