@@ -169,25 +169,41 @@ class SpreadsheetService:
     # Value writes
     # ------------------------------------------------------------------
 
+    def append_rows(
+        self,
+        spreadsheet_id: str,
+        range_name: str,
+        values: list[list[Any]],
+        value_input_option: Literal["USER_ENTERED", "RAW"] = "USER_ENTERED",
+    ) -> dict:
+        """Append rows after the current table in an A1 range."""
+        result = self._google.execute(
+            self._google.sheets
+            .spreadsheets()
+            .values()
+            .append(
+                spreadsheetId=spreadsheet_id,
+                range=range_name,
+                valueInputOption=value_input_option,
+                insertDataOption="INSERT_ROWS",
+                body={
+                    "majorDimension": "ROWS",
+                    "values": values,
+                },
+            )
+        )
+
+        self.invalidate(spreadsheet_id)
+        return result
+
     def update_cells(
         self,
         spreadsheet_id: str,
         updates: list[dict],
         value_input_option: Literal["USER_ENTERED", "RAW"] = "USER_ENTERED",
     ) -> dict:
-        """Update values in one or more A1 ranges.
-
-        Each update is:
-
-            {
-                "range": "'Sheet1'!B2",
-                "values": [["value"]]
-            }
-
-        USER_ENTERED means formulas and values behave like user input.
-        USER_ENTERED parses each value as though it were typed into the cell: formulas become live formulas, and text that looks like a number or date is converted and formatted accordingly. Use RAW if values must be stored verbatim.
-        """
-        return self._google.execute(
+        """Update values in one or more A1 ranges."""
+        result = self._google.execute(
             self._google.sheets
             .spreadsheets()
             .values()
@@ -200,13 +216,17 @@ class SpreadsheetService:
             )
         )
 
+        self.invalidate(spreadsheet_id)
+        return result
+
+
     def clear_range(
         self,
         spreadsheet_id: str,
         range_name: str,
     ) -> dict:
-        """Clear values from an A1 range."""
-        return self._google.execute(
+        """Clear cell values without clearing formatting."""
+        result = self._google.execute(
             self._google.sheets
             .spreadsheets()
             .values()
@@ -216,6 +236,9 @@ class SpreadsheetService:
                 body={},
             )
         )
+
+        self.invalidate(spreadsheet_id)
+        return result
 
     # ------------------------------------------------------------------
     # Row operations
@@ -230,9 +253,12 @@ class SpreadsheetService:
         start_row: int,
         count: int = 1,
     ) -> dict:
-        """Insert rows before the specified 1-based row."""
-        self._validate_positive(start_row)
-        self._validate_positive(count)
+        """Insert empty rows before a 1-based row number."""
+        if start_row < 1:
+            raise ValueError("start_row must be at least 1.")
+
+        if count < 1:
+            raise ValueError("count must be at least 1.")
 
         return self.batch_update(
             spreadsheet_id,
@@ -256,10 +282,13 @@ class SpreadsheetService:
         spreadsheet_id: str,
         sheet_id: int,
         start_row: int,
-        end_row: int,
+        end_row: int | None = None,
     ) -> dict:
-        """Delete rows in the inclusive 1-based range."""
-        self._validate_range(start_row, end_row)
+        """Delete an inclusive range of 1-based rows."""
+        end_row = end_row if end_row is not None else start_row
+
+        if start_row < 1 or end_row < start_row:
+            raise ValueError("Invalid row range.")
 
         return self.batch_update(
             spreadsheet_id,
@@ -277,22 +306,24 @@ class SpreadsheetService:
             ],
         )
 
-    def move_rows(
+
+    def move_row(
         self,
         spreadsheet_id: str,
         sheet_id: int,
-        start_row: int,
-        end_row: int,
-        destination_row: int,
+        row: int,
+        to_row: int,
     ) -> dict:
-        """Move rows to a destination position.
+        """Move one row so its final 1-based position is to_row."""
+        if row < 1 or to_row < 1:
+            raise ValueError("Row numbers must be at least 1.")
 
-        All row positions are 1-based from the application's perspective.
-        """
-        self._validate_range(start_row, end_row)
-        self._validate_positive(destination_row)
+        if row == to_row:
+            raise ValueError("The source and destination rows are the same.")
 
-        destination_index = destination_row - 1
+        # moveDimension's destination is measured against the grid before
+        # the source row is removed.
+        destination_index = to_row if to_row > row else to_row - 1
 
         return self.batch_update(
             spreadsheet_id,
@@ -302,8 +333,8 @@ class SpreadsheetService:
                         "source": {
                             "sheetId": sheet_id,
                             "dimension": "ROWS",
-                            "startIndex": start_row - 1,
-                            "endIndex": end_row,
+                            "startIndex": row - 1,
+                            "endIndex": row,
                         },
                         "destinationIndex": destination_index,
                     }
@@ -410,7 +441,7 @@ class SpreadsheetService:
         spreadsheet_id: str,
         requests: list[dict],
     ) -> dict:
-        """Apply structural spreadsheet changes atomically."""
+        """Apply structural spreadsheet changes as one batch."""
         result = self._google.execute(
             self._google.sheets
             .spreadsheets()
