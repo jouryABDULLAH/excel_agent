@@ -1,7 +1,13 @@
 """The tools the agent is allowed to use on Google spreadsheets."""
 
 from excel_agent.tools.charts import modify_chart
-from excel_agent.tools.columns import modify_column
+from excel_agent.tools.columns import (
+    delete_column,
+    insert_column,
+    move_column,
+    rename_column,
+    set_column_formula,
+)
 from excel_agent.tools.find import find_data
 from excel_agent.tools.inspect import inspect_sheet
 
@@ -28,12 +34,19 @@ TOOLS = [
     inspect_sheet,
     find_data,
     sheet_stats,
+    
     append_row,
     delete_row,
     insert_row,
     move_row,
     update_row,
-    modify_column,
+
+    insert_column,
+    rename_column,
+    delete_column,
+    move_column,
+    set_column_formula,
+
     modify_chart,
     modify_style,
 ]

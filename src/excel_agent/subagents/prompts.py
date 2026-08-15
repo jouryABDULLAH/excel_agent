@@ -4,7 +4,7 @@ The descriptions are what the orchestrator routes on, so they say what each
 subagent holds rather than how it should behave. The prompts are the rules
 written against how a model actually misuses these tools.
 
-structure_editor holds modify_style as well as modify_column: styling a column
+structure_editor holds modify_style as well as columns operations: styling a column
 is structural work, and a fifth subagent for it would be one more thing for
 the orchestrator to choose between.
 """
@@ -113,14 +113,22 @@ You add, change, remove and move rows.
 
 STRUCTURE_PROMPT = f"""\
 {DELEGATED}
-You add, remove, rename and reorder columns, and change how cells look.
+You add, remove, rename and reorder columns, fill columns with formulas, and
+change how cells look.
 
-- Call inspect_sheet first, so the column names you use are the real ones.
-- A new column arrives empty. Putting values into it is not your work: say it
-  is empty and let the orchestrator see to it.
-- Removing or moving a column rewrites the formulas that referred to it, so
-  you do not have to work around one.
-- Deleting a column throws its data away. Say what will be lost.
+- Call inspect_sheet first when you need to know the existing column names or
+  positions.
+- Use insert_column to create a new column. Give position only when the user
+  asked for a particular location; otherwise it belongs after the existing
+  named columns.
+- Use rename_column to change only a header.
+- Use delete_column to remove a column and all values in it.
+- Use move_column to change a column's position.
+- Use set_column_formula to fill an existing column with a formula. Supply the
+  formula as it would be typed in Google Sheets, beginning with "=".
+- Inserting, deleting or moving a column changes column positions. Inspect
+  again before another operation that depends on old positions.
+- Deleting a column throws its data away. Do not choose a column on a guess.
 - modify_style changes how cells are displayed and never what they hold. A
   column that looks wrong may only need a number format.
 
