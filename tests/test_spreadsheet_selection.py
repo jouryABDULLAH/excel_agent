@@ -1,9 +1,11 @@
-"""Tests for what choosing a spreadsheet does now, and what it stopped doing.
+"""Tests for choosing a spreadsheet.
 
-use_spreadsheet was changed to update the orchestrator's state instead of
-returning a sentence. The state half works. The half that was dropped on the
-way is what these are mostly about: four other things were riding on this one
-tool, and nothing else does them now.
+The name the user says is rarely the name Drive holds: "books" does not reach
+"TEST - Book Collection", because Drive matches a prefix rather than a part of
+a word. Nothing here tries to close that gap by matching strings harder. The
+tool answers a miss with the names that do exist, and the orchestrator picks
+the one that was meant. So what these check is that a miss comes back as an
+answer carrying those names, rather than as an exception nobody can act on.
 
 Written against the plain function rather than through an agent, so a failure
 here names the tool rather than the model that called it.
@@ -25,9 +27,14 @@ class Runtime:
     state: dict = {}
 
 
-def choosing(name: str, resolves=("an-id", "TEST - Sales Orders"), monkeypatch=None):
+def choosing(name: str):
     """Call the tool as its caller does, with a runtime supplied."""
     return use_spreadsheet.func(name, Runtime())
+
+
+def said(answer: Command) -> str:
+    """What the tool told the orchestrator."""
+    return answer.update["messages"][0].content
 
 
 @pytest.fixture(autouse=True)
@@ -38,7 +45,13 @@ def a_resolvable_name(monkeypatch):
     )
 
 
-# What it does now
+@pytest.fixture(autouse=True)
+def nothing_in_use(monkeypatch):
+    """No spreadsheet chosen, so a test setting one cannot reach the next."""
+    monkeypatch.setattr(config, "SPREADSHEET", None)
+
+
+# Settling on a file
 
 
 def test_choosing_a_spreadsheet_updates_the_state():
@@ -60,10 +73,8 @@ def test_the_state_carries_the_real_title_not_what_was_typed():
 def test_the_model_is_told_the_choice_landed():
     answer = choosing("sales orders")
 
-    said = answer.update["messages"][0]
-    assert isinstance(said, ToolMessage)
-    assert said.tool_call_id == "call-1"
-    assert "TEST - Sales Orders" in said.content
+    assert isinstance(answer.update["messages"][0], ToolMessage)
+    assert "TEST - Sales Orders" in said(answer)
 
 
 def test_the_answer_is_tied_to_the_call_that_asked():
@@ -77,51 +88,118 @@ def test_the_answer_is_tied_to_the_call_that_asked():
     assert answer.update["messages"][0].tool_call_id == Runtime.tool_call_id
 
 
-# What it stopped doing
+def test_choosing_records_the_spreadsheet_being_worked_on():
+    """config.SPREADSHEET is what the subagents' tools fall back to.
 
-
-def test_it_no_longer_records_the_spreadsheet_being_worked_on(monkeypatch):
-    """REGRESSION: config.SPREADSHEET is what every other tool falls back to.
-
-    sheets.resolve_spreadsheet(None) reads it when a tool is called without a
-    spreadsheet argument, which is how a whole conversation used to work on
-    one file after being told which once. Nothing sets it now.
+    They are handed the chosen name in their instruction, but a tool called
+    without a spreadsheet argument reads this instead. Temporary: it goes when
+    those tools read spreadsheet_id out of the state.
     """
-    monkeypatch.setattr(config, "SPREADSHEET", None)
-
     choosing("sales orders")
 
-    assert config.SPREADSHEET is None
+    assert config.SPREADSHEET == "TEST - Sales Orders"
 
 
-def test_a_tool_called_afterwards_still_does_not_know_which_file_to_use(monkeypatch):
-    """The consequence of the line above, followed through to where it lands."""
+def test_a_tool_called_afterwards_knows_which_file_to_use(monkeypatch):
+    """The consequence of the line above, followed through to where it lands.
+
+    A tool called with no spreadsheet argument reaches sheets.resolve_spreadsheet
+    with nothing, which falls back to config.SPREADSHEET. What the Drive service
+    is then asked for is what the fallback was worth.
+    """
     from excel_agent import sheets
 
-    monkeypatch.setattr(config, "SPREADSHEET", None)
+    asked: list[str] = []
+    monkeypatch.setattr(
+        sheets._drive,
+        "resolve_spreadsheet",
+        lambda name: asked.append(name) or ("an-id", name),
+    )
+
     choosing("sales orders")
+    sheets.resolve_spreadsheet()
 
-    with pytest.raises(ValueError, match="No spreadsheet has been chosen yet"):
-        sheets.resolve_spreadsheet()
+    assert asked == ["TEST - Sales Orders"]
 
 
-def test_a_name_that_reaches_nothing_now_raises_instead_of_explaining(monkeypatch):
-    """REGRESSION: every other tool answers a bad argument with a sentence.
+# A name that reaches no single file
 
-    The ValueError resolve_spreadsheet raises carries a message written for
-    the model to act on. Uncaught, it leaves this tool as the only one that
-    throws, and what the model is shown depends on whoever catches it.
-    """
+
+def refusing(monkeypatch, *titles: str):
+    """Drive holds these files, and resolving any name fails."""
     def refuse(name):
         raise ValueError('There is no spreadsheet called "Nonsense".')
 
     monkeypatch.setattr(spreadsheets, "resolve_spreadsheet", refuse)
+    monkeypatch.setattr(
+        spreadsheets, "search", lambda name=None: [(f"id-{one}", one) for one in titles]
+    )
 
-    with pytest.raises(ValueError):
-        choosing("Nonsense")
+
+def test_a_name_that_reaches_nothing_is_answered_with_the_names_that_exist(monkeypatch):
+    """The whole point: a miss has to be recoverable without the user.
+
+    Raising left the model with an error and no facts. The names come back
+    instead, so the next call can be the right one.
+    """
+    refusing(monkeypatch, "TEST - Book Collection", "TEST - Sales Orders")
+
+    answer = choosing("books")
+
+    assert isinstance(answer, Command)
+    assert "TEST - Book Collection" in said(answer)
+    assert "TEST - Sales Orders" in said(answer)
 
 
-def test_a_google_failure_is_no_longer_turned_into_a_sentence_either(monkeypatch):
+def test_a_miss_settles_nothing(monkeypatch):
+    """Nothing is chosen, so nothing downstream may think one was."""
+    refusing(monkeypatch, "TEST - Book Collection")
+
+    answer = choosing("books")
+
+    assert "spreadsheet_id" not in answer.update
+    assert "spreadsheet_name" not in answer.update
+    assert config.SPREADSHEET is None
+
+
+def test_the_miss_says_to_choose_and_call_again(monkeypatch):
+    refusing(monkeypatch, "TEST - Book Collection")
+
+    assert "use_spreadsheet" in said(choosing("books"))
+
+
+def test_the_dead_ends_drive_offers_are_not_passed_on(monkeypatch):
+    """resolve_spreadsheet's own wording sends the reader nowhere useful.
+
+    It says to call list_workbooks, which is what this call already answers,
+    or to name a file by its id, which no tool accepts. Neither reaches the
+    user in a state they can act on, so the message is written here instead.
+    """
+    refusing(monkeypatch, "TEST - Book Collection")
+
+    answer = said(choosing("books"))
+
+    assert "list_workbooks" not in answer
+    assert "by its ID" not in answer
+
+
+def test_two_files_sharing_a_name_come_back_the_same_way(monkeypatch):
+    """The ambiguous refusal is a ValueError too, and needs the same answer."""
+    def refuse(name):
+        raise ValueError('More than one spreadsheet is called "Budget".')
+
+    monkeypatch.setattr(spreadsheets, "resolve_spreadsheet", refuse)
+    monkeypatch.setattr(
+        spreadsheets, "search", lambda name=None: [("one", "Budget"), ("two", "Budget")]
+    )
+
+    answer = choosing("Budget")
+
+    assert "did not match exactly one spreadsheet" in said(answer)
+
+
+def test_a_google_failure_is_turned_into_a_sentence(monkeypatch):
+    """Every other tool answers an HttpError with readable(). So does this."""
     from fake_google import error
 
     def fail(name):
@@ -129,28 +207,34 @@ def test_a_google_failure_is_no_longer_turned_into_a_sentence_either(monkeypatch
 
     monkeypatch.setattr(spreadsheets, "resolve_spreadsheet", fail)
 
-    with pytest.raises(Exception):
-        choosing("sales orders")
+    answer = choosing("sales orders")
+
+    assert isinstance(answer, Command)
+    assert "Google refused the request" in said(answer)
 
 
-def test_the_sheets_inside_are_no_longer_named(monkeypatch):
-    """REGRESSION: told only the file name, an agent invents a sheet called after it.
+def test_a_google_failure_while_listing_is_answered_too(monkeypatch):
+    """The recovery reaches Drive a second time, and that call can fail as well."""
+    from fake_google import error
 
-    The old answer listed them and said which one a call naming none would
-    work on. Nothing says it now, and no other tool does either.
-    """
-    said = choosing("sales orders").update["messages"][0].content
+    def refuse(name):
+        raise ValueError("nothing matched")
 
-    assert "sheet(s)" not in said
-    assert "Sales Orders" in said
+    def fail(name=None):
+        raise error(401)
+
+    monkeypatch.setattr(spreadsheets, "resolve_spreadsheet", refuse)
+    monkeypatch.setattr(spreadsheets, "search", fail)
+
+    assert "token.json" in said(choosing("books"))
 
 
-def test_nothing_is_refused_before_drive_is_asked(monkeypatch):
-    """A blank name used to be answered without a round trip.
+# A name that is not a name
 
-    Now it goes to resolve_spreadsheet, which raises for it instead. The
-    message differs, and the tool raises where it used to answer.
-    """
+
+@pytest.mark.parametrize("nothing", ("", "   "))
+def test_a_blank_name_is_refused_before_drive_is_asked(nothing, monkeypatch):
+    """A round trip bought for nothing, and an error message worse than this one."""
     asked: list[str] = []
     monkeypatch.setattr(
         spreadsheets,
@@ -158,9 +242,10 @@ def test_nothing_is_refused_before_drive_is_asked(monkeypatch):
         lambda name: asked.append(name) or ("an-id", "Something"),
     )
 
-    choosing("   ")
+    answer = choosing(nothing)
 
-    assert asked == ["   "]
+    assert asked == []
+    assert "No spreadsheet was named" in said(answer)
 
 
 # The shape of the tool the model is shown
@@ -176,11 +261,16 @@ def test_the_runtime_is_not_something_the_model_has_to_supply():
     assert list(schema.get("properties", {})) == ["spreadsheet"]
 
 
-def test_the_docstring_still_describes_an_argument_that_is_gone():
+def test_the_description_documents_the_argument_that_exists():
     """The description is what the model reads to decide what to send.
 
-    It documents "name", and the argument is called "spreadsheet". A model
-    following the description writes the wrong key.
+    It documented "name" while the argument was called "spreadsheet", so a
+    model following it wrote the wrong key.
     """
-    assert "name:" in use_spreadsheet.description
+    assert "spreadsheet:" in use_spreadsheet.description
     assert "spreadsheet" in use_spreadsheet.args
+
+
+def test_the_description_says_an_exact_name_is_not_required():
+    """A model that thinks it needs the exact name asks the user for it."""
+    assert "does not have to be exact" in use_spreadsheet.description

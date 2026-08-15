@@ -229,14 +229,20 @@ def test_two_files_really_sharing_a_name_are_refused():
         service.resolve_spreadsheet("TEST - Simple Budget")
 
 
-def test_a_name_reaching_nothing_says_so_and_says_what_to_do():
+def test_a_name_reaching_nothing_says_so_and_nothing_more():
+    """Saying what to do next is not this layer's job any more.
+
+    use_spreadsheet catches this and answers with the names that do exist, so
+    a refusal naming a tool would be telling the reader to do the thing that
+    just happened. The service says what went wrong and stops there.
+    """
     service = drive_matching("TEST - Sales Orders")
 
     with pytest.raises(ValueError) as refused:
         service.resolve_spreadsheet("Nonsense")
 
     assert "There is no spreadsheet called" in str(refused.value)
-    assert "list_workbooks" in str(refused.value)
+    assert "list_workbooks" not in str(refused.value)
 
 
 @pytest.mark.parametrize("given", ("", "   ", "\t\n"))

@@ -160,8 +160,10 @@ def test_every_spreadsheet_is_listed(monkeypatch):
     assert "2 spreadsheets:" in answer
     assert "  Sales" in answer
     assert "  Returns" in answer
-    # Nothing chosen yet, so the model is told to ask rather than to pick.
-    assert "No spreadsheet has been chosen yet" in answer
+    # Nothing chosen yet, so the model is told to pick rather than to ask:
+    # working out which file the user means is the orchestrator's job.
+    assert "No spreadsheet is currently selected" in answer
+    assert "call use_spreadsheet" in answer
 
 
 def test_the_one_being_worked_on_is_marked(monkeypatch):
@@ -436,62 +438,9 @@ def test_a_sheet_with_no_rows_yet_says_so(a_sheet):
     assert "no rows of data yet" in stats.sheet_stats.invoke({"column": "Region"})
 
 
-# Settling on a spreadsheet
-
-
-def test_choosing_a_spreadsheet_makes_it_the_one_in_use(monkeypatch):
-    monkeypatch.setattr(spreadsheets.config, "SPREADSHEET", None)
-    monkeypatch.setattr(
-        spreadsheets, "resolve_spreadsheet", lambda name=None: ("an-id", "Sales Orders")
-    )
-    monkeypatch.setattr(spreadsheets, "sheets_in", lambda id: {"Orders": {}, "Q1": {}})
-
-    answer = spreadsheets.use_spreadsheet.invoke({"name": "sales orders"})
-
-    # The name the file really has, not the one that was typed.
-    assert 'Now working on "Sales Orders"' in answer
-    assert spreadsheets.config.SPREADSHEET == "Sales Orders"
-
-
-def test_choosing_a_spreadsheet_says_what_sheets_are_in_it(monkeypatch):
-    monkeypatch.setattr(spreadsheets.config, "SPREADSHEET", None)
-    monkeypatch.setattr(
-        spreadsheets,
-        "resolve_spreadsheet",
-        lambda name=None: ("an-id", "TEST - Employee Attendance"),
-    )
-    monkeypatch.setattr(spreadsheets, "sheets_in", lambda id: {"Attendance": {}})
-
-    answer = spreadsheets.use_spreadsheet.invoke({"name": "attendance"})
-
-    # Nothing else says what the sheets are called, and the name of a file is
-    # not the name of a sheet in it: told only the file name, an agent asks for
-    # a sheet called "Employee Attendance", which does not exist.
-    assert "It holds 1 sheet(s): Attendance." in answer
-    assert "Calls that name no sheet work on Attendance." in answer
-
-
-def test_a_name_that_reaches_nothing_settles_nothing(monkeypatch):
-    monkeypatch.setattr(spreadsheets.config, "SPREADSHEET", "Sales Orders")
-
-    def refuse(name=None):
-        raise ValueError('There is no spreadsheet called "Nonsense".')
-
-    monkeypatch.setattr(spreadsheets, "resolve_spreadsheet", refuse)
-
-    answer = spreadsheets.use_spreadsheet.invoke({"name": "Nonsense"})
-
-    # Refused here rather than by every call that came after it.
-    assert "no spreadsheet called" in answer
-    assert spreadsheets.config.SPREADSHEET == "Sales Orders"
-
-
-def test_choosing_needs_a_name(monkeypatch):
-    monkeypatch.setattr(spreadsheets.config, "SPREADSHEET", None)
-
-    assert spreadsheets.use_spreadsheet.invoke({"name": "  "}) == (
-        "Say which spreadsheet to work on."
-    )
+# Settling on a spreadsheet is covered in test_spreadsheet_selection.py, which
+# is written against the tool as it is now: a Command carrying state rather
+# than a sentence, and a name reaching nothing answered with the names that do.
 
 
 # Numbers are searched the way a sheet shows them

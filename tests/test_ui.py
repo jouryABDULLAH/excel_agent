@@ -132,7 +132,11 @@ def test_a_turn_that_moves_to_another_spreadsheet_is_still_drawn(
     moving = AIMessage(
         content="",
         tool_calls=[
-            {"name": "use_spreadsheet", "args": {"name": "sales orders"}, "id": "1"}
+            {
+                "name": "use_spreadsheet",
+                "args": {"spreadsheet": "sales orders"},
+                "id": "1",
+            }
         ],
     )
 

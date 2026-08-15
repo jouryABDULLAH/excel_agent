@@ -15,6 +15,9 @@ from typing import Any
 from excel_agent import config
 from excel_agent.services.google import google_api, readable
 from excel_agent.services.drive import DriveService
+# The field mask grid() reads with. Taken from the service rather than kept
+# here as well, so there is one list of the fields a Cell is built from.
+from excel_agent.services.spreadsheet import GRID_FIELDS
 # from excel_agent.auth import get_credentials
 # from excel_agent.scopes import SCOPES
 
@@ -85,29 +88,6 @@ def forget(spreadsheet_id: str) -> None:
     from what was true before.
     """
     _sheets_in.pop(spreadsheet_id, None)
-
-
-# def readable(failure: HttpError) -> str:
-#     """Turn an HttpError into a sentence worth showing the model."""
-#     status = getattr(failure.resp, "status", None)
-#     detail = getattr(failure, "reason", None) or str(failure)
-
-#     if status == 401:
-#         return (
-#             "Google would not accept the saved sign in. Delete token.json and "
-#             "run the agent again to sign in afresh."
-#         )
-#     if status == 403:
-#         # Not always about permission: Drive also answers 403 for a query it
-#         # will not run, so what Google said matters more than any guess made
-#         # here about why.
-#         return f"Google refused the request: {detail}"
-#     if status == 404:
-#         return "That spreadsheet does not exist, or the signed in account cannot see it."
-#     if status == 400:
-#         return f"Google rejected the request as malformed: {detail}."
-
-#     return f"Google returned an error: {detail}."
 
 
 def with_retries(call):

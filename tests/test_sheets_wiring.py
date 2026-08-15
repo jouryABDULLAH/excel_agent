@@ -131,6 +131,67 @@ def test_every_write_forgets_what_it_may_have_moved(write, monkeypatch, fake_goo
     assert forgotten == ["an-id"]
 
 
+# Reading a sheet
+
+
+ONE_ROW = {
+    "sheets": [
+        {
+            "data": [
+                {
+                    "rowData": [
+                        {
+                            "values": [
+                                {
+                                    "formattedValue": "Order ID",
+                                    "effectiveValue": {"stringValue": "Order ID"},
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}
+
+
+def test_reading_a_sheet_asks_for_the_fields_a_cell_is_built_from(fake_google):
+    """The only test that calls the real grid().
+
+    Every tool test replaces it through the a_spreadsheet fixture, so nothing
+    exercised this path. That is how GRID_FIELDS came to be deleted from this
+    module while grid() still named it: the suite stayed green and the agent
+    died on the first read, in front of the user. A NameError here now.
+    """
+    pretend = fake_google(spreadsheets=Endpoint(answers={"get": ONE_ROW}))
+
+    rows = sheets.grid("an-id", "Sales Orders")
+
+    method, asked = pretend.spreadsheets_endpoint.calls[-1]
+    assert method == "get"
+    assert asked["includeGridData"] is True
+
+    # The four things a Cell is made of. Losing one from the mask leaves that
+    # part of every cell empty, with nothing raising to say so.
+    for field in (
+        "formattedValue",
+        "userEnteredValue",
+        "effectiveValue",
+        "numberFormat",
+    ):
+        assert field in asked["fields"], field
+
+    assert rows[0][0].displayed == "Order ID"
+
+
+def test_the_field_mask_is_the_services_own(fake_google):
+    """Two copies of this drifted apart once, and the loud half was the lucky one."""
+    from excel_agent.services.spreadsheet import GRID_FIELDS
+
+    assert sheets.GRID_FIELDS is GRID_FIELDS
+
+
 # What is remembered about a spreadsheet, and what is not
 
 
