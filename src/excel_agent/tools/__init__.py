@@ -25,8 +25,11 @@ from excel_agent.tools.spreadsheets import (
     use_spreadsheet,
 )
 from excel_agent.tools.stats import sheet_stats
-from excel_agent.tools.style import modify_style
 
+from excel_agent.tools.style import (
+    copy_format,
+    format_range,
+)
 TOOLS = [
     list_workbooks,
     find_spreadsheet,
@@ -48,5 +51,7 @@ TOOLS = [
     set_column_formula,
 
     modify_chart,
-    modify_style,
+
+    format_range,
+    copy_format,
 ]

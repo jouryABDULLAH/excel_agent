@@ -4,7 +4,7 @@ The descriptions are what the orchestrator routes on, so they say what each
 subagent holds rather than how it should behave. The prompts are the rules
 written against how a model actually misuses these tools.
 
-structure_editor holds modify_style as well as columns operations: styling a column
+structure_editor holds format_range as well as columns operations: styling a column
 is structural work, and a fifth subagent for it would be one more thing for
 the orchestrator to choose between.
 """
@@ -129,9 +129,13 @@ change how cells look.
 - Inserting, deleting or moving a column changes column positions. Inspect
   again before another operation that depends on old positions.
 - Deleting a column throws its data away. Do not choose a column on a guess.
-- modify_style changes how cells are displayed and never what they hold. A
-  column that looks wrong may only need a number format.
-
+- format_range changes formatting directly: number formats, bold text and
+  background colours. It can also clear an explicit number format or
+  background colour.
+- Use copy_format when the user wants one cell or range to look like another.
+  It copies the existing formatting without changing values or formulas. You
+  do not need to know what that formatting currently is.
+  
 {CANNOT_DO}
 {ORIGINAL_LANGUAGE}"""
 

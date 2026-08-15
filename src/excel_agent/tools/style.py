@@ -1,25 +1,23 @@
-"""Tool for how the sheet looks.
+"""Tool for changing how spreadsheet cells are displayed."""
 
-Number formats, weight and colour, over a column or a run of rows.
-"""
+from typing import Any
 
 from googleapiclient.errors import HttpError
 from langchain_core.tools import tool
 
+from excel_agent.services.google import readable
+from excel_agent.services.spreadsheet import spreadsheet_service
 from excel_agent.sheets import (
-    batch,
     find_header_row,
-    grid,
     header_map,
     last_data_row,
-    readable,
-    resolve_sheet,
     resolve_spreadsheet,
     to_grid_range,
 )
 
-# The colours a person is likely to ask for by name. Anything else has to be
-# given as a hex code, which is said in the refusal rather than guessed at.
+
+# Common colours the model/user can name directly.
+# Any other colour can still be supplied as #RRGGBB.
 COLOURS = {
     "white": "#ffffff",
     "black": "#000000",
@@ -34,12 +32,27 @@ COLOURS = {
 }
 
 
-def as_colour(given: str) -> dict | None:
-    """Turn a colour name or hex code into what the API wants, or None.
+def _error(
+    code: str,
+    message: str,
+    *,
+    spreadsheet: str | None = None,
+    sheet: str | None = None,
+    **details: Any,
+) -> dict:
+    """Return a consistent structured tool failure."""
+    return {
+        "ok": False,
+        "error": code,
+        "message": message,
+        "spreadsheet": spreadsheet,
+        "sheet": sheet,
+        **details,
+    }
 
-    Google takes each part as a fraction of one rather than as 0 to 255, so
-    the arithmetic here is the whole of the conversion.
-    """
+
+def _as_colour(given: str) -> dict | None:
+    """Convert a colour name or #RRGGBB value to Sheets RGB fractions."""
     text = given.strip().lower()
     text = COLOURS.get(text, text)
 
@@ -47,191 +60,601 @@ def as_colour(given: str) -> dict | None:
         return None
 
     try:
-        parts = [int(text[first : first + 2], 16) / 255 for first in (1, 3, 5)]
+        red = int(text[1:3], 16) / 255
+        green = int(text[3:5], 16) / 255
+        blue = int(text[5:7], 16) / 255
     except ValueError:
         return None
 
-    return {"red": parts[0], "green": parts[1], "blue": parts[2]}
+    return {
+        "red": red,
+        "green": green,
+        "blue": blue,
+    }
 
 
-def as_number_format(pattern: str) -> dict:
-    """Work out which sort of format a pattern is, from the pattern itself.
-
-    Google wants a type as well as a pattern, and refuses a date pattern
-    labelled as a number. What the pattern is made of is enough to tell.
-    """
+def _as_number_format(pattern: str) -> dict:
+    """Infer the Sheets number-format type from its pattern."""
     lowered = pattern.lower()
 
     if "%" in pattern:
         kind = "PERCENT"
-    elif any(part in lowered for part in ("yyyy", "yy", "mmm", "dd")):
+    elif any(
+        part in lowered
+        for part in ("yyyy", "yy", "mmm", "dd")
+    ):
         kind = "DATE"
-    elif any(part in pattern for part in ("$", "£", "€")):
+    elif any(
+        symbol in pattern
+        for symbol in ("$", "£", "€", "¥", "﷼")
+    ):
         kind = "CURRENCY"
     else:
         kind = "NUMBER"
 
-    return {"type": kind, "pattern": pattern}
+    return {
+        "type": kind,
+        "pattern": pattern,
+    }
 
 
-@tool
-def modify_style(
-    column: str | None = None,
-    first_row: int | None = None,
-    last_row: int | None = None,
-    number_format: str | None = None,
-    bold: bool | None = None,
-    background: str | None = None,
-    spreadsheet: str | None = None,
-    sheet: str | None = None,
-) -> str:
-    """Change how cells are displayed, without changing what they hold.
+def _load_table(
+    spreadsheet: str | None,
+    sheet: str | None,
+) -> tuple[
+    str,
+    str,
+    dict,
+    int,
+    dict[str, int],
+    int,
+]:
+    """Resolve the sheet and read enough structure to target formatting."""
+    spreadsheet_id, spreadsheet_name = resolve_spreadsheet(
+        spreadsheet
+    )
 
-    Args:
-        column: The column to style, by the name in its header. Leave this
-            out to style whole rows.
-        first_row: The first row to style. Leave this out to style the whole
-            column, header included.
-        last_row: The last row to style. Leave this out to reach the bottom
-            of the data.
-        number_format: How numbers should read, written the way Google Sheets
-            writes it, such as "#,##0.00" or "0%" or "dd/mm/yyyy".
-        bold: Whether the text should be bold.
-        background: The fill colour, as a name such as "yellow" or a hex code
-            such as "#fff2cc".
-        spreadsheet: Which spreadsheet to change, by name. Leave this out to
-            change the one being worked on.
-        sheet: Which sheet to change, by name. Leave this out to change the
-            first sheet in the spreadsheet.
+    properties = spreadsheet_service.resolve_sheet(
+        spreadsheet_id,
+        sheet,
+    )
 
-    Returns:
-        A sentence saying what changed, or an explanation of why nothing was
-        changed. This never changes a value: a column shown as 0% holds the
-        same number it held before.
+    sheet_name = properties["title"]
 
-    Examples:
-        modify_style(column="Revenue", number_format="#,##0.00")
-        modify_style(first_row=1, last_row=1, bold=True, background="yellow")
-        modify_style(column="Notes", background="#fff2cc")
-    """
-    if number_format is None and bold is None and background is None:
-        return (
-            "Say what to change: a number_format, bold, or a background "
-            "colour."
-        )
-
-    fill = None
-    if background is not None:
-        fill = as_colour(background)
-        if fill is None:
-            return (
-                f'"{background}" is not a colour I can read. Use a name '
-                f"({', '.join(sorted(set(COLOURS)))}) or a hex code such as "
-                '"#fff2cc".'
-            )
-
-    try:
-        spreadsheet_id, name = resolve_spreadsheet(spreadsheet)
-        properties = resolve_sheet(spreadsheet_id, sheet)
-        rows = grid(spreadsheet_id, properties["title"])
-    except ValueError as explanation:
-        return str(explanation)
-    except HttpError as failure:
-        return readable(failure)
-
-    sheet_id = properties["sheetId"]
-    where = f"({properties['title']} in {name})"
+    rows = spreadsheet_service.read_sheet(
+        spreadsheet_id,
+        sheet_name,
+    )
 
     header_row = find_header_row(rows)
     headers = header_map(rows, header_row)
-    end_of_data = last_data_row(rows, header_row)
+    last_row = last_data_row(rows, header_row)
 
-    number = None
-    if column is not None:
-        if column not in headers:
-            return (
-                f'There is no column called "{column}". '
-                f"The sheet has: {', '.join(headers)}. {where}"
-            )
-        number = headers[column]
-
-    if column is None and first_row is None:
-        return (
-            "Say which cells to change: a column, or a first_row and "
-            "last_row, or both."
-        )
-
-    first = first_row if first_row is not None else header_row
-    end = last_row if last_row is not None else end_of_data
-
-    if first < 1 or end < first:
-        return (
-            f"Rows {first} to {end} are not a run of rows. The sheet has rows "
-            f"{header_row} to {end_of_data}. {where}"
-        )
-
-    style: dict = {}
-    fields = []
-    changed = []
-
-    if number_format is not None:
-        style["numberFormat"] = as_number_format(number_format)
-        fields.append("userEnteredFormat.numberFormat")
-        changed.append(f"shown as {number_format}")
-    if bold is not None:
-        style["textFormat"] = {"bold": bold}
-        fields.append("userEnteredFormat.textFormat.bold")
-        changed.append("bold" if bold else "not bold")
-    if fill is not None:
-        style["backgroundColor"] = fill
-        fields.append("userEnteredFormat.backgroundColor")
-        changed.append(f"filled {background}")
-
-    try:
-        batch(
-            spreadsheet_id,
-            [
-                {
-                    "repeatCell": {
-                        "range": to_grid_range(sheet_id, first, end, number, number),
-                        "cell": {"userEnteredFormat": style},
-                        # Only the parts named here are touched, so setting a
-                        # colour does not quietly clear a number format set
-                        # earlier.
-                        "fields": ",".join(fields),
-                    }
-                }
-            ],
-        )
-    except HttpError as failure:
-        return readable(failure)
-
-    what = f'"{column}"' if column else "every column"
     return (
-        f"Rows {first} to {end} of {what} are now {', '.join(changed)}. The "
-        f"values themselves are unchanged. {where}"
+        spreadsheet_id,
+        spreadsheet_name,
+        properties,
+        header_row,
+        headers,
+        last_row,
     )
 
+def _format_area(
+    *,
+    properties: dict,
+    headers: dict[str, int],
+    header_row: int,
+    end_of_data: int,
+    column: str | None,
+    first_row: int | None,
+    last_row: int | None,
+) -> tuple[dict, int, int, int, int]:
+    """Resolve one source/destination formatting area.
 
-CASES = [
-    ("nothing to change", {"column": "Region"}),
-    ("nowhere to change it", {"bold": True}),
-    ("a colour that is not one", {"column": "Region", "background": "octarine"}),
-    ("a column that does not exist", {"column": "Nonsense", "bold": True}),
-]
-
-
-def main() -> None:
-    """Try the refusals by hand with `python -m excel_agent.tools.style`.
-
-    Only the calls that change nothing are here. Anything that writes belongs
-    in a scratch spreadsheet, run by hand.
+    Returns:
+        grid range,
+        first row,
+        last row,
+        height,
+        width.
     """
-    for label, arguments in CASES:
-        print(f"--- {label}: {arguments} ---")
-        print(modify_style.invoke(arguments))
-        print()
+    if first_row is None:
+        first = header_row
+        end = end_of_data
+    else:
+        first = first_row
+        end = (
+            last_row
+            if last_row is not None
+            else first_row
+        )
 
+    if last_row is not None and first_row is None:
+        raise ValueError(
+            "last_row cannot be used without first_row."
+        )
 
-if __name__ == "__main__":
-    main()
+    if first < 1 or end < first:
+        raise ValueError(
+            f"Rows {first} to {end} are not a valid range."
+        )
+
+    grid_rows = properties.get(
+        "gridProperties",
+        {},
+    ).get("rowCount")
+
+    if grid_rows is not None and end > grid_rows:
+        raise ValueError(
+            f"Row {end} is beyond the sheet grid of "
+            f"{grid_rows} rows."
+        )
+
+    if column is not None:
+        first_column = headers[column]
+        last_column = headers[column]
+    else:
+        first_column = min(headers.values())
+        last_column = max(headers.values())
+
+    grid_range = to_grid_range(
+        properties["sheetId"],
+        first,
+        end,
+        first_column,
+        last_column,
+    )
+
+    height = end - first + 1
+    width = last_column - first_column + 1
+
+    return (
+        grid_range,
+        first,
+        end,
+        height,
+        width,
+    )
+
+@tool
+def format_range(
+    columns: list[str] | None = None,
+    first_row: int | None = None,
+    last_row: int | None = None,
+    number_format: str | None = None,
+    clear_number_format: bool = False,
+    bold: bool | None = None,
+    background: str | None = None,
+    clear_background: bool = False,
+    spreadsheet: str | None = None,
+    sheet: str | None = None,
+) -> dict:
+    """Change how a range of cells is displayed without changing its values.
+
+    Columns are addressed by their actual header names. Leave columns out to
+    format every named column in the requested rows.
+
+    When no row bounds are supplied, the format covers the used table from
+    its header through its final data row. When first_row is supplied without
+    last_row, only that one row is formatted.
+
+    Args:
+        columns: Optional column names to format. Leave out for all named
+            columns.
+        first_row: Optional first row to format.
+        last_row: Optional final row. Requires first_row.
+        number_format: Google Sheets number-format pattern, for example
+            "#,##0.00", "$#,##0.00", "0%", or "dd/mm/yyyy".
+        clear_number_format: True to remove the explicitly set number format.
+            Cannot be combined with number_format.
+        bold: True for bold text or False to remove bold.
+        background: Fill colour by common name or "#RRGGBB".
+        spreadsheet: Spreadsheet name. Omit for the current spreadsheet.
+        sheet: Sheet name. Omit for the first sheet.
+    """
+    if (
+        number_format is None
+        and not clear_number_format
+        and bold is None
+        and background is None
+        and not clear_background
+    ):
+        return _error(
+            "no_format_change",
+            "No formatting change was supplied.",
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
+
+    if number_format is not None and clear_number_format:
+        return _error(
+            "conflicting_number_format",
+            "number_format and clear_number_format cannot be used together.",
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
+
+    if background is not None and clear_background:
+        return _error(
+            "conflicting_background",
+            "background and clear_background cannot be used together.",
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
+
+    if last_row is not None and first_row is None:
+        return _error(
+            "missing_first_row",
+            "last_row cannot be used without first_row.",
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
+
+    fill = None
+
+    if background is not None:
+        fill = _as_colour(background)
+
+        if fill is None:
+            return _error(
+                "invalid_colour",
+                "The background colour is not a supported name or #RRGGBB value.",
+                spreadsheet=spreadsheet,
+                sheet=sheet,
+                background=background,
+                named_colours=sorted(set(COLOURS)),
+            )
+
+    try:
+        (
+            spreadsheet_id,
+            spreadsheet_name,
+            properties,
+            header_row,
+            headers,
+            end_of_data,
+        ) = _load_table(
+            spreadsheet,
+            sheet,
+        )
+
+        sheet_name = properties["title"]
+
+        if not headers:
+            return _error(
+                "headers_not_found",
+                "No column headers were found.",
+                spreadsheet=spreadsheet_name,
+                sheet=sheet_name,
+                header_row=header_row,
+            )
+
+        if columns:
+            unknown = [
+                column
+                for column in columns
+                if column not in headers
+            ]
+
+            if unknown:
+                return _error(
+                    "unknown_columns",
+                    "One or more requested columns do not exist.",
+                    spreadsheet=spreadsheet_name,
+                    sheet=sheet_name,
+                    unknown_columns=unknown,
+                    available_columns=list(headers),
+                )
+
+            selected_columns = list(dict.fromkeys(columns))
+
+        else:
+            selected_columns = list(headers)
+
+        # No row bounds means the whole used table.
+        if first_row is None:
+            first = header_row
+            end = end_of_data
+
+        else:
+            first = first_row
+            end = (
+                last_row
+                if last_row is not None
+                else first_row
+            )
+
+        if first < 1 or end < first:
+            return _error(
+                "invalid_row_range",
+                "The requested row range is invalid.",
+                spreadsheet=spreadsheet_name,
+                sheet=sheet_name,
+                first_row=first,
+                last_row=end,
+            )
+
+        # Formatting may legitimately extend below the current data, but it
+        # must still fit inside the sheet's allocated grid.
+        grid_rows = properties.get(
+            "gridProperties",
+            {},
+        ).get("rowCount")
+
+        if grid_rows is not None and end > grid_rows:
+            return _error(
+                "row_out_of_grid",
+                "The requested row is beyond the sheet grid.",
+                spreadsheet=spreadsheet_name,
+                sheet=sheet_name,
+                last_row=end,
+                grid_row_count=grid_rows,
+            )
+
+        cell_format: dict = {}
+        fields: list[str] = []
+        changes: dict[str, Any] = {}
+
+        if number_format is not None:
+            cell_format["numberFormat"] = _as_number_format(
+                number_format
+            )
+            fields.append(
+                "userEnteredFormat.numberFormat"
+            )
+            changes["number_format"] = number_format
+
+        elif clear_number_format:
+            # An empty numberFormat with this field mask clears the explicit
+            # number format rather than replacing it with another pattern.
+            cell_format["numberFormat"] = {}
+            fields.append(
+                "userEnteredFormat.numberFormat"
+            )
+            changes["number_format"] = None
+
+        if bold is not None:
+            cell_format.setdefault(
+                "textFormat",
+                {},
+            )["bold"] = bold
+
+            fields.append(
+                "userEnteredFormat.textFormat.bold"
+            )
+            changes["bold"] = bold
+
+        if fill is not None:
+            cell_format["backgroundColor"] = fill
+            fields.append(
+                "userEnteredFormat.backgroundColor"
+            )
+            changes["background"] = background
+
+        elif clear_background:
+            # The field mask targets only the background. Leaving the new
+            # background value unset clears that explicit formatting while
+            # preserving every other format on the cells.
+            fields.append(
+                "userEnteredFormat.backgroundColor"
+            )
+            changes["background"] = None
+
+        ranges = [
+            to_grid_range(
+                properties["sheetId"],
+                first,
+                end,
+                headers[column],
+                headers[column],
+            )
+            for column in selected_columns
+        ]
+
+        spreadsheet_service.format_range(
+            spreadsheet_id=spreadsheet_id,
+            ranges=ranges,
+            cell_format=cell_format,
+            fields=fields,
+        )
+
+        return {
+            "ok": True,
+            "operation": "format_range",
+            "spreadsheet": spreadsheet_name,
+            "sheet": sheet_name,
+            "columns": selected_columns,
+            "first_row": first,
+            "last_row": end,
+            "changes": changes,
+            "values_changed": False,
+        }
+
+    except ValueError as failure:
+        return _error(
+            "invalid_request",
+            str(failure),
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
+
+    except HttpError as failure:
+        return _error(
+            "google_api_error",
+            readable(failure),
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
+
+@tool
+def copy_format(
+    source_column: str | None = None,
+    source_first_row: int | None = None,
+    source_last_row: int | None = None,
+    destination_column: str | None = None,
+    destination_first_row: int | None = None,
+    destination_last_row: int | None = None,
+    spreadsheet: str | None = None,
+    sheet: str | None = None,
+) -> dict:
+    """Copy existing formatting from one range to another.
+
+    Values and formulas are not copied.
+
+    Leave a column out to use every named column in the table. Leave row
+    bounds out to use the whole used table. Giving only first_row means one
+    row.
+
+    A one-cell or smaller source may be repeated over a larger destination
+    when the destination size is an exact multiple of the source size.
+
+    Args:
+        source_column: Optional source column by header name.
+        source_first_row: Optional first source row.
+        source_last_row: Optional final source row.
+        destination_column: Optional destination column by header name.
+        destination_first_row: Optional first destination row.
+        destination_last_row: Optional final destination row.
+        spreadsheet: Spreadsheet name. Omit for the current spreadsheet.
+        sheet: Sheet name. Omit for the first sheet.
+    """
+    try:
+        (
+            spreadsheet_id,
+            spreadsheet_name,
+            properties,
+            header_row,
+            headers,
+            end_of_data,
+        ) = _load_table(
+            spreadsheet,
+            sheet,
+        )
+
+        sheet_name = properties["title"]
+
+        if not headers:
+            return _error(
+                "headers_not_found",
+                "No column headers were found.",
+                spreadsheet=spreadsheet_name,
+                sheet=sheet_name,
+                header_row=header_row,
+            )
+
+        unknown = [
+            column
+            for column in (
+                source_column,
+                destination_column,
+            )
+            if column is not None
+            and column not in headers
+        ]
+
+        if unknown:
+            return _error(
+                "unknown_columns",
+                "One or more requested columns do not exist.",
+                spreadsheet=spreadsheet_name,
+                sheet=sheet_name,
+                unknown_columns=unknown,
+                available_columns=list(headers),
+            )
+
+        (
+            source_range,
+            source_first,
+            source_last,
+            source_height,
+            source_width,
+        ) = _format_area(
+            properties=properties,
+            headers=headers,
+            header_row=header_row,
+            end_of_data=end_of_data,
+            column=source_column,
+            first_row=source_first_row,
+            last_row=source_last_row,
+        )
+
+        (
+            destination_range,
+            destination_first,
+            destination_last,
+            destination_height,
+            destination_width,
+        ) = _format_area(
+            properties=properties,
+            headers=headers,
+            header_row=header_row,
+            end_of_data=end_of_data,
+            column=destination_column,
+            first_row=destination_first_row,
+            last_row=destination_last_row,
+        )
+
+        # Google repeats a source pattern when the destination dimensions
+        # are exact multiples of it. Reject other shapes so a source larger
+        # than the requested destination cannot spill beyond it.
+        if (
+            destination_height < source_height
+            or destination_width < source_width
+            or destination_height % source_height != 0
+            or destination_width % source_width != 0
+        ):
+            return _error(
+                "incompatible_ranges",
+                (
+                    "The destination must be the same size as the source "
+                    "or an exact multiple of it."
+                ),
+                spreadsheet=spreadsheet_name,
+                sheet=sheet_name,
+                source_height=source_height,
+                source_width=source_width,
+                destination_height=destination_height,
+                destination_width=destination_width,
+            )
+
+        spreadsheet_service.copy_paste(
+            spreadsheet_id=spreadsheet_id,
+            source=source_range,
+            destination=destination_range,
+            paste_type="PASTE_FORMAT",
+        )
+
+        return {
+            "ok": True,
+            "operation": "copy_format",
+            "spreadsheet": spreadsheet_name,
+            "sheet": sheet_name,
+            "source": {
+                "column": source_column,
+                "first_row": source_first,
+                "last_row": source_last,
+            },
+            "destination": {
+                "column": destination_column,
+                "first_row": destination_first,
+                "last_row": destination_last,
+            },
+            "values_changed": False,
+            "formulas_changed": False,
+        }
+
+    except ValueError as failure:
+        return _error(
+            "invalid_request",
+            str(failure),
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
+
+    except HttpError as failure:
+        return _error(
+            "google_api_error",
+            readable(failure),
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
