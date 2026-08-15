@@ -52,8 +52,12 @@ def subagents() -> tuple[SubagentSpec, ...]:
     )
 
     structural = (
-        tools["modify_column"], 
-        tools["modify_style"]
+        tools["insert_column"],
+        tools["rename_column"],
+        tools["delete_column"],
+        tools["move_column"],
+        tools["set_column_formula"],
+        tools["modify_style"],
     )
 
     return (

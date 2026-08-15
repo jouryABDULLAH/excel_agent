@@ -346,7 +346,6 @@ class SpreadsheetService:
     # Column operations
     # ------------------------------------------------------------------
 
-
     def insert_columns(
         self,
         spreadsheet_id: str,
@@ -354,9 +353,12 @@ class SpreadsheetService:
         start_column: int,
         count: int = 1,
     ) -> dict:
-        """Insert columns before the specified 1-based column."""
-        self._validate_positive(start_column)
-        self._validate_positive(count)
+        """Insert empty columns before a 1-based column position."""
+        if start_column < 1:
+            raise ValueError("start_column must be at least 1.")
+
+        if count < 1:
+            raise ValueError("count must be at least 1.")
 
         return self.batch_update(
             spreadsheet_id,
@@ -375,15 +377,23 @@ class SpreadsheetService:
             ],
         )
 
+
     def delete_columns(
         self,
         spreadsheet_id: str,
         sheet_id: int,
         start_column: int,
-        end_column: int,
+        end_column: int | None = None,
     ) -> dict:
-        """Delete columns in the inclusive 1-based range."""
-        self._validate_range(start_column, end_column)
+        """Delete an inclusive range of 1-based columns."""
+        end_column = (
+            end_column
+            if end_column is not None
+            else start_column
+        )
+
+        if start_column < 1 or end_column < start_column:
+            raise ValueError("Invalid column range.")
 
         return self.batch_update(
             spreadsheet_id,
@@ -401,17 +411,30 @@ class SpreadsheetService:
             ],
         )
 
-    def move_columns(
+
+    def move_column(
         self,
         spreadsheet_id: str,
         sheet_id: int,
-        start_column: int,
-        end_column: int,
-        destination_column: int,
+        column: int,
+        to_position: int,
     ) -> dict:
-        """Move columns to a destination position."""
-        self._validate_range(start_column, end_column)
-        self._validate_positive(destination_column)
+        """Move one column so its final 1-based position is to_position."""
+        if column < 1 or to_position < 1:
+            raise ValueError("Column positions must be at least 1.")
+
+        if column == to_position:
+            raise ValueError(
+                "The source and destination columns are the same."
+            )
+
+        # Google measures destinationIndex against the grid before
+        # removing the source column.
+        destination_index = (
+            to_position
+            if to_position > column
+            else to_position - 1
+        )
 
         return self.batch_update(
             spreadsheet_id,
@@ -421,10 +444,32 @@ class SpreadsheetService:
                         "source": {
                             "sheetId": sheet_id,
                             "dimension": "COLUMNS",
-                            "startIndex": start_column - 1,
-                            "endIndex": end_column,
+                            "startIndex": column - 1,
+                            "endIndex": column,
                         },
-                        "destinationIndex": destination_column - 1,
+                        "destinationIndex": destination_index,
+                    }
+                }
+            ],
+        )
+
+
+    def copy_paste(
+        self,
+        spreadsheet_id: str,
+        source: dict,
+        destination: dict,
+        paste_type: str,
+    ) -> dict:
+        """Copy one grid range to another using a Sheets paste operation."""
+        return self.batch_update(
+            spreadsheet_id,
+            [
+                {
+                    "copyPaste": {
+                        "source": source,
+                        "destination": destination,
+                        "pasteType": paste_type,
                     }
                 }
             ],
