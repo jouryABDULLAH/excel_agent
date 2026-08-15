@@ -29,11 +29,15 @@ def as_tool(spec: SubagentSpec, model):
         system_prompt=spec.system_prompt
     )
 
-    @tool(spec.name, description=spec.description)
+    @tool(
+        spec.name,
+        description=spec.description,
+        response_format="content_and_artifact",
+    )
     def delegate(
         instruction: str,
         runtime: ToolRuntime
-    ) -> dict:
+    ) -> tuple[str, dict | None]:
         """Delegate a spreadsheet task to this specialized subagent."""
 
         spreadsheet_id = runtime.state.get("spreadsheet_id")
@@ -48,28 +52,42 @@ def as_tool(spec: SubagentSpec, model):
         )
 
         result = agent.invoke(
-            {"messages": [{"role": "user", "content": subagent_instruction}]},
-             config={"recursion_limit": RECURSION_LIMIT, "run_name": spec.name},
+            {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": subagent_instruction,
+                    }
+                ]
+            },
+            config={
+                "recursion_limit": RECURSION_LIMIT,
+                "run_name": spec.name,
+            },
         )
 
         messages = result["messages"]
+        response = str(messages[-1].content)
 
+        if not spec.return_tool_results:
+            return response, None
 
-        if spec.return_tool_results:
-            return {
-                "response": str(messages[-1].content),
-                "tool_results": [
-                    message.content
-                    for message in messages
-                    if isinstance(message, ToolMessage) and message.content
-                ],
-            }
+        tool_results = [
+            message.content
+            for message in messages
+            if isinstance(message, ToolMessage)
+            and message.content
+        ]
 
+        return (
+            response,
+            {
+                "subagent": spec.name,
+                "response": response,
+                "tool_results": tool_results,
+            },
+        )
 
-        return {
-            "response": str(messages[-1].content),
-        }
-        
     return delegate
 
 def build_orchestrator():

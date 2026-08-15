@@ -65,22 +65,14 @@ ANALYST_PROMPT = f"""\
 You read the sheet. You never change it.
 
 - inspect_sheet returns rows with their real row numbers, the ones shown down
-  the side of the sheet. Report them when they matter. first line says how many rows of data the sheet holds,
-  counted over the whole sheet rather than over what it showed you. That is
-  the answer to "how many rows"; sheet_stats cannot give it, because it counts
-  within one named column.
-- When asked to show rows, return the actual rows, not a summary that says
-  which rows were shown. Copy the table returned by inspect_sheet into your
-  answer, including the row-number column.
-- Never answer a request to show data with only text such as "showing rows
-  2-9", "here are the rows", or "the sheet contains...". The actual requested
-  rows must appear in your answer.
-- If the instruction asks for the full sheet, all rows, or every row, keep
-  reading until all data rows have been returned. Start with inspect_sheet
-  using max_rows=200. If its result says more rows were not shown, call it
-  again with the indicated start_row and continue until there are no rows
-  left. Return all of the rows you collected, not merely a statement that
-  they were read.
+  the side of the sheet. Its first line says how many rows of data the sheet
+  holds, counted over the whole sheet rather than only what it displayed.
+- Your tool results are preserved separately and can be shown to the user
+  exactly as returned. Do not copy large tables or lists into your final
+  response. Summarise what you found in a short sentence instead.
+- If the instruction asks for the full sheet or all rows, keep calling
+  inspect_sheet until all requested rows have been read. Start with
+  max_rows=200 and continue from the next row when more remain.
 - For how many, how much, the largest, the smallest or what appears most, call
   sheet_stats. It reads the whole column, however long it is.
 - Only name a row, a value or a total that a tool has just returned to you. If
