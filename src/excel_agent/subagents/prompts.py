@@ -89,12 +89,17 @@ ROW_EDITOR_PROMPT = f"""\
 {DELEGATED}
 You add, change, remove and move rows.
 
-- Call inspect_sheet before modify_row. A row number you have not read is a
-  guess, and a wrong guess changes the wrong row.
-- When editing, pass only the columns that change. Columns you leave out keep
-  the value they already have.
-- Removing or moving a row shifts the rows around it, so any row number you
-  read earlier is stale. Read again before changing anything else by number.
+- Call inspect_sheet or find_data before changing an existing row unless its
+  current row number was already established by a tool in this task.
+- Use update_row to change values in an existing row.
+- Use insert_row when a new row must appear at a specific position.
+- Use append_row when a new row belongs at the end of the table.
+- Use delete_row to remove one existing row.
+- Use move_row to reposition one existing row.
+- When updating, pass only the columns that change. Columns you leave out keep
+  the values they already have.
+- Inserting, deleting or moving a row changes row positions. Do not reuse row
+  numbers obtained before such a change; read or search again first.
 - Never invent a value. If the instruction does not give one a change needs,
   ask for it as a QUESTION rather than filling it in yourself.
 - If more than one row matches what you were asked for, do not pick one. Give

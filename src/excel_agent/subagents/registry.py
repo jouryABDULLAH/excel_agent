@@ -28,25 +28,33 @@ class SubagentSpec:
 
 
 def subagents() -> tuple[SubagentSpec, ...]:
-    """The four subagents, each holding the tools its work needs.
+    """The four subagents, each holding the tools its work needs."""
 
-    Every tool the orchestrator does not hold itself has to reach some subagent,
-    or it can never be called at all. That is what the test on coverage is for.
-    """
     tools = {tool.name: tool for tool in TOOLS}
 
-    # Held by whoever might change something, and by the analyst as its whole
-    # reason for being.
+
     reading = tools["inspect_sheet"]
 
-    # Finding a row by what is in it is reading, and it gives back a row
-    # number: whoever will act on that number should be the one who asked for
-    # it, which is why this is not the orchestrator's.
-    reading_tools = [reading, tools["sheet_stats"], tools["find_data"]]
+    reading_tools = [
+        reading, 
+        tools["sheet_stats"], 
+        tools["find_data"]
+    ]
 
-    # Styling is structural work, so it goes to the subagent that already
-    # changes the shape of the sheet rather than to a fifth one.
-    structural = [tools["modify_column"], tools["modify_style"]]
+    row_tools = (
+        reading,
+        tools["find_data"],
+        tools["update_row"],
+        tools["insert_row"],
+        tools["append_row"],
+        tools["delete_row"],
+        tools["move_row"],
+    )
+
+    structural = [
+        tools["modify_column"], 
+        tools["modify_style"]
+    ]
 
     return (
         SubagentSpec(
@@ -59,7 +67,7 @@ def subagents() -> tuple[SubagentSpec, ...]:
             "row_editor",
             prompts.ROW_EDITOR_DESCRIPTION,
             prompts.ROW_EDITOR_PROMPT,
-            (reading, tools["modify_row"]),
+            row_tools,
         ),
         SubagentSpec(
             "structure_editor",
