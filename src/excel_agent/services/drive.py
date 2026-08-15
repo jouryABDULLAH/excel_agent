@@ -1,4 +1,7 @@
-"""Service for finding and resolving Google Drive spreadsheets."""
+"""Service for finding and resolving Google Drive spreadsheets.
+
+This module own searching for spreadsheets, searching for spreadsheet contents, and resolving spreadsheets names to IDs.
+"""
 
 from excel_agent.services.google import GoogleAPI, google_api
 
