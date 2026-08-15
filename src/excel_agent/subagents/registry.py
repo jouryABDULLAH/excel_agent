@@ -19,7 +19,7 @@ from excel_agent.tools import TOOLS
 
 @dataclass(frozen=True)
 class SubagentSpec:
-    """One subagent: what it is called, what it is for, and what it holds."""
+    """Configuration for a specialized subagent."""
 
     name: str
     description: str

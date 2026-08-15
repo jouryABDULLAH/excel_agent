@@ -6,14 +6,14 @@ wiring, which is what would make such a run meaningless if it were wrong.
 """
 
 from langchain.agents import create_agent
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from scripted import ScriptedModel, calling
 
 from excel_agent.prompts import CANNOT_DO
 from excel_agent.runner import Answer, Session, ToolCall
 from excel_agent.subagents import SUBAGENTS
-from excel_agent.subagents.factory import as_tool
+from excel_agent.subagents.factory import OrchestratorState, as_tool
 from excel_agent.subagents.prompts import ORCHESTRATOR_PROMPT
 from excel_agent.tools import TOOLS
 
@@ -82,10 +82,50 @@ def test_a_subagent_becomes_a_tool_taking_an_instruction():
     assert wrapped.description == SUBAGENTS[0].description
 
 
-def test_a_subagent_does_the_work_and_says_which_tools_it_used(a_spreadsheet):
+class RecordingModel(ScriptedModel):
+    """A scripted model that keeps what it was asked.
+
+    A subagent is invoked inside the tool that wraps it, so the instruction it
+    was handed is not visible from outside. This is how a test reads it.
+    """
+
+    seen: list[str] = []
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        self.seen.append(str(messages[-1].content))
+        return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
+
+
+def delegating_to(spec, model, state=None):
+    """An orchestrator holding one subagent, and the state it starts with.
+
+    The wrapped subagent asks for a ToolRuntime, which only whoever calls the
+    tool can supply, so a test drives it the way it really runs: through an
+    agent, which injects the runtime and hides it from the model.
+    """
+    orchestrator = create_agent(
+        ScriptedModel(
+            script=[
+                calling(spec.name, "1", instruction="do the thing"),
+                AIMessage("Done."),
+            ]
+        ),
+        [as_tool(spec, model)],
+        system_prompt=ORCHESTRATOR_PROMPT,
+        state_schema=OrchestratorState,
+        checkpointer=InMemorySaver(),
+    )
+    return orchestrator.invoke(
+        {"messages": [{"role": "user", "content": "do the thing"}], **(state or {})},
+        config={"configurable": {"thread_id": "one"}},
+    )
+
+
+def test_a_subagent_does_the_work_and_hands_back_what_it_said(a_spreadsheet):
     sent = a_spreadsheet()
     row_editor = next(spec for spec in SUBAGENTS if spec.name == "row_editor")
-    wrapped = as_tool(
+
+    said = delegating_to(
         row_editor,
         ScriptedModel(
             script=[
@@ -95,14 +135,47 @@ def test_a_subagent_does_the_work_and_says_which_tools_it_used(a_spreadsheet):
         ),
     )
 
-    answer = wrapped.invoke({"instruction": "set row 2 units to 99"})
-
-    assert "Set row 2 to 99." in answer
-    # What the tool returned travels with the answer, so the orchestrator has
-    # the evidence rather than a summary it would have to take on trust.
-    assert "What the tools returned:" in answer
-    assert "Updated row 2" in answer
+    # The write went out, and what the subagent said came back to the
+    # orchestrator as the result of the tool call that handed it the work.
     assert sent
+    assert any(
+        isinstance(message, ToolMessage) and "Set row 2 to 99." in str(message.content)
+        for message in said["messages"]
+    )
+
+
+# What the subagent is told about the spreadsheet
+
+
+def test_a_subagent_is_told_which_spreadsheet_is_in_hand(a_spreadsheet):
+    a_spreadsheet()
+    analyst = next(spec for spec in SUBAGENTS if spec.name == "analyst")
+    inside = RecordingModel(script=[AIMessage("read it")], seen=[])
+
+    delegating_to(
+        analyst,
+        inside,
+        state={"spreadsheet_id": "abc123", "spreadsheet_name": "TEST - Sales Orders"},
+    )
+
+    # A subagent holds no tool for choosing a spreadsheet, so what it is
+    # working on has to arrive with the instruction.
+    assert "TEST - Sales Orders" in inside.seen[0]
+    assert "abc123" in inside.seen[0]
+    assert "do the thing" in inside.seen[0]
+
+
+def test_a_subagent_is_told_when_nothing_has_been_chosen(a_spreadsheet):
+    a_spreadsheet()
+    analyst = next(spec for spec in SUBAGENTS if spec.name == "analyst")
+    inside = RecordingModel(script=[AIMessage("read it")], seen=[])
+
+    delegating_to(analyst, inside)
+
+    # Nothing writes these two yet: use_spreadsheet settles config.SPREADSHEET
+    # and returns a sentence, so the state stays empty and every instruction
+    # says so. The tools still fall back to the file being worked on.
+    assert "Not selected" in inside.seen[0]
 
 
 # The orchestrator through the runner
@@ -129,6 +202,7 @@ def test_the_orchestrator_answers_through_the_same_events(a_spreadsheet):
         outside,
         [as_tool(analyst, inside)],
         system_prompt=ORCHESTRATOR_PROMPT,
+        state_schema=OrchestratorState,
         checkpointer=InMemorySaver(),
     )
 

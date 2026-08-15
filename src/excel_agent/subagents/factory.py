@@ -69,8 +69,8 @@ def build_orchestrator():
     return create_agent(
         model=model,
         tools=[
-            list_workbooks, 
-            find_spreadsheet, 
+            list_workbooks,
+            find_spreadsheet,
             use_spreadsheet, 
             *delegates
         ],

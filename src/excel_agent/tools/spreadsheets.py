@@ -10,8 +10,9 @@ choosing a file is the question asked before any sheet is opened.
 """
 
 from googleapiclient.errors import HttpError
-from langchain_core.tools import tool
-
+from langchain.tools import tool, ToolRuntime
+from langchain.messages import ToolMessage
+from langgraph.types import Command
 from excel_agent import config
 from excel_agent.sheets import (
     containing,
@@ -84,17 +85,11 @@ def list_workbooks(name: str | None = None) -> str:
 
 
 @tool
-def use_spreadsheet(name: str) -> str:
-    """Work on this spreadsheet from now on.
-
-    Call this when the user wants to move to a different spreadsheet and stay
-    there. Every tool called afterwards without a spreadsheet argument works on
-    this one, so the name does not have to be repeated on every call.
-
-    Do not call this to read something out of another file. Every tool takes a
-    spreadsheet argument of its own for that. Calling this instead would leave
-    the file being worked on changed, and every later edit would land in the
-    file that was only meant to be read.
+def use_spreadsheet(
+    spreadsheet: str,
+    runtime: ToolRuntime
+) -> Command:
+    """Select the spreadsheet to use for subsequent operations.
 
     Args:
         name: The spreadsheet to work on, by name, as list_workbooks or
@@ -107,36 +102,23 @@ def use_spreadsheet(name: str) -> str:
     Examples:
         use_spreadsheet(name="TEST - Sales Orders")
     """
-    if not name or not name.strip():
-        return "Say which spreadsheet to work on."
+   
+    spreadsheet_id, name = resolve_spreadsheet(spreadsheet)
+    
 
-    try:
-        # Resolved before it is settled on, so a name that reaches nothing, or
-        # two files at once, is refused here rather than by every later call.
-        spreadsheet_id, title = resolve_spreadsheet(name)
-        inside = list(sheets_in(spreadsheet_id))
-    except ValueError as explanation:
-        return str(explanation)
-    except HttpError as failure:
-        return readable(failure)
-
-    config.SPREADSHEET = title
-
-    answer = (
-        f'Now working on "{title}". Tools called without a spreadsheet '
-        "argument will use it."
+    
+    return Command(
+        update={
+            "spreadsheet_id": spreadsheet_id,
+            "spreadsheet_name": name,
+            "messages": [
+                ToolMessage(
+                    content=f"Selected spreadsheet: {name}",
+                    tool_call_id=runtime.tool_call_id,
+                )
+            ]
+        }
     )
-
-    # The sheets are named here because nothing else says what they are, and
-    # the name of a file is not the name of a sheet inside it. Told only the
-    # file name, an agent will invent a sheet called after it.
-    if inside:
-        answer += (
-            f" It holds {len(inside)} sheet(s): {', '.join(inside)}. "
-            f"Calls that name no sheet work on {inside[0]}."
-        )
-
-    return answer
 
 
 
