@@ -1,6 +1,7 @@
 """Factory for building the agents."""
 
 from langchain.agents import create_agent, AgentState
+from langchain.messages import ToolMessage
 from langchain.tools import ToolRuntime
 from langchain_core.tools import tool
 from langgraph.checkpoint.memory import InMemorySaver
@@ -32,7 +33,7 @@ def as_tool(spec: SubagentSpec, model):
     def delegate(
         instruction: str,
         runtime: ToolRuntime
-    ) -> str:
+    ) -> dict:
         """Delegate a spreadsheet task to this specialized subagent."""
 
         spreadsheet_id = runtime.state.get("spreadsheet_id")
@@ -51,8 +52,24 @@ def as_tool(spec: SubagentSpec, model):
              config={"recursion_limit": RECURSION_LIMIT, "run_name": spec.name},
         )
 
-        return str(result["messages"][-1].content)
-   
+        messages = result["messages"]
+
+
+        if spec.return_tool_results:
+            return {
+                "response": str(messages[-1].content),
+                "tool_results": [
+                    message.content
+                    for message in messages
+                    if isinstance(message, ToolMessage) and message.content
+                ],
+            }
+
+
+        return {
+            "response": str(messages[-1].content),
+        }
+        
     return delegate
 
 def build_orchestrator():
