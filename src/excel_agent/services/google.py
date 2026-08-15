@@ -9,7 +9,7 @@ It does not contain spreadsheet or Drive business logic.
 
 import random
 import time
-from typing import Any, Callable
+from typing import Any
 
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError

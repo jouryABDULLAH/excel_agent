@@ -29,15 +29,6 @@ MAX_BACKOFF = 32.0
 
 SPREADSHEET_MIME = "application/vnd.google-apps.spreadsheet"
 
-# What a cell is worth reading for: what it shows, what was typed into it, what
-# it works out to, and whether the sheet is formatting it as a date. Asked for
-# by name because the whole of a spreadsheet is far more than any tool here
-# needs, and one call for all three beats three calls for one each.
-GRID_FIELDS = (
-    "sheets(properties(sheetId,title,gridProperties(rowCount,columnCount)),"
-    "data(rowData(values(formattedValue,userEnteredValue,effectiveValue,"
-    "effectiveFormat(numberFormat(type))))))"
-)
 
 # The number formats that mean a cell holds a date rather than a number. Both
 # arrive as a count of days, so without this a column of dates would be
@@ -93,7 +84,7 @@ def forget(spreadsheet_id: str) -> None:
     that writes calls this, so the next read asks Google rather than answering
     from what was true before.
     """
-    _drive.forget(spreadsheet_id=spreadsheet_id)
+    _sheets_in.pop(spreadsheet_id, None)
 
 
 # def readable(failure: HttpError) -> str:
