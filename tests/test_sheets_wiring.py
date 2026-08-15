@@ -451,7 +451,7 @@ def test_everything_the_tools_import_is_still_here():
 def test_every_tool_module_still_imports():
     from excel_agent.tools import TOOLS
 
-    assert len(TOOLS) == 10
+    assert len(TOOLS) == 14
 
 
 def test_the_error_reader_the_tools_use_is_the_services_own():

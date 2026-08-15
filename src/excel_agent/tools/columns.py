@@ -138,7 +138,7 @@ def modify_column(
         if not formula.startswith("="):
             return (
                 f'A formula starts with "=". "{formula}" would be written as '
-                "text. Use modify_row to put a plain value in a cell."
+                "text. Use update_row to put a plain value in a cell."
             )
 
     last_row = last_data_row(rows, header_row)
@@ -173,7 +173,7 @@ def modify_column(
             )
             return (
                 f'Added a column called "{column}", at {column_letter(position)}. '
-                f"It is empty: use modify_row to put values into it, or "
+                f"It is empty: use update_row to put values into it, or "
                 f"set_formula to work them out. {where}"
             )
 

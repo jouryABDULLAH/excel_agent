@@ -43,7 +43,8 @@ def test_no_subagent_holds_a_tool_that_is_not_offered():
 def test_reading_comes_with_every_subagent_that_writes():
     for spec in SUBAGENTS:
         names = {tool.name for tool in spec.tools}
-        if names & {"modify_row", "modify_column", "modify_chart"}:
+        if names & {"update_row", "insert_row", "append_row", "delete_row",
+                    "move_row", "modify_column", "modify_chart"}:
             # A row number handed from one agent to another is stale before it
             # arrives, so whoever writes has to be able to look first.
             assert "inspect_sheet" in names, spec.name
@@ -129,7 +130,7 @@ def test_a_subagent_does_the_work_and_hands_back_what_it_said(a_spreadsheet):
         row_editor,
         ScriptedModel(
             script=[
-                calling("modify_row", "1", action="edit", row=2, values={"Units": 99}),
+                calling("update_row", "1", row=2, values={"Units": 99}),
                 AIMessage("Set row 2 to 99."),
             ]
         ),
@@ -137,7 +138,12 @@ def test_a_subagent_does_the_work_and_hands_back_what_it_said(a_spreadsheet):
 
     # The write went out, and what the subagent said came back to the
     # orchestrator as the result of the tool call that handed it the work.
+    #
+    # update_row reaches Google through spreadsheet_service rather than through
+    # a name imported from sheets.py, so this is also what proves the fixture
+    # covers that second path: without it there is no write to see here.
     assert sent
+    assert sent[0]["call"] == "update_cells"
     assert any(
         isinstance(message, ToolMessage) and "Set row 2 to 99." in str(message.content)
         for message in said["messages"]

@@ -42,7 +42,7 @@ def test_a_tools_output_is_never_mistaken_for_the_answer(a_spreadsheet):
     a_spreadsheet()
     session = session_reading(
         [
-            calling("modify_row", "1", action="edit", row=2, values={"Units": 99}),
+            calling("update_row", "1", row=2, values={"Units": 99}),
             AIMessage(""),
         ],
         tools=TOOLS,
@@ -60,7 +60,7 @@ def test_a_tool_call_arrives_before_the_answer(a_spreadsheet):
     a_spreadsheet()
     session = session_reading(
         [
-            calling("modify_row", "1", action="edit", row=2, values={"Units": 99}),
+            calling("update_row", "1", row=2, values={"Units": 99}),
             AIMessage("Set row 2 to 99."),
         ],
         tools=TOOLS,
@@ -68,7 +68,7 @@ def test_a_tool_call_arrives_before_the_answer(a_spreadsheet):
 
     events = list(session.ask("set row 2 units to 99"))
 
-    assert events[0] == ToolCall("modify_row", {"action": "edit", "row": 2, "values": {"Units": 99}})
+    assert events[0] == ToolCall("update_row", {"row": 2, "values": {"Units": 99}})
     assert events[-1] == Answer("Set row 2 to 99.")
 
 
@@ -161,7 +161,7 @@ def test_a_turn_that_writes_still_writes(a_spreadsheet):
     sent = a_spreadsheet()
     session = session_reading(
         [
-            calling("modify_row", "1", action="edit", row=2, values={"Units": 99}),
+            calling("update_row", "1", row=2, values={"Units": 99}),
             AIMessage("done"),
         ],
         tools=TOOLS,
@@ -179,13 +179,13 @@ def test_a_row_added_in_one_turn_can_be_removed_in_the_next(a_spreadsheet):
     session = session_reading(
         [
             calling(
-                "modify_row", "1", action="add",
+                "append_row", "1",
                 values={"Product": "Monitor Arm", "Region": "US"},
             ),
             AIMessage("Added it as row 7."),
             # Row 6, not the 7 just added: the sheet these tools read is built
             # by hand and does not grow, so 7 is not there to be removed.
-            calling("modify_row", "2", action="remove", row=6),
+            calling("delete_row", "2", row=6),
             AIMessage("Removed it again."),
         ],
         tools=TOOLS,
@@ -197,7 +197,7 @@ def test_a_row_added_in_one_turn_can_be_removed_in_the_next(a_spreadsheet):
     # The second turn only makes sense against what the first one left behind,
     # which is the conversation the session is holding.
     list(session.ask("actually, remove that row again"))
-    assert any("deleteDimension" in str(write) for write in sent)
+    assert any(write["call"] == "delete_rows" for write in sent)
 
     said = session.agent.get_state(
         {"configurable": {"thread_id": session.thread_id}}

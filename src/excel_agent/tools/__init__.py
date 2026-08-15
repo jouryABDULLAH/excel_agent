@@ -5,7 +5,6 @@ from excel_agent.tools.columns import modify_column
 from excel_agent.tools.find import find_data
 from excel_agent.tools.inspect import inspect_sheet
 
-from excel_agent.tools.modify import modify_row
 from excel_agent.tools.rows import (
     append_row,
     delete_row,
@@ -34,7 +33,6 @@ TOOLS = [
     insert_row,
     move_row,
     update_row,
-    modify_row,
     modify_column,
     modify_chart,
     modify_style,

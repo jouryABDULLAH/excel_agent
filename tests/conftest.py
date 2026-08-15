@@ -90,13 +90,43 @@ def fake_google(monkeypatch):
     return use
 
 
+# Everything on SpreadsheetService that changes a spreadsheet. Written out
+# rather than worked out from the class, so a method added to the service
+# without a thought for the tests fails loudly here instead of quietly
+# reaching Google.
+SERVICE_WRITES = (
+    "append_rows",
+    "update_cells",
+    "clear_range",
+    "insert_rows",
+    "delete_rows",
+    "move_row",
+    "insert_columns",
+    "delete_columns",
+    "move_columns",
+    "batch_update",
+    "format_range",
+    "add_chart",
+    "update_chart",
+    "delete_chart",
+)
+
+
 @pytest.fixture
 def a_spreadsheet(monkeypatch):
     """Point whole tool modules at a sheet built by hand, and record the writes.
 
-    Each tool imports what it needs from sheets.py by name, so what is replaced
-    is the name inside the tool's own module. Patching excel_agent.sheets would
-    not reach them: a tool holds its own reference, taken at import.
+    Two seams, because the tools reach a spreadsheet two ways while the
+    refactor is half done.
+
+    The older tools import what they need from sheets.py by name, so what is
+    replaced is the name inside the tool's own module. Patching excel_agent.sheets
+    would not reach them: a tool holds its own reference, taken at import.
+
+    The newer ones hold spreadsheet_service instead, which is one shared object,
+    so its methods are replaced once and every module that uses it is covered.
+    Without this half a migrated tool talks to the real Google, or fails the
+    no_google guard, and either way the test stops testing what it says it does.
 
     Given no modules it patches every one of them, which is what a test driving
     an agent needs: the model decides which tool to call, so the test cannot
@@ -105,9 +135,19 @@ def a_spreadsheet(monkeypatch):
     Returns the list of writes, so a test can assert that a turn really wrote
     without a spreadsheet to look at afterwards.
     """
-    from excel_agent.tools import charts, columns, find, inspect, modify, spreadsheets, stats, style
+    from excel_agent.services.spreadsheet import spreadsheet_service
+    from excel_agent.tools import (
+        charts,
+        columns,
+        find,
+        inspect,
+        rows as row_tools,
+        spreadsheets,
+        stats,
+        style,
+    )
 
-    every = (charts, columns, find, inspect, modify, spreadsheets, stats, style)
+    every = (charts, columns, find, inspect, row_tools, spreadsheets, stats, style)
 
     def use(rows=None, modules=every, title=SHEET, spreadsheet=SPREADSHEET):
         rows = fake_sheets.orders() if rows is None else rows
@@ -130,6 +170,32 @@ def a_spreadsheet(monkeypatch):
                 # what gets patched.
                 if hasattr(module, name):
                     monkeypatch.setattr(module, name, replacement)
+
+        properties = {"title": title, "sheetId": 0}
+
+        for name, replacement in (
+            ("resolve_sheet", lambda id, name=None: properties),
+            ("list_sheets", lambda id: {title: properties}),
+            ("read_sheet", lambda id, name: rows),
+            ("read_range", lambda id, range_name: []),
+            ("list_charts", lambda id: []),
+            ("get_spreadsheet", lambda id: {"sheets": [{"properties": properties}]}),
+            ("invalidate", lambda id: None),
+        ):
+            monkeypatch.setattr(spreadsheet_service, name, replacement)
+
+        def recording(name):
+            """Record the call and answer the way Google's reply is read."""
+            def called(*arguments, **named):
+                sent.append({"call": name, "args": arguments, **named})
+                # Every caller reads the reply with .get and a default, so an
+                # empty answer is enough and says nothing that is not true.
+                return {}
+
+            return called
+
+        for name in SERVICE_WRITES:
+            monkeypatch.setattr(spreadsheet_service, name, recording(name))
 
         return sent
 

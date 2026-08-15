@@ -1,8 +1,8 @@
 """Tool for reading the sheet.
 
 Gives the model a view of the data before it changes anything, using the row
-numbers shown down the side of the sheet so modify_row can be pointed at the
-right row.
+numbers shown down the side of the sheet so update_row, delete_row and
+move_row can be pointed at the right row.
 """
 
 from googleapiclient.errors import HttpError
