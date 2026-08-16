@@ -1,204 +1,307 @@
-"""Tool for reading the sheet.
+"""Tool for reading rows from a spreadsheet."""
 
-Gives the model a view of the data before it changes anything, using the row
-numbers shown down the side of the sheet so update_row, delete_row and
-move_row can be pointed at the right row.
-"""
+from typing import Any
 
 from googleapiclient.errors import HttpError
 from langchain_core.tools import tool
-from excel_agent.services.spreadsheet import spreadsheet_service
 
-from excel_agent.sheets import (
+from excel_agent.services.google import readable
+from excel_agent.services.spreadsheet import (
     Cell,
+    spreadsheet_service,
+)
+from excel_agent.sheets import (
     cell,
     chart_kind,
     chart_title,
     find_header_row,
-    grid,
     header_map,
     last_data_row,
-    readable,
-    resolve_sheet,
     resolve_spreadsheet,
 )
 
-# Upper bound on max_rows, so one call cannot return the whole of a long sheet.
+
 ROW_LIMIT = 200
 
 
-def as_text(one: Cell) -> str:
-    """Render one cell for the markdown table.
-
-    Google has already formatted every value the way the sheet displays it, so
-    a date reads as a date and a currency keeps its symbol without anything
-    here knowing about either. A cell holding a formula shows the formula
-    only when it has no result to show, which happens while a sheet is still
-    working one out.
-
-    Nothing at all becomes an empty string, so a blank cell leaves a gap in
-    the table rather than the word None.
-    """
+def _as_text(one: Cell) -> str:
+    """Render a cell the way the spreadsheet displays it."""
     if one.displayed is not None:
         return str(one.displayed)
+
     if one.formula:
         return one.formula
 
     return ""
 
 
-@tool
+def _error(
+    code: str,
+    message: str,
+    *,
+    spreadsheet: str | None = None,
+    sheet: str | None = None,
+    **details: Any,
+) -> tuple[str, dict]:
+    """Return readable tool content plus structured failure metadata."""
+    artifact = {
+        "ok": False,
+        "operation": "inspect_sheet",
+        "error": code,
+        "message": message,
+        "spreadsheet": spreadsheet,
+        "sheet": sheet,
+        **details,
+    }
+
+    return message, artifact
+
+
+@tool(response_format="content_and_artifact")
 def inspect_sheet(
     columns: list[str] | None = None,
     start_row: int = 1,
     max_rows: int = 20,
     spreadsheet: str | None = None,
     sheet: str | None = None,
-) -> str:
-    """Read rows from the sheet, with their real row numbers.
-
-    Call this before changing anything, so the row numbers you use are the
-    ones the sheet really has.
+) -> tuple[str, dict]:
+    """Read rows with their real Google Sheets row numbers.
 
     Args:
-        columns: Column names to show. Leave empty to show every column.
-        start_row: The row to start reading from. Row numbers are the ones
-            shown down the side of the sheet in Google Sheets.
-        max_rows: How many rows to read.
-        spreadsheet: Which spreadsheet to read, by name. Leave this out to
-            read the one being worked on.
-        sheet: Which sheet to read, by name. Leave this out to read the first
-            sheet in the spreadsheet.
+        columns: Optional column names to return. Omit for every named column.
+        start_row: First spreadsheet row to consider.
+        max_rows: Maximum number of data rows to return. Hard-capped at 200.
+        spreadsheet: Spreadsheet name. Omit for the current spreadsheet.
+        sheet: Sheet name. Omit for the first sheet.
 
     Returns:
-        A markdown table whose row column holds the real row number, or an
-        explanation of why nothing was read.
-
-    Examples:
-        inspect_sheet()
-        inspect_sheet(columns=["Region", "Units"], max_rows=50)
-        inspect_sheet(spreadsheet="Sales Orders", sheet="Q1")
+        Readable table content plus structured metadata describing the page.
     """
-    try:
-        spreadsheet_id, title = resolve_spreadsheet(spreadsheet)
-        properties = resolve_sheet(spreadsheet_id, sheet)
-        rows = grid(spreadsheet_id, properties["title"])
-    except ValueError as explanation:
-        return str(explanation)
-    except HttpError as failure:
-        return readable(failure)
+    if max_rows < 1:
+        return _error(
+            "invalid_max_rows",
+            "max_rows must be at least 1.",
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+            max_rows=max_rows,
+        )
 
-    where = f"{properties['title']} in {title}"
+    try:
+        spreadsheet_id, spreadsheet_name = resolve_spreadsheet(
+            spreadsheet
+        )
+
+        properties = spreadsheet_service.resolve_sheet(
+            spreadsheet_id,
+            sheet,
+        )
+
+        sheet_name = properties["title"]
+
+        rows = spreadsheet_service.read_sheet(
+            spreadsheet_id,
+            sheet_name,
+        )
+
+    except ValueError as failure:
+        return _error(
+            "invalid_request",
+            str(failure),
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
+
+    except HttpError as failure:
+        return _error(
+            "google_api_error",
+            readable(failure),
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
 
     header_row = find_header_row(rows)
     headers = header_map(rows, header_row)
+
     if not headers:
-        return (
-            f"Sheet: {where}. No column names were found: row {header_row} is "
-            "empty, and no row near the top looks like a header."
+        return _error(
+            "headers_not_found",
+            "No column headers were found.",
+            spreadsheet=spreadsheet_name,
+            sheet=sheet_name,
+            header_row=header_row,
         )
 
-    if max_rows < 1:
-        return f"max_rows was {max_rows}, so no rows were read. Ask for at least 1."
+    available_columns = list(headers)
 
-    names = list(headers)
     if columns:
-        unknown = [name for name in columns if name not in headers]
+        unknown = [
+            name
+            for name in columns
+            if name not in headers
+        ]
+
         if unknown:
-            return (
-                f"Unknown column(s): {', '.join(unknown)}. "
-                f"The sheet has: {', '.join(names)}."
+            return _error(
+                "unknown_columns",
+                "One or more requested columns do not exist.",
+                spreadsheet=spreadsheet_name,
+                sheet=sheet_name,
+                unknown_columns=unknown,
+                available_columns=available_columns,
             )
-        names = list(columns)
+
+        selected_columns = list(dict.fromkeys(columns))
+
+    else:
+        selected_columns = available_columns
 
     last_row = last_data_row(rows, header_row)
     total_rows = max(last_row - header_row, 0)
+
     if total_rows == 0:
-        return f"Sheet: {where}. It has column names but no rows of data yet."
+        content = (
+            f"Sheet: {sheet_name} in {spreadsheet_name}. "
+            "It has column names but no rows of data."
+        )
+
+        return content, {
+            "ok": True,
+            "operation": "inspect_sheet",
+            "spreadsheet": spreadsheet_name,
+            "sheet": sheet_name,
+            "header_row": header_row,
+            "columns": selected_columns,
+            "total_rows": 0,
+            "rows": [],
+            "returned_rows": 0,
+            "has_more": False,
+            "next_start_row": None,
+            "rendered": content,
+        }
 
     first_data_row = header_row + 1
     first = max(start_row, first_data_row)
-    last = min(first + min(max_rows, ROW_LIMIT) - 1, last_row)
 
     if first > last_row:
-        return (
-            f"Sheet: {where} has {total_rows} rows of data, ending at row "
-            f"{last_row}, so there is nothing to read from row {start_row}."
+        return _error(
+            "start_row_after_data",
+            (
+                f"The sheet ends at row {last_row}, so there is "
+                f"nothing to read from row {start_row}."
+            ),
+            spreadsheet=spreadsheet_name,
+            sheet=sheet_name,
+            total_rows=total_rows,
+            last_data_row=last_row,
+            requested_start_row=start_row,
         )
 
-    summary = (
-        f"Sheet: {where} ({total_rows} rows of data, column names in row "
-        f"{header_row})"
+    effective_limit = min(max_rows, ROW_LIMIT)
+    last = min(
+        first + effective_limit - 1,
+        last_row,
     )
-    if first > first_data_row or last < last_row:
-        summary += f". Showing rows {first} to {last}."
+
+    result_rows = []
+
+    for row_number in range(first, last + 1):
+        result_rows.append(
+            {
+                "row": row_number,
+                "values": {
+                    name: _as_text(
+                        cell(
+                            rows,
+                            row_number,
+                            headers[name],
+                        )
+                    )
+                    for name in selected_columns
+                },
+            }
+        )
+
+    has_more = last < last_row
+    next_start_row = last + 1 if has_more else None
 
     lines = [
-        summary,
+        (
+            f"Sheet: {sheet_name} in {spreadsheet_name} "
+            f"({total_rows} rows of data, column names in row "
+            f"{header_row})."
+        ),
         "",
-        "| row | " + " | ".join(names) + " |",
-        "|" + "---|" * (len(names) + 1),
+        "| row | " + " | ".join(selected_columns) + " |",
+        "|" + "---|" * (len(selected_columns) + 1),
     ]
 
-    for row in range(first, last + 1):
-        values = [as_text(cell(rows, row, headers[name])) for name in names]
-        lines.append(f"| {row} | " + " | ".join(values) + " |")
+    for result_row in result_rows:
+        values = [
+            result_row["values"][name]
+            for name in selected_columns
+        ]
 
-    if last < last_row:
-        lines.append("")
         lines.append(
-            f"Rows {last + 1} to {last_row} were not shown. "
-            f"Call again with start_row={last + 1} to see them."
+            f'| {result_row["row"]} | '
+            + " | ".join(values)
+            + " |"
         )
 
-    # A chart has an id but no name, so the number here is how modify_chart is
-    # pointed at one. Listed last, because it is about the sheet rather than
-    # about the rows just read.
-    drawn = spreadsheet_service.list_charts(
-        spreadsheet_id,
-        properties["title"],
-    )
+    # Deliberately NOT adding:
+    #
+    # "Rows N to M were not shown. Call again..."
+    #
+    # That is agent control metadata, not user-facing spreadsheet data.
 
-    if drawn:
+    try:
+        charts = spreadsheet_service.list_charts(
+            spreadsheet_id,
+            sheet_name,
+        )
+    except HttpError:
+        charts = []
+
+    chart_results = []
+
+    if charts:
         lines.append("")
         lines.append(
-            f"{len(drawn)} chart(s) on this sheet:"
+            f"{len(charts)} chart(s) on this sheet:"
         )
 
-        for chart in drawn:
+        for chart in charts:
             spec = chart.get("spec", {})
 
+            chart_result = {
+                "chart_id": chart.get("chartId"),
+                "title": chart_title(spec),
+                "kind": chart_kind(spec),
+            }
+
+            chart_results.append(chart_result)
+
             lines.append(
-                f'  chart_id={chart["chartId"]}: '
-                f'{chart_title(spec)} '
-                f'({chart_kind(spec)})'
+                f'  chart_id={chart_result["chart_id"]}: '
+                f'{chart_result["title"]} '
+                f'({chart_result["kind"]})'
             )
-    return "\n".join(lines)
 
+    rendered = "\n".join(lines)
 
-CASES = [
-    ("the first rows", {}),
-    ("two columns", {"columns": ["Region", "Units"]}),
-    ("paging on from row 10", {"start_row": 10, "max_rows": 5}),
-    ("more rows than there are", {"max_rows": 5000}),
-    ("max_rows of zero", {"max_rows": 0}),
-    ("a column that does not exist", {"columns": ["Profit Margin ", "Nonsense"]}),
-    ("a sheet that does not exist", {"sheet": "Nonsense"}),
-    ("a spreadsheet that does not exist", {"spreadsheet": "Nonsense"}),
-]
-
-
-def main() -> None:
-    """Try the tool by hand with `python -m excel_agent.tools.inspect`.
-
-    Reading only, so running this never changes anything. It works on the
-    spreadsheet named in EXCEL_AGENT_SPREADSHEET.
-    """
-    for label, arguments in CASES:
-        print(f"--- {label}: {arguments} ---")
-        print(inspect_sheet.invoke(arguments))
-        print()
-
-
-if __name__ == "__main__":
-    main()
+    return rendered, {
+        "ok": True,
+        "operation": "inspect_sheet",
+        "spreadsheet": spreadsheet_name,
+        "sheet": sheet_name,
+        "header_row": header_row,
+        "columns": selected_columns,
+        "total_rows": total_rows,
+        "first_row": first,
+        "last_row": last,
+        "returned_rows": len(result_rows),
+        "rows": result_rows,
+        "has_more": has_more,
+        "next_start_row": next_start_row,
+        "charts": chart_results,
+        "rendered": rendered,
+    }

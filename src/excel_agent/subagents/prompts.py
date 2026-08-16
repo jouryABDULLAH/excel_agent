@@ -129,8 +129,9 @@ change how cells look.
 - Inserting, deleting or moving a column changes column positions. Inspect
   again before another operation that depends on old positions.
 - Deleting a column throws its data away. Do not choose a column on a guess.
-- format_range changes formatting directly: number formats, bold text and
-  background colours. It can also clear an explicit number format or
+- format_range changes formatting directly: number formats, bold, italic,
+  underline and strikethrough text, font and background colours, alignment,
+  wrapping and borders. It can also clear an explicit number format or
   background colour.
 - Use copy_format when the user wants one cell or range to look like another.
   It copies the existing formatting without changing values or formulas. You
