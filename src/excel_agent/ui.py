@@ -35,6 +35,11 @@ CACHE_SECONDS = 60
 
 FADE_SECONDS = 0.25
 
+# Where the sidebar picker keeps what was chosen. Named because both the reset
+# and a spreadsheet chosen by the agent have to clear it: while it holds a
+# value Streamlit draws that value, whatever the code passes as the index.
+WORKBOOK_CHOICE = "workbook_choice"
+
 NO_ANSWER = (
     "_This turn finished without a written response. Any actions shown above "
     "did run, so check the spreadsheet before trying again._"
@@ -145,9 +150,25 @@ def start() -> None:
 
 
 def reset_conversation() -> None:
-    """Forget conversation state without changing the selected spreadsheet."""
+    """Start a fresh conversation, on no spreadsheet.
+
+    A new conversation is a new thread, so the agent's own record of which file
+    was chosen goes with it. config.SPREADSHEET outlives the thread and would
+    not, which would leave the first tool call of the new conversation landing
+    on a file nobody in it had named.
+
+    The picker is cleared rather than set, so that the value the sidebar draws
+    is worked out from what is in use rather than held over from the last
+    conversation.
+    """
     st.session_state.session.reset()
     st.session_state.transcript = []
+
+    browsing.forget()
+    st.session_state.pop(WORKBOOK_CHOICE, None)
+
+    # The starters belong to the spreadsheet that has just been let go of.
+    suggestions.clear()
 
 
 def ensure_state() -> None:
@@ -213,7 +234,7 @@ def draw_header() -> None:
     if link:
         context = (
             f"Working on **{current}**"
-            f" · [Open in Google Sheets ↗]({link})"
+            # f" · [Open in Google Sheets ↗]({link})"
         )
     else:
         context = f"Working on **{current}**"
@@ -416,6 +437,7 @@ def sidebar() -> None:
                 index=selected_index,
                 placeholder="Choose one, or ask",
                 label_visibility="collapsed",
+                key=WORKBOOK_CHOICE,
             )
 
             if (
@@ -518,6 +540,11 @@ def handle_question(
     # A turn can select another spreadsheet. The header/sidebar were rendered
     # before the agent changed it, so rerun once to make the UI truthful.
     if browsing.in_use() != spreadsheet_before:
+        # Dropped rather than set to the new name: the picker draws whatever it
+        # holds, so leaving the old choice there would show one spreadsheet
+        # while the agent worked on another.
+        st.session_state.pop(WORKBOOK_CHOICE, None)
+
         suggestions.clear()
         st.rerun()
 

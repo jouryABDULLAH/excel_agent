@@ -94,6 +94,15 @@ def choose(name: str) -> None:
     config.SPREADSHEET = title
 
 
+def forget() -> None:
+    """Stop working on any spreadsheet.
+
+    The opposite of choose, and nothing is resolved on the way: what is being
+    said is that no file is in hand, which is not a name that could be wrong.
+    """
+    config.SPREADSHEET = None
+
+
 def where() -> str:
     """Which sheet of which spreadsheet the work is going to.
 

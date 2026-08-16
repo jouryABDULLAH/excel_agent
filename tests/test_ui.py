@@ -214,3 +214,60 @@ def test_the_suggestions_are_taken_off_the_page_once_one_is_used():
     # Left on screen they would belong to a run that has ended, and clicking
     # one again would do nothing at all.
     assert [button.label for button in page.button] == ["New conversation"]
+
+
+# Starting again
+
+
+def starting_again(page):
+    """Click New conversation, wherever it sits among the buttons."""
+    button = next(
+        one
+        for one in page.button
+        if "New conversation" in one.label
+    )
+    return button.click().run()
+
+
+def test_a_new_conversation_lets_go_of_the_spreadsheet():
+    """REGRESSION: the file outlived the conversation that chose it.
+
+    A new conversation is a new thread, so the agent's own record of the
+    spreadsheet goes. config.SPREADSHEET does not, and every tool falls back
+    to it, so the first question of a fresh conversation was answered about a
+    file nobody in it had named.
+    """
+    page = page_with_a_scripted_agent("Five rows.").run()
+    assert config.SPREADSHEET == SPREADSHEET
+
+    page = starting_again(page)
+
+    assert config.SPREADSHEET is None
+
+
+def test_a_new_conversation_empties_the_transcript():
+    page = page_with_a_scripted_agent("Five rows.").run()
+    page.chat_input[0].set_value("how many rows?").run()
+    assert page.session_state["transcript"]
+
+    page = starting_again(page)
+
+    assert page.session_state["transcript"] == []
+
+
+def test_the_picker_stops_naming_a_spreadsheet_that_was_let_go_of():
+    """The picker draws what it holds, whatever index the code passes it.
+
+    Left alone it would go on showing the old file, and choosing it again
+    would be a no-op, since the page compares what is picked with what is in
+    use and they would already agree.
+    """
+    page = page_with_a_scripted_agent("Five rows.").run()
+
+    page = starting_again(page)
+
+    # Cleared, then drawn again from an index of None: the picker offers every
+    # spreadsheet and names none of them.
+    assert page.session_state["workbook_choice"] is None
+    # And nothing on the page still names it, which is the half a user sees.
+    assert not any(SPREADSHEET in one.value for one in page.markdown)
