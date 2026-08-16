@@ -20,6 +20,7 @@ from excel_agent import browsing
 from excel_agent.config import MODEL
 from excel_agent.runner import (
     Answer,
+    Artifact, 
     Session,
     ToolCall,
     rendered,
@@ -49,10 +50,12 @@ NO_ANSWER = (
 PAGE_CSS = """
 <style>
 
-/* Give the conversation a little more room without making it dashboard-wide. */
+/* Give the conversation a little more room without making it dashboard-wide.
+   The top padding clears Streamlit's own fixed toolbar: below about 3.5rem the
+   title slides under it and its ascenders are cut off. */
 .block-container {
     max-width: 1050px;
-    padding-top: 2rem;
+    padding-top: 4rem;
     padding-bottom: 5rem;
 }
 
@@ -251,6 +254,74 @@ def draw_header() -> None:
 # Tool trace
 # ---------------------------------------------------------------------------
 
+def draw_artifact(
+    artifact: dict,
+    box,
+) -> None:
+    """Render structured spreadsheet data without asking the model to rewrite it."""
+    operation = artifact.get("operation")
+
+    if operation == "inspect_sheet":
+        rows = artifact.get("rows") or []
+        columns = artifact.get("columns") or []
+
+        if not rows or not columns:
+            return
+
+        table = []
+
+        for item in rows:
+            values = item.get("values") or {}
+
+            table.append(
+                {
+                    "row": item.get("row"),
+                    **{
+                        column: values.get(column, "")
+                        for column in columns
+                    },
+                }
+            )
+
+        box.dataframe(
+            table,
+            use_container_width=True,
+            hide_index=True,
+        )
+        return
+
+    if operation == "find_data":
+        matches = artifact.get("matches") or []
+
+        if not matches:
+            return
+
+        columns = list(
+            (matches[0].get("values") or {}).keys()
+        )
+
+        table = []
+
+        for item in matches:
+            values = item.get("values") or {}
+
+            table.append(
+                {
+                    "row": item.get("row"),
+                    "matched in": item.get("matched_in"),
+                    **{
+                        column: values.get(column, "")
+                        for column in columns
+                    },
+                }
+            )
+
+        box.dataframe(
+            table,
+            use_container_width=True,
+            hide_index=True,
+        )
+        return
 
 def draw_actions(
     calls: list[str],
@@ -289,8 +360,10 @@ def draw_turn(
     The user sees a simple progress label while work is happening. Exact tool
     calls are preserved and shown afterwards inside a collapsed expander.
     """
+    
     calls: list[str] = []
     answer = ""
+    artifacts: list[dict] = []
 
     status_placeholder = box.empty()
 
@@ -311,6 +384,9 @@ def draw_turn(
             elif isinstance(event, Answer):
                 answer = event.text
 
+            elif isinstance(event, Artifact):
+                artifacts.append(event.data)
+
         status.update(
             label="Done",
             state="complete",
@@ -319,19 +395,23 @@ def draw_turn(
 
     said = answer.strip() or NO_ANSWER
 
-    # Result first.
-    box.markdown(said)
+    if answer.strip():
+        box.markdown(said)
 
-    # Technical trace second.
-    draw_actions(
-        calls,
-        container=box,
-    )
+    for artifact in artifacts:
+        draw_artifact(
+            artifact,
+            box,
+        )
+
+    if not answer.strip() and not artifacts:
+        box.markdown(NO_ANSWER)
 
     return {
         "role": "assistant",
         "text": said,
         "calls": calls,
+        "artifacts": artifacts,
     }
 
 
@@ -341,13 +421,25 @@ def draw_transcript() -> None:
         role = turn["role"]
 
         with st.chat_message(role):
-            st.markdown(turn["text"])
+
+            if turn.get("text"):
+                st.markdown(
+                    turn["text"]
+                )
+
+            for artifact in (
+                turn.get("artifacts")
+                or []
+            ):
+                draw_artifact(
+                    artifact,
+                    st,
+                )
 
             if role == "assistant":
                 draw_actions(
                     turn.get("calls", [])
                 )
-
 
 # ---------------------------------------------------------------------------
 # Empty state / suggestions
@@ -531,6 +623,7 @@ def handle_question(
                 "role": "assistant",
                 "text": message,
                 "calls": [],
+                "artifacts": [],
             }
 
     st.session_state.transcript.append(
