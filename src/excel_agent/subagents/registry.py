@@ -35,10 +35,16 @@ def subagents() -> tuple[SubagentSpec, ...]:
 
     reading = tools["inspect_sheet"]
 
+    searching_tools = (
+        tools["list_workbooks"],
+        tools["find_spreadsheet"],
+        tools["resolve_spreadsheet_choice"],
+    )
+
     reading_tools = (
         reading, 
         tools["sheet_stats"], 
-        tools["find_data"]
+        tools["find_data"],
     )
 
     row_tools = (
@@ -62,6 +68,12 @@ def subagents() -> tuple[SubagentSpec, ...]:
     )
 
     return (
+        SubagentSpec(
+            name="file_manager",
+            description=prompts.FILE_MANAGER_DESCRIPTION,
+            system_prompt=prompts.FILE_MANAGER_PROMPT,
+            tools=searching_tools,
+        ),
         SubagentSpec(
             name="analyst",
             description=prompts.ANALYST_DESCRIPTION,

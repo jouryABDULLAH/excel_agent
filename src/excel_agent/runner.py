@@ -1,18 +1,21 @@
-"""One conversation turn exposed as plain application events.
+"""Expose one agent turn as simple application-level events.
 
-The runner is the boundary between the LangChain/LangGraph agent and clients
-such as the CLI and Streamlit UI.
-
-Model text remains model text. Structured tool artifacts are carried
-separately and never replace the model's final answer.
+The runner is the boundary between LangChain/LangGraph and clients such as
+the CLI and Streamlit. Clients do not need to understand AIMessage,
+ToolMessage, graph state, or checkpoints.
 """
 
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
-from langchain_core.messages import AIMessage, ToolMessage
-from langgraph.errors import GraphRecursionError
+from langchain_core.messages import (
+    AIMessage,
+    ToolMessage,
+)
+from langgraph.errors import (
+    GraphRecursionError,
+)
 
 from excel_agent.model import (
     GAVE_UP,
@@ -21,17 +24,14 @@ from excel_agent.model import (
 )
 
 
-# ---------------------------------------------------------------------------
-# Public events
-# ---------------------------------------------------------------------------
-
-# data classes for the UI
 @dataclass
 class ToolCall:
-    """A tool the model asked to run."""
+    """A tool call that happened during the turn."""
 
     name: str
-    arguments: dict = field(default_factory=dict)
+    arguments: dict = field(
+        default_factory=dict
+    )
 
 
 @dataclass
@@ -43,35 +43,31 @@ class Text:
 
 @dataclass
 class Artifact:
-    """Structured application data produced while completing the turn.
-
-    Artifacts are not answers. They are deterministic data that a client may
-    choose to render specially, such as spreadsheet rows or search matches.
-    """
+    """Structured data intended for deterministic rendering."""
 
     data: dict
 
 
 @dataclass
 class Answer:
-    """The final user-facing model answer."""
+    """The final user-facing natural-language answer."""
 
     text: str
-
-
-# ---------------------------------------------------------------------------
-# Artifact handling
-# ---------------------------------------------------------------------------
 
 
 def _render_artifacts(
     artifact: object,
 ) -> list[dict]:
-    """Return inner tool artifacts only when they should be displayed."""
-    if not isinstance(artifact, dict):
+    """Return inner artifacts only when their subagent marked them for display."""
+    if not isinstance(
+        artifact,
+        dict,
+    ):
         return []
 
-    if not artifact.get("render_data"):
+    if not artifact.get(
+        "render_data"
+    ):
         return []
 
     tool_artifacts = artifact.get(
@@ -87,18 +83,60 @@ def _render_artifacts(
     return [
         item
         for item in tool_artifacts
-        if isinstance(item, dict)
+        if isinstance(
+            item,
+            dict,
+        )
     ]
+
+
+def _nested_tool_calls(
+    artifact: object,
+) -> list[dict]:
+    """Return tool calls made inside a delegated subagent."""
+    if not isinstance(
+        artifact,
+        dict,
+    ):
+        return []
+
+    calls = artifact.get(
+        "tool_calls"
+    )
+
+    if not isinstance(
+        calls,
+        list,
+    ):
+        return []
+
+    return [
+        call
+        for call in calls
+        if (
+            isinstance(call, dict)
+            and isinstance(
+                call.get("name"),
+                str,
+            )
+        )
+    ]
+
 
 def _merge_inspect_artifacts(
     artifacts: list[dict],
 ) -> list[dict]:
-    """Merge consecutive inspect_sheet pages from the same paginated read."""
+    """Merge continuous inspect_sheet pages from the same logical read."""
     result: list[dict] = []
 
     for artifact in artifacts:
-        if artifact.get("operation") != "inspect_sheet":
-            result.append(artifact)
+        if (
+            artifact.get("operation")
+            != "inspect_sheet"
+        ):
+            result.append(
+                artifact
+            )
             continue
 
         current = {
@@ -110,46 +148,80 @@ def _merge_inspect_artifacts(
         }
 
         if not result:
-            result.append(current)
+            result.append(
+                current
+            )
             continue
 
         previous = result[-1]
 
-        if previous.get("operation") != "inspect_sheet":
-            result.append(current)
+        if (
+            previous.get("operation")
+            != "inspect_sheet"
+        ):
+            result.append(
+                current
+            )
             continue
 
-        previous_last = previous.get(
-            "last_returned_row"
+        previous_last = (
+            previous.get(
+                "last_returned_row"
+            )
         )
 
-        current_first = artifact.get(
-            "first_returned_row"
+        current_first = (
+            artifact.get(
+                "first_returned_row"
+            )
         )
 
         continuous = (
-            isinstance(previous_last, int)
-            and isinstance(current_first, int)
-            and current_first == previous_last + 1
+            isinstance(
+                previous_last,
+                int,
+            )
+            and isinstance(
+                current_first,
+                int,
+            )
+            and current_first
+            == previous_last + 1
         )
 
         same_read = (
-            previous.get("spreadsheet")
-            == artifact.get("spreadsheet")
-            and previous.get("sheet")
-            == artifact.get("sheet")
-            and previous.get("columns")
-            == artifact.get("columns")
+            previous.get(
+                "spreadsheet"
+            )
+            == artifact.get(
+                "spreadsheet"
+            )
+            and previous.get(
+                "sheet"
+            )
+            == artifact.get(
+                "sheet"
+            )
+            and previous.get(
+                "columns"
+            )
+            == artifact.get(
+                "columns"
+            )
             and continuous
         )
 
         if not same_read:
-            result.append(current)
+            result.append(
+                current
+            )
             continue
 
-        previous_rows = previous.setdefault(
-            "rows",
-            [],
+        previous_rows = (
+            previous.setdefault(
+                "rows",
+                [],
+            )
         )
 
         previous_rows.extend(
@@ -157,53 +229,60 @@ def _merge_inspect_artifacts(
             or []
         )
 
-        previous["last_returned_row"] = (
-            artifact.get(
-                "last_returned_row"
-            )
+        previous[
+            "last_returned_row"
+        ] = artifact.get(
+            "last_returned_row"
         )
 
-        previous["returned_rows"] = len(
+        previous[
+            "returned_rows"
+        ] = len(
             previous_rows
         )
 
-        previous["has_more"] = artifact.get(
+        previous[
+            "has_more"
+        ] = artifact.get(
             "has_more",
             False,
         )
 
-        previous["next_start_row"] = (
-            artifact.get(
-                "next_start_row"
-            )
+        previous[
+            "next_start_row"
+        ] = artifact.get(
+            "next_start_row"
         )
 
-        # Keep these aligned with the latest page in case the final
-        # page carries the authoritative values.
-        previous["last_data_row"] = (
-            artifact.get(
-                "last_data_row",
-                previous.get("last_data_row"),
-            )
+        previous[
+            "last_data_row"
+        ] = artifact.get(
+            "last_data_row",
+            previous.get(
+                "last_data_row"
+            ),
         )
 
-        previous["total_data_rows"] = (
-            artifact.get(
-                "total_data_rows",
-                previous.get("total_data_rows"),
-            )
+        previous[
+            "total_data_rows"
+        ] = artifact.get(
+            "total_data_rows",
+            previous.get(
+                "total_data_rows"
+            ),
         )
 
-        previous["charts"] = artifact.get(
+        previous[
+            "charts"
+        ] = artifact.get(
             "charts",
-            previous.get("charts", []),
+            previous.get(
+                "charts",
+                [],
+            ),
         )
 
     return result
-
-# ---------------------------------------------------------------------------
-# Session
-# ---------------------------------------------------------------------------
 
 
 class Session:
@@ -216,13 +295,19 @@ class Session:
         name: str = "orchestrator",
     ):
         self.agent = agent
-        self.stream_text = stream_text
-        self.thread_id = new_thread()
+        self.stream_text = (
+            stream_text
+        )
+        self.thread_id = (
+            new_thread()
+        )
         self.name = name
 
     def reset(self) -> None:
-        """Start a fresh conversation thread."""
-        self.thread_id = new_thread()
+        """Start another conversation thread."""
+        self.thread_id = (
+            new_thread()
+        )
 
     def ask(
         self,
@@ -233,52 +318,51 @@ class Session:
         | Artifact
         | Answer
     ]:
-        """Run one user turn and emit application-level events.
-
-        Important contract:
-
-        - AIMessage content determines the final Answer.
-        - Tool artifacts NEVER replace that Answer.
-        - Structured read artifacts are emitted independently as Artifact
-          events for clients that want deterministic rendering.
-        """
+        """Run one turn and emit application-level events."""
         config = {
             "configurable": {
-                "thread_id": self.thread_id,
+                "thread_id": (
+                    self.thread_id
+                ),
             },
-            "recursion_limit": RECURSION_LIMIT,
-            "run_name": self.name,
+            "recursion_limit": (
+                RECURSION_LIMIT
+            ),
+            "run_name": (
+                self.name
+            ),
         }
 
         final_answer = ""
-
-        # Preserve artifacts in execution order. This is a list, not one
-        # "candidate", because a full-sheet read may require several pages.
         artifacts: list[dict] = []
 
-        # Prevent duplicate Artifact events if Stream updates expose the same
-        # ToolMessage more than once.
-        seen_artifacts: set[int] = set()
+        # The same outer ToolMessage may appear in more than one
+        # graph update, so use its tool-call id to avoid showing
+        # nested actions twice.
+        seen_tool_messages: set[str] = (
+            set()
+        )
 
         try:
-            for mode, payload in self.agent.stream(
-                {
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": question,
-                        }
-                    ]
-                },
-                config=config,
-                stream_mode=[
-                    "updates",
-                    "messages",
-                ],
+            for mode, payload in (
+                self.agent.stream(
+                    {
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": (
+                                    question
+                                ),
+                            }
+                        ]
+                    },
+                    config=config,
+                    stream_mode=[
+                        "updates",
+                        "messages",
+                    ],
+                )
             ):
-                # -----------------------------------------------------------
-                # Streaming model tokens
-                # -----------------------------------------------------------
                 if mode == "messages":
                     token, _ = payload
 
@@ -287,15 +371,16 @@ class Session:
                         and token.content
                     ):
                         yield Text(
-                            str(token.content)
+                            str(
+                                token.content
+                            )
                         )
 
                     continue
 
-                # -----------------------------------------------------------
-                # State updates
-                # -----------------------------------------------------------
-                for update in payload.values():
+                for update in (
+                    payload.values()
+                ):
                     if not isinstance(
                         update,
                         dict,
@@ -303,13 +388,14 @@ class Session:
                         continue
 
                     messages = (
-                        update.get("messages")
+                        update.get(
+                            "messages"
+                        )
                         or []
                     )
 
                     for message in messages:
-
-                        # Tool calls requested by an AI message.
+                        # Outer orchestrator tool calls.
                         for call in (
                             getattr(
                                 message,
@@ -319,16 +405,18 @@ class Session:
                             or []
                         ):
                             yield ToolCall(
-                                call["name"],
-                                dict(
-                                    call["args"]
+                                name=call[
+                                    "name"
+                                ],
+                                arguments=dict(
+                                    call.get(
+                                        "args"
+                                    )
+                                    or {}
                                 ),
                             )
 
-                        # Final/narrative model content.
-                        #
-                        # Keep the latest non-empty AI answer, but never
-                        # substitute tool output for it.
+                        # Keep model text separate from tool output.
                         if (
                             isinstance(
                                 message,
@@ -336,60 +424,88 @@ class Session:
                             )
                             and message.content
                         ):
-                            final_answer = str(
-                                message.content
+                            final_answer = (
+                                str(
+                                    message.content
+                                )
                             )
 
-                        # Structured data returned by delegated tools.
-                        if isinstance(
+                        if not isinstance(
                             message,
                             ToolMessage,
                         ):
-                            outer_artifact = (
-                                message.artifact
+                            continue
+
+                        outer_artifact = (
+                            message.artifact
+                        )
+
+                        if outer_artifact is None:
+                            continue
+
+                        tool_message_id = str(
+                            getattr(
+                                message,
+                                "tool_call_id",
+                                "",
                             )
+                        )
 
-                            if (
-                                outer_artifact
-                                is None
+                        # Nested actions are attached to the outer
+                        # delegate ToolMessage. Do not emit them more
+                        # than once if LangGraph surfaces that message
+                        # again in another update.
+                        if (
+                            tool_message_id
+                            not in
+                            seen_tool_messages
+                        ):
+                            for call in (
+                                _nested_tool_calls(
+                                    outer_artifact
+                                )
                             ):
-                                continue
-
-                            # The same object may be surfaced in more than one
-                            # streaming update.
-                            identity = id(
-                                outer_artifact
-                            )
-
-                            if (
-                                identity
-                                in seen_artifacts
-                            ):
-                                continue
-
-                            seen_artifacts.add(
-                                identity
-                            )
-
-                            for artifact in _render_artifacts(
-                                outer_artifact
-                            ):
-                                artifacts.append(
-                                    artifact
+                                yield ToolCall(
+                                    name=call[
+                                        "name"
+                                    ],
+                                    arguments=dict(
+                                        call.get(
+                                            "arguments"
+                                        )
+                                        or {}
+                                    ),
                                 )
 
+                            seen_tool_messages.add(
+                                tool_message_id
+                            )
+
+                        for artifact in (
+                            _render_artifacts(
+                                outer_artifact
+                            )
+                        ):
+                            artifacts.append(
+                                artifact
+                            )
+
         except GraphRecursionError:
-            yield Answer(GAVE_UP)
+            yield Answer(
+                GAVE_UP
+            )
             return
 
-        # Artifacts come before the final response so a UI can render the
-        # deterministic data and then the conversational explanation.
-        artifacts = _merge_inspect_artifacts(
-            artifacts
+        artifacts = (
+            _merge_inspect_artifacts(
+                artifacts
+            )
         )
 
         if final_answer:
-            yield Answer(final_answer)
+            yield Answer(
+                final_answer
+            )
 
         for artifact in artifacts:
             yield Artifact(
@@ -400,7 +516,7 @@ class Session:
 def rendered(
     call: ToolCall,
 ) -> str:
-    """Render a tool call for CLI/debugging displays."""
+    """Render a tool call for CLI/UI debug displays."""
     arguments = ", ".join(
         f"{name}={value!r}"
         for name, value

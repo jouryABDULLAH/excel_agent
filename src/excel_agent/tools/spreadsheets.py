@@ -24,6 +24,73 @@ from excel_agent.sheets import (
 )
 
 
+@tool(
+    response_format="content_and_artifact"
+)
+def resolve_spreadsheet_choice(
+    spreadsheet: str,
+) -> tuple[str, dict]:
+    """Resolve one exact spreadsheet choice without changing session state.
+
+    This is used by the file manager after it has identified the spreadsheet
+    the user means. It validates the choice and returns the id/name for the
+    outer orchestrator to commit to its state.
+
+    Args:
+        spreadsheet: Exact spreadsheet name chosen from the available files.
+    """
+    if not spreadsheet or not spreadsheet.strip():
+        return (
+            "No spreadsheet was named.",
+            {
+                "ok": False,
+                "operation": "resolve_spreadsheet_choice",
+                "reason": "missing_spreadsheet",
+            },
+        )
+
+    try:
+        spreadsheet_id, name = resolve_spreadsheet(
+            spreadsheet
+        )
+
+    except HttpError as failure:
+        message = readable(failure)
+
+        return (
+            message,
+            {
+                "ok": False,
+                "operation": "resolve_spreadsheet_choice",
+                "reason": "google_error",
+                "message": message,
+            },
+        )
+
+    except ValueError:
+        return (
+            (
+                f'"{spreadsheet}" did not resolve to exactly '
+                "one spreadsheet."
+            ),
+            {
+                "ok": False,
+                "operation": "resolve_spreadsheet_choice",
+                "reason": "not_unique",
+                "requested": spreadsheet,
+            },
+        )
+
+    return (
+        f'Selected spreadsheet "{name}".',
+        {
+            "ok": True,
+            "operation": "resolve_spreadsheet_choice",
+            "spreadsheet_id": spreadsheet_id,
+            "spreadsheet_name": name,
+        },
+    )
+
 @tool
 def list_workbooks(name: str | None = None) -> str:
     """List the Google spreadsheets that can be worked on.

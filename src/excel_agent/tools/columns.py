@@ -130,6 +130,9 @@ def insert_column(
     """Insert a new empty column.
 
     By default the column is added immediately after the last named column.
+    On an empty sheet with no headers, this creates the first column at
+    position 1.
+
     Give position to insert it somewhere specific, counting from 1 at the
     left side of the table.
 
@@ -164,15 +167,6 @@ def insert_column(
 
         sheet_name = properties["title"]
 
-        missing_headers = _require_headers(
-            headers,
-            spreadsheet=spreadsheet_name,
-            sheet=sheet_name,
-            header_row=header_row,
-        )
-        if missing_headers:
-            return missing_headers
-
         if name in headers:
             return _error(
                 "duplicate_column",
@@ -183,15 +177,31 @@ def insert_column(
                 available_columns=list(headers),
             )
 
-        rightmost = max(headers.values())
+        # If the sheet has no headers yet, there is no rightmost named
+        # column. Treat that as position 0 so the first valid column is 1.
+        rightmost = (
+            max(headers.values())
+            if headers
+            else 0
+        )
 
         if position is None:
             position = rightmost + 1
 
-        if position < 1 or position > rightmost + 1:
+        if (
+            position < 1
+            or position > rightmost + 1
+        ):
             return _error(
                 "invalid_position",
-                "The requested column position is outside the table.",
+                (
+                    "The requested column position is outside the table."
+                    if headers
+                    else (
+                        "The first column of an empty sheet "
+                        "must be at position 1."
+                    )
+                ),
                 spreadsheet=spreadsheet_name,
                 sheet=sheet_name,
                 position=position,
@@ -207,7 +217,7 @@ def insert_column(
         )
 
         # Headers are identifiers, not user-entered spreadsheet values.
-        # RAW prevents names such as 007, 1-2 or +Notes being coerced.
+        # RAW preserves names such as 007, 1-2 and +Notes exactly as written.
         spreadsheet_service.update_cells(
             spreadsheet_id=spreadsheet_id,
             updates=[
@@ -234,8 +244,10 @@ def insert_column(
             "position": position,
             "column_letter": column_letter(position),
             "column_positions_changed": (
-                position <= rightmost
+                bool(headers)
+                and position <= rightmost
             ),
+            "created_first_column": not bool(headers),
         }
 
     except ValueError as failure:
@@ -253,8 +265,7 @@ def insert_column(
             spreadsheet=spreadsheet,
             sheet=sheet,
         )
-
-
+    
 @tool
 def rename_column(
     column: str,
@@ -304,41 +315,53 @@ def rename_column(
 
         sheet_name = properties["title"]
 
-        missing = _require_column(
-            column,
-            headers,
-            spreadsheet=spreadsheet_name,
-            sheet=sheet_name,
-        )
-        if missing:
-            return missing
-
-        if new_name == column:
-            return {
-                "ok": True,
-                "operation": "rename_column",
-                "spreadsheet": spreadsheet_name,
-                "sheet": sheet_name,
-                "old_name": column,
-                "new_name": new_name,
-                "changed": False,
-            }
-
-        if new_name in headers:
+        if name in headers:
             return _error(
                 "duplicate_column",
-                "A column with the new name already exists.",
+                "A column with that name already exists.",
                 spreadsheet=spreadsheet_name,
                 sheet=sheet_name,
-                column=column,
-                new_name=new_name,
+                column=name,
                 available_columns=list(headers),
             )
 
-        position = headers[column]
+        # An empty sheet has no rightmost named column yet.
+        # Treat its right edge as position 0, making position 1 the only
+        # valid place for the first header.
+        rightmost = (
+            max(headers.values())
+            if headers
+            else 0
+        )
 
-        # RAW is important for headers. USER_ENTERED would turn values
-        # such as "007", "1-2", or "+Notes" into something else.
+        if position is None:
+            position = rightmost + 1
+
+        if (
+            position < 1
+            or position > rightmost + 1
+        ):
+            return _error(
+                "invalid_position",
+                (
+                    "The requested column position is outside the table."
+                    if headers
+                    else "The first column of an empty sheet must be at position 1."
+                ),
+                spreadsheet=spreadsheet_name,
+                sheet=sheet_name,
+                position=position,
+                first_position=1,
+                last_position=rightmost + 1,
+            )
+
+        spreadsheet_service.insert_columns(
+            spreadsheet_id=spreadsheet_id,
+            sheet_id=properties["sheetId"],
+            start_column=position,
+            count=1,
+        )
+
         spreadsheet_service.update_cells(
             spreadsheet_id=spreadsheet_id,
             updates=[
@@ -350,7 +373,7 @@ def rename_column(
                         first_column=position,
                         last_column=position,
                     ),
-                    "values": [[new_name]],
+                    "values": [[name]],
                 }
             ],
             value_input_option="RAW",
@@ -358,13 +381,17 @@ def rename_column(
 
         return {
             "ok": True,
-            "operation": "rename_column",
+            "operation": "insert_column",
             "spreadsheet": spreadsheet_name,
             "sheet": sheet_name,
-            "old_name": column,
-            "new_name": new_name,
+            "column": name,
             "position": position,
-            "changed": True,
+            "column_letter": column_letter(position),
+            "column_positions_changed": (
+                bool(headers)
+                and position <= rightmost
+            ),
+            "created_first_column": not bool(headers),
         }
 
     except ValueError as failure:

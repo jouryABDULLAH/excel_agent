@@ -27,6 +27,7 @@ from excel_agent.tools.rows import (
 from excel_agent.tools.spreadsheets import (
     find_spreadsheet,
     list_workbooks,
+    resolve_spreadsheet_choice,
     use_spreadsheet,
 )
 from excel_agent.tools.stats import sheet_stats
@@ -38,7 +39,9 @@ from excel_agent.tools.style import (
 TOOLS = [
     list_workbooks,
     find_spreadsheet,
+    resolve_spreadsheet_choice,
     use_spreadsheet,
+
     inspect_sheet,
     find_data,
     sheet_stats,

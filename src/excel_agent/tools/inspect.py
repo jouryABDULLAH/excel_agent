@@ -294,6 +294,7 @@ def inspect_sheet(
         "spreadsheet": spreadsheet_name,
         "sheet": sheet_name,
         "columns": selected_columns,
+        "headers": selected_columns,
         "rows": result_rows,
         "charts": chart_results,
         "rendered": rendered,
