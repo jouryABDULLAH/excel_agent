@@ -227,8 +227,8 @@ def inspect_sheet(
     lines = [
         (
             f"Sheet: {sheet_name} in {spreadsheet_name} "
-            f"({total_rows} rows of data, column names in row "
-            f"{header_row})."
+            f"({total_rows} rows of data, headers in row {header_row}, "
+            f"last data row is {last_row})."
         ),
         "",
         "| row | " + " | ".join(selected_columns) + " |",
@@ -293,15 +293,16 @@ def inspect_sheet(
         "operation": "inspect_sheet",
         "spreadsheet": spreadsheet_name,
         "sheet": sheet_name,
-        "header_row": header_row,
         "columns": selected_columns,
-        "total_rows": total_rows,
-        "first_row": first,
-        "last_row": last,
-        "returned_rows": len(result_rows),
         "rows": result_rows,
-        "has_more": has_more,
-        "next_start_row": next_start_row,
         "charts": chart_results,
         "rendered": rendered,
+        "total_data_rows": total_rows,
+        "header_row": header_row,
+        "first_returned_row": first,
+        "last_returned_row": last,
+        "last_data_row": last_row,
+        "returned_rows": len(result_rows),
+        "has_more": has_more,
+        "next_start_row": next_start_row,
     }

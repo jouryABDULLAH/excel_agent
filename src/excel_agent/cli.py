@@ -10,12 +10,125 @@ from excel_agent import browsing
 from excel_agent.config import MODEL, use_utf8_output
 from excel_agent.runner import Answer, Session, Text, ToolCall, rendered
 from excel_agent.subagents.factory import build_orchestrator
+from excel_agent.runner import (
+    Answer,
+    Artifact,
+    ToolCall,
+)
 
 HELP = """\
 Type what you want done to the sheet, in your own words.
 
   /reset          forget the conversation so far
 """
+
+# show the artifact in the CLI
+def print_artifact(
+    artifact: dict,
+) -> None:
+    operation = artifact.get(
+        "operation"
+    )
+
+    if operation == "inspect_sheet":
+        columns = artifact.get(
+            "columns",
+            [],
+        )
+
+        rows = artifact.get(
+            "rows",
+            [],
+        )
+
+        if not rows:
+            return
+
+        print()
+        print(
+            "| row | "
+            + " | ".join(columns)
+            + " |"
+        )
+
+        print(
+            "|"
+            + "---|"
+            * (len(columns) + 1)
+        )
+
+        for item in rows:
+            values = item.get(
+                "values",
+                {},
+            )
+
+            print(
+                f'| {item["row"]} | '
+                + " | ".join(
+                    str(
+                        values.get(
+                            column,
+                            "",
+                        )
+                    )
+                    for column
+                    in columns
+                )
+                + " |"
+            )
+
+        print()
+
+        return
+
+    if operation == "find_data":
+        matches = artifact.get(
+            "matches",
+            [],
+        )
+
+        if not matches:
+            return
+
+        columns = list(
+            matches[0]
+            .get("values", {})
+        )
+
+        print()
+        print(
+            "| row | matched in | "
+            + " | ".join(columns)
+            + " |"
+        )
+
+        print(
+            "|"
+            + "---|"
+            * (len(columns) + 2)
+        )
+
+        for item in matches:
+            values = item["values"]
+
+            print(
+                f'| {item["row"]} | '
+                f'{item["matched_in"]} | '
+                + " | ".join(
+                    str(
+                        values.get(
+                            column,
+                            "",
+                        )
+                    )
+                    for column
+                    in columns
+                )
+                + " |"
+            )
+
+        print()
 
 
 def run_turn(session, question: str, show_tools: bool) -> None:
@@ -31,6 +144,8 @@ def run_turn(session, question: str, show_tools: bool) -> None:
             print(event.text, end="", flush=True)
         elif isinstance(event, Answer):
             print(event.text)
+        elif isinstance(event, Artifact):
+            print_artifact(event.data)
 
 
 def read_arguments() -> argparse.Namespace:

@@ -9,7 +9,25 @@ from excel_agent.model import RECURSION_LIMIT, build_model
 from excel_agent.subagents.prompts import ORCHESTRATOR_PROMPT
 from excel_agent.subagents.registry import SUBAGENTS, SubagentSpec
 from excel_agent.tools import find_spreadsheet, list_workbooks, use_spreadsheet
+from langchain_core.messages import (
+    HumanMessage,
+    ToolMessage,
+)
 
+def _original_user_request(runtime: ToolRuntime) -> str:
+    """Return the latest real user message from the orchestrator state."""
+    messages = runtime.state.get("messages") or []
+
+    for message in reversed(messages):
+        if isinstance(message, HumanMessage):
+            content = message.content
+
+            if isinstance(content, str):
+                return content
+
+            return str(content)
+
+    return ""
 
 class OrchestratorState(AgentState):
     """State that belongs to the user's spreadsheet session."""
@@ -36,19 +54,27 @@ def as_tool(spec: SubagentSpec, model):
     )
     def delegate(
         instruction: str,
-        runtime: ToolRuntime
+        runtime: ToolRuntime,
+        render_data: bool = False,
     ) -> tuple[str, dict | None]:
         """Delegate a spreadsheet task to this specialized subagent."""
 
         spreadsheet_id = runtime.state.get("spreadsheet_id")
         spreadsheet_name = runtime.state.get("spreadsheet_name")
 
+        original_request = _original_user_request(
+            runtime
+        )
+
         subagent_instruction = (
-            f"Current spreadsheet: "
+            "ORIGINAL USER REQUEST:\n"
+            f"{original_request or '(not available)'}\n\n"
+            "CURRENT SPREADSHEET:\n"
             f"{spreadsheet_name or 'Not selected'}\n"
-            f"Current spreadsheet ID: "
+            "CURRENT SPREADSHEET ID:\n"
             f"{spreadsheet_id or 'Not selected'}\n\n"
-            f"Task:\n{instruction}"
+            "TASK:\n"
+            f"{instruction}"
         )
 
         result = agent.invoke(
@@ -72,12 +98,19 @@ def as_tool(spec: SubagentSpec, model):
         if not spec.return_tool_results:
             return response, None
 
-        tool_results = [
-            message.content
-            for message in messages
-            if isinstance(message, ToolMessage)
-            and message.content
-        ]
+        tool_results = []
+        tool_artifacts = []
+
+        for message in messages:
+            if not isinstance(message, ToolMessage):
+                continue
+
+            if message.content:
+                tool_results.append(message.content)
+
+            if message.artifact is not None:
+                tool_artifacts.append(message.artifact)
+
 
         return (
             response,
@@ -85,9 +118,11 @@ def as_tool(spec: SubagentSpec, model):
                 "subagent": spec.name,
                 "response": response,
                 "tool_results": tool_results,
+                "tool_artifacts": tool_artifacts,
+                "render_data": render_data,
             },
         )
-
+    
     return delegate
 
 def build_orchestrator():
