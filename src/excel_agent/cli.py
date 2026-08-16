@@ -6,24 +6,129 @@ answer, and repeats.
 
 import argparse
 
-from excel_agent.subagents.factory import VARIANTS, agent_name, build
-from excel_agent import config
-from excel_agent.config import MODEL, resolve_workbook, use_utf8_output
-from excel_agent.tools.inspect import inspect_sheet
+from excel_agent import browsing
+from excel_agent.config import MODEL, use_utf8_output
 from excel_agent.runner import Answer, Session, Text, ToolCall, rendered
-from excel_agent.tools.workbooks import list_workbooks
+from excel_agent.subagents.factory import build_orchestrator
+from excel_agent.runner import (
+    Answer,
+    Artifact,
+    ToolCall,
+)
 
 HELP = """\
 Type what you want done to the sheet, in your own words.
 
-  /use [file]     work on another workbook, or list the ones there are
-  /sheet [name]   show a sheet without asking the model, the one the file
-                  opens on unless you name another
-  /tools          show or hide the tool calls behind each answer
   /reset          forget the conversation so far
-  /help           show this
-  /quit           leave
 """
+
+# show the artifact in the CLI
+def print_artifact(
+    artifact: dict,
+) -> None:
+    operation = artifact.get(
+        "operation"
+    )
+
+    if operation == "inspect_sheet":
+        columns = artifact.get(
+            "columns",
+            [],
+        )
+
+        rows = artifact.get(
+            "rows",
+            [],
+        )
+
+        if not rows:
+            return
+
+        print()
+        print(
+            "| row | "
+            + " | ".join(columns)
+            + " |"
+        )
+
+        print(
+            "|"
+            + "---|"
+            * (len(columns) + 1)
+        )
+
+        for item in rows:
+            values = item.get(
+                "values",
+                {},
+            )
+
+            print(
+                f'| {item["row"]} | '
+                + " | ".join(
+                    str(
+                        values.get(
+                            column,
+                            "",
+                        )
+                    )
+                    for column
+                    in columns
+                )
+                + " |"
+            )
+
+        print()
+
+        return
+
+    if operation == "find_data":
+        matches = artifact.get(
+            "matches",
+            [],
+        )
+
+        if not matches:
+            return
+
+        columns = list(
+            matches[0]
+            .get("values", {})
+        )
+
+        print()
+        print(
+            "| row | matched in | "
+            + " | ".join(columns)
+            + " |"
+        )
+
+        print(
+            "|"
+            + "---|"
+            * (len(columns) + 2)
+        )
+
+        for item in matches:
+            values = item["values"]
+
+            print(
+                f'| {item["row"]} | '
+                f'{item["matched_in"]} | '
+                + " | ".join(
+                    str(
+                        values.get(
+                            column,
+                            "",
+                        )
+                    )
+                    for column
+                    in columns
+                )
+                + " |"
+            )
+
+        print()
 
 
 def run_turn(session, question: str, show_tools: bool) -> None:
@@ -39,6 +144,8 @@ def run_turn(session, question: str, show_tools: bool) -> None:
             print(event.text, end="", flush=True)
         elif isinstance(event, Answer):
             print(event.text)
+        elif isinstance(event, Artifact):
+            print_artifact(event.data)
 
 
 def read_arguments() -> argparse.Namespace:
@@ -46,15 +153,6 @@ def read_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="excel-agent",
         description="Change an Excel sheet by saying what you want in your own words.",
-    )
-    parser.add_argument(
-        "--agents",
-        choices=VARIANTS,
-        default="single",
-        help=(
-            "single asks one agent holding every tool; multi asks an "
-            "orchestrator that hands the work to subagents"
-        ),
     )
     parser.add_argument(
         "--debug",
@@ -74,21 +172,16 @@ def main() -> None:
     debug = arguments.debug
 
     try:
-        agent = build(arguments.agents)
+        agent = build_orchestrator()
     except RuntimeError as e:
-        # A missing API key explains itself, so the message is enough. Under
-        # --debug the traceback is the point, so it is let through.
         if debug:
             raise
         print(e)
         return
 
-    print(
-        f"Working on {config.WORKBOOK_PATH.name} with {MODEL}, "
-        f"{arguments.agents} agent. /help for commands."
-    )
+    print(f"Working on {browsing.where()} with {MODEL}.")
 
-    session = Session(agent, name=agent_name(arguments.agents))
+    session = Session(agent)
     show_tools = True
 
     while True:
@@ -99,42 +192,6 @@ def main() -> None:
             return
 
         if not question:
-            continue
-
-        if question in ("/quit", "/exit"):
-            return
-
-        if question == "/help":
-            print(HELP)
-            continue
-
-        if question == "/sheet" or question.startswith("/sheet "):
-            # A name after the command picks a sheet; a wrong one is answered
-            # with the sheets the workbook does have.
-            wanted = question[len("/sheet"):].strip()
-            print(
-                inspect_sheet.invoke(
-                    {"workbook": config.WORKBOOK_PATH.name, "sheet": wanted or None}
-                )
-            )
-            continue
-
-        if question == "/use" or question.startswith("/use "):
-            wanted = question[len("/use"):].strip()
-            if not wanted:
-                print(list_workbooks.invoke({}))
-                continue
-            try:
-                config.WORKBOOK_PATH = resolve_workbook(wanted)
-            except ValueError as explanation:
-                print(explanation)
-                continue
-            print(f"Now working on {config.WORKBOOK_PATH.name}.")
-            continue
-
-        if question == "/tools":
-            show_tools = not show_tools
-            print(f"Tool calls are now {'shown' if show_tools else 'hidden'}.")
             continue
 
         if question == "/reset":

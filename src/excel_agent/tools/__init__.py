@@ -1,42 +1,67 @@
-"""The tools the agent is allowed to use."""
+"""The tools the agent is allowed to use on Google spreadsheets."""
 
-from excel_agent.config import BACKEND
-from excel_agent.tools.charts import modify_chart
-from excel_agent.tools.columns import modify_column
-from excel_agent.tools.modify import modify_row
+from excel_agent.tools.charts import (
+    create_chart,
+    delete_chart,
+    update_chart,
+)
+
+from excel_agent.tools.columns import (
+    delete_column,
+    insert_column,
+    move_column,
+    rename_column,
+    set_column_formula,
+)
+from excel_agent.tools.find import find_data
 from excel_agent.tools.inspect import inspect_sheet
-from excel_agent.tools.stats import sheet_stats
-from excel_agent.tools.workbooks import list_workbooks
 
-# The workbooks in the data folder, through openpyxl.
-LOCAL_TOOLS = [
+from excel_agent.tools.rows import (
+    append_row,
+    delete_row,
+    insert_row,
+    move_row,
+    update_row,
+)
+
+from excel_agent.tools.spreadsheets import (
+    find_spreadsheet,
     list_workbooks,
+    resolve_spreadsheet_choice,
+    use_spreadsheet,
+)
+from excel_agent.tools.stats import sheet_stats
+
+from excel_agent.tools.style import (
+    copy_format,
+    format_range,
+)
+TOOLS = [
+    list_workbooks,
+    find_spreadsheet,
+    resolve_spreadsheet_choice,
+    use_spreadsheet,
+
     inspect_sheet,
+    find_data,
     sheet_stats,
-    modify_row,
-    modify_column,
-    modify_chart,
+    
+    append_row,
+    delete_row,
+    insert_row,
+    move_row,
+    update_row,
+
+    insert_column,
+    rename_column,
+    delete_column,
+    move_column,
+    set_column_formula,
+
+    create_chart,
+    update_chart,
+    delete_chart,
+
+    format_range,
+    copy_format,
 ]
-
-
-def select_tools(backend: str) -> list:
-    """The tools for one backend.
-
-    The Google set is imported only when it is asked for, so working on a
-    local workbook needs no credentials, no token and no network.
-
-    Raises ValueError, naming both backends, when asked for neither.
-    """
-    if backend == "local":
-        return LOCAL_TOOLS
-    if backend == "sheets":
-        from excel_agent.tools.sheets import SHEETS_TOOLS
-
-        return SHEETS_TOOLS
-
-    raise ValueError(f'EXCEL_AGENT_BACKEND is "{backend}". Use "local" or "sheets".')
-
-
-# What the agent is handed. Which set that is comes from config, so nothing
-# downstream has to know there is more than one.
-TOOLS = select_tools(BACKEND)

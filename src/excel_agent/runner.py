@@ -1,110 +1,529 @@
-"""One turn, told as plain events.
+"""Expose one agent turn as simple application-level events.
 
-This is the line between the agent and whatever is talking to the user. 
-A caller gets dataclasses holding strings and dicts,
-and can print them, send them as JSON, or draw them, without knowing what a
-message or a checkpointer is.
-
-The conversation itself is not carried by the caller. A Session holds the name
-of a thread, and the agent keeps everything said under it.
+The runner is the boundary between LangChain/LangGraph and clients such as
+the CLI and Streamlit. Clients do not need to understand AIMessage,
+ToolMessage, graph state, or checkpoints.
 """
 
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from typing import Any
 
-from langchain_core.messages import AIMessage
-from langgraph.errors import GraphRecursionError
+from langchain_core.messages import (
+    AIMessage,
+    ToolMessage,
+)
+from langgraph.errors import (
+    GraphRecursionError,
+)
 
-from excel_agent.agent import GAVE_UP, RECURSION_LIMIT, new_thread
+from excel_agent.model import (
+    GAVE_UP,
+    RECURSION_LIMIT,
+    new_thread,
+)
 
 
 @dataclass
 class ToolCall:
-    """A tool the model asked for, and what it asked with."""
+    """A tool call that happened during the turn."""
 
     name: str
-    arguments: dict = field(default_factory=dict)
+    arguments: dict = field(
+        default_factory=dict
+    )
 
 
 @dataclass
 class Text:
-    """A piece of the model's answer as it is being written.
-
-    Only sent when a Session is asked for it. The pieces spell out the same
-    words the Answer holds at the end, so show one or the other: printing both
-    says everything twice.
-    """
+    """One streamed piece of model text."""
 
     text: str
 
 
 @dataclass
+class Artifact:
+    """Structured data intended for deterministic rendering."""
+
+    data: dict
+
+
+@dataclass
 class Answer:
-    """The finished answer, at the end of the turn."""
+    """The final user-facing natural-language answer."""
 
     text: str
 
 
+def _render_artifacts(
+    artifact: object,
+) -> list[dict]:
+    """Return inner artifacts only when their subagent marked them for display."""
+    if not isinstance(
+        artifact,
+        dict,
+    ):
+        return []
+
+    if not artifact.get(
+        "render_data"
+    ):
+        return []
+
+    tool_artifacts = artifact.get(
+        "tool_artifacts"
+    )
+
+    if not isinstance(
+        tool_artifacts,
+        list,
+    ):
+        return []
+
+    return [
+        item
+        for item in tool_artifacts
+        if isinstance(
+            item,
+            dict,
+        )
+    ]
+
+
+def _nested_tool_calls(
+    artifact: object,
+) -> list[dict]:
+    """Return tool calls made inside a delegated subagent."""
+    if not isinstance(
+        artifact,
+        dict,
+    ):
+        return []
+
+    calls = artifact.get(
+        "tool_calls"
+    )
+
+    if not isinstance(
+        calls,
+        list,
+    ):
+        return []
+
+    return [
+        call
+        for call in calls
+        if (
+            isinstance(call, dict)
+            and isinstance(
+                call.get("name"),
+                str,
+            )
+        )
+    ]
+
+
+def _merge_inspect_artifacts(
+    artifacts: list[dict],
+) -> list[dict]:
+    """Merge continuous inspect_sheet pages from the same logical read."""
+    result: list[dict] = []
+
+    for artifact in artifacts:
+        if (
+            artifact.get("operation")
+            != "inspect_sheet"
+        ):
+            result.append(
+                artifact
+            )
+            continue
+
+        current = {
+            **artifact,
+            "rows": list(
+                artifact.get("rows")
+                or []
+            ),
+        }
+
+        if not result:
+            result.append(
+                current
+            )
+            continue
+
+        previous = result[-1]
+
+        if (
+            previous.get("operation")
+            != "inspect_sheet"
+        ):
+            result.append(
+                current
+            )
+            continue
+
+        previous_last = (
+            previous.get(
+                "last_returned_row"
+            )
+        )
+
+        current_first = (
+            artifact.get(
+                "first_returned_row"
+            )
+        )
+
+        continuous = (
+            isinstance(
+                previous_last,
+                int,
+            )
+            and isinstance(
+                current_first,
+                int,
+            )
+            and current_first
+            == previous_last + 1
+        )
+
+        same_read = (
+            previous.get(
+                "spreadsheet"
+            )
+            == artifact.get(
+                "spreadsheet"
+            )
+            and previous.get(
+                "sheet"
+            )
+            == artifact.get(
+                "sheet"
+            )
+            and previous.get(
+                "columns"
+            )
+            == artifact.get(
+                "columns"
+            )
+            and continuous
+        )
+
+        if not same_read:
+            result.append(
+                current
+            )
+            continue
+
+        previous_rows = (
+            previous.setdefault(
+                "rows",
+                [],
+            )
+        )
+
+        previous_rows.extend(
+            artifact.get("rows")
+            or []
+        )
+
+        previous[
+            "last_returned_row"
+        ] = artifact.get(
+            "last_returned_row"
+        )
+
+        previous[
+            "returned_rows"
+        ] = len(
+            previous_rows
+        )
+
+        previous[
+            "has_more"
+        ] = artifact.get(
+            "has_more",
+            False,
+        )
+
+        previous[
+            "next_start_row"
+        ] = artifact.get(
+            "next_start_row"
+        )
+
+        previous[
+            "last_data_row"
+        ] = artifact.get(
+            "last_data_row",
+            previous.get(
+                "last_data_row"
+            ),
+        )
+
+        previous[
+            "total_data_rows"
+        ] = artifact.get(
+            "total_data_rows",
+            previous.get(
+                "total_data_rows"
+            ),
+        )
+
+        previous[
+            "charts"
+        ] = artifact.get(
+            "charts",
+            previous.get(
+                "charts",
+                [],
+            ),
+        )
+
+    return result
+
+
 class Session:
-    """One conversation with the agent.
+    """One persisted conversation with the orchestrator."""
 
-    Ask it a question and it gives back the events of that turn, in the order
-    they happened: the tools the model reached for, and the answer it settled
-    on. 
-    """
-
-    def __init__(self, agent, stream_text: bool = False, name: str = "agent"):
+    def __init__(
+        self,
+        agent,
+        stream_text: bool = False,
+        name: str = "orchestrator",
+    ):
         self.agent = agent
-        self.stream_text = stream_text
-        self.thread_id = new_thread()
-        # What the agent answering is called in a trace. Only tracing reads
-        # it, and factory.agent_name() is where the names come from.
+        self.stream_text = (
+            stream_text
+        )
+        self.thread_id = (
+            new_thread()
+        )
         self.name = name
 
     def reset(self) -> None:
-        """Forget the conversation by starting another one.
+        """Start another conversation thread."""
+        self.thread_id = (
+            new_thread()
+        )
 
-        The old thread is left where it is and never read again.
-        """
-        self.thread_id = new_thread()
-
-    def ask(self, question: str) -> Iterator[ToolCall | Text | Answer]:
-        """Put one question, and give back what happened as it happens."""
+    def ask(
+        self,
+        question: str,
+    ) -> Iterator[
+        ToolCall
+        | Text
+        | Artifact
+        | Answer
+    ]:
+        """Run one turn and emit application-level events."""
         config = {
-            "configurable": {"thread_id": self.thread_id},
-            "recursion_limit": RECURSION_LIMIT,
-            "run_name": self.name,
+            "configurable": {
+                "thread_id": (
+                    self.thread_id
+                ),
+            },
+            "recursion_limit": (
+                RECURSION_LIMIT
+            ),
+            "run_name": (
+                self.name
+            ),
         }
 
-        spoken = ""
+        final_answer = ""
+        artifacts: list[dict] = []
+
+        # The same outer ToolMessage may appear in more than one
+        # graph update, so use its tool-call id to avoid showing
+        # nested actions twice.
+        seen_tool_messages: set[str] = (
+            set()
+        )
+
         try:
-            for mode, payload in self.agent.stream(
-                {"messages": [{"role": "user", "content": question}]},
-                config=config,
-                stream_mode=["updates", "messages"],
+            for mode, payload in (
+                self.agent.stream(
+                    {
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": (
+                                    question
+                                ),
+                            }
+                        ]
+                    },
+                    config=config,
+                    stream_mode=[
+                        "updates",
+                        "messages",
+                    ],
+                )
             ):
                 if mode == "messages":
                     token, _ = payload
-                    if self.stream_text and token.content:
-                        yield Text(str(token.content))
+
+                    if (
+                        self.stream_text
+                        and token.content
+                    ):
+                        yield Text(
+                            str(
+                                token.content
+                            )
+                        )
+
                     continue
 
-                for update in payload.values():
-                    if not isinstance(update, dict):
+                for update in (
+                    payload.values()
+                ):
+                    if not isinstance(
+                        update,
+                        dict,
+                    ):
                         continue
-                    for message in update.get("messages") or []:
-                        for call in getattr(message, "tool_calls", None) or []:
-                            yield ToolCall(call["name"], dict(call["args"]))
-                        if isinstance(message, AIMessage) and message.content:
-                            spoken = str(message.content)
+
+                    messages = (
+                        update.get(
+                            "messages"
+                        )
+                        or []
+                    )
+
+                    for message in messages:
+                        # Outer orchestrator tool calls.
+                        for call in (
+                            getattr(
+                                message,
+                                "tool_calls",
+                                None,
+                            )
+                            or []
+                        ):
+                            yield ToolCall(
+                                name=call[
+                                    "name"
+                                ],
+                                arguments=dict(
+                                    call.get(
+                                        "args"
+                                    )
+                                    or {}
+                                ),
+                            )
+
+                        # Keep model text separate from tool output.
+                        if (
+                            isinstance(
+                                message,
+                                AIMessage,
+                            )
+                            and message.content
+                        ):
+                            final_answer = (
+                                str(
+                                    message.content
+                                )
+                            )
+
+                        if not isinstance(
+                            message,
+                            ToolMessage,
+                        ):
+                            continue
+
+                        outer_artifact = (
+                            message.artifact
+                        )
+
+                        if outer_artifact is None:
+                            continue
+
+                        tool_message_id = str(
+                            getattr(
+                                message,
+                                "tool_call_id",
+                                "",
+                            )
+                        )
+
+                        # Nested actions are attached to the outer
+                        # delegate ToolMessage. Do not emit them more
+                        # than once if LangGraph surfaces that message
+                        # again in another update.
+                        if (
+                            tool_message_id
+                            not in
+                            seen_tool_messages
+                        ):
+                            for call in (
+                                _nested_tool_calls(
+                                    outer_artifact
+                                )
+                            ):
+                                yield ToolCall(
+                                    name=call[
+                                        "name"
+                                    ],
+                                    arguments=dict(
+                                        call.get(
+                                            "arguments"
+                                        )
+                                        or {}
+                                    ),
+                                )
+
+                            seen_tool_messages.add(
+                                tool_message_id
+                            )
+
+                        for artifact in (
+                            _render_artifacts(
+                                outer_artifact
+                            )
+                        ):
+                            artifacts.append(
+                                artifact
+                            )
+
         except GraphRecursionError:
-            yield Answer(GAVE_UP)
+            yield Answer(
+                GAVE_UP
+            )
             return
 
-        yield Answer(spoken)
+        artifacts = (
+            _merge_inspect_artifacts(
+                artifacts
+            )
+        )
+
+        if final_answer:
+            yield Answer(
+                final_answer
+            )
+
+        for artifact in artifacts:
+            yield Artifact(
+                artifact
+            )
 
 
-def rendered(call: ToolCall) -> str:
-    """A tool call written out the way a person reads it."""
-    arguments = ", ".join(f"{name}={value!r}" for name, value in call.arguments.items())
-    return f"{call.name}({arguments})"
+def rendered(
+    call: ToolCall,
+) -> str:
+    """Render a tool call for CLI/UI debug displays."""
+    arguments = ", ".join(
+        f"{name}={value!r}"
+        for name, value
+        in call.arguments.items()
+    )
+
+    return (
+        f"{call.name}"
+        f"({arguments})"
+    )

@@ -1,27 +1,25 @@
-"""Tests for the multi agent variant.
+"""Tests for the orchestrator and its subagents.
 
 The model is a script here, so nothing below tests whether an orchestrator
-routes sensibly: that is what the comparison run is for. What is tested is the
-wiring, which is what would make a comparison meaningless if it were wrong.
+routes sensibly: that is what a run by hand is for. What is tested is the
+wiring, which is what would make such a run meaningless if it were wrong.
 """
 
-import make_fixtures
-import pytest
 from langchain.agents import create_agent
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
-from openpyxl import load_workbook
 from scripted import ScriptedModel, calling
 
-from excel_agent.prompts import CANNOT_DO, SYSTEM_PROMPT
+from excel_agent.prompts import CANNOT_DO
 from excel_agent.runner import Answer, Session, ToolCall
-from excel_agent.subagents import SUBAGENTS, build
-from excel_agent.subagents.factory import as_tool
+from excel_agent.subagents import SUBAGENTS
+from excel_agent.subagents.factory import OrchestratorState, as_tool
 from excel_agent.subagents.prompts import ORCHESTRATOR_PROMPT
-from excel_agent.tools import LOCAL_TOOLS
+from excel_agent.tools import TOOLS
 
-# list_workbooks is the orchestrator's own, so no subagent holds it.
-ORCHESTRATOR_ONLY = {"list_workbooks"}
+# Choosing which spreadsheet to work on is the orchestrator's own question, so
+# no subagent holds any of these.
+ORCHESTRATOR_ONLY = {"list_workbooks", "find_spreadsheet", "use_spreadsheet"}
 
 
 # Who holds what
@@ -29,24 +27,24 @@ ORCHESTRATOR_ONLY = {"list_workbooks"}
 
 def test_every_tool_reaches_some_subagent():
     covered = {tool.name for spec in SUBAGENTS for tool in spec.tools}
-    everything = {tool.name for tool in LOCAL_TOOLS} - ORCHESTRATOR_ONLY
+    everything = {tool.name for tool in TOOLS} - ORCHESTRATOR_ONLY
 
-    # A tool added to LOCAL_TOOLS and forgotten here would leave the multi agent
-    # variant quietly unable to do something the single agent can, and the
-    # comparison would read it as a routing failure.
+    # A tool added to TOOLS and forgotten here can never be called at all: the
+    # orchestrator does not hold it, and neither does anyone it can delegate to.
     assert everything <= covered
 
 
 def test_no_subagent_holds_a_tool_that_is_not_offered():
     covered = {tool.name for spec in SUBAGENTS for tool in spec.tools}
 
-    assert covered <= {tool.name for tool in LOCAL_TOOLS}
+    assert covered <= {tool.name for tool in TOOLS}
 
 
 def test_reading_comes_with_every_subagent_that_writes():
     for spec in SUBAGENTS:
         names = {tool.name for tool in spec.tools}
-        if names & {"modify_row", "modify_column", "modify_chart"}:
+        if names & {"update_row", "insert_row", "append_row", "delete_row",
+                    "move_row", "modify_column", "modify_chart"}:
             # A row number handed from one agent to another is stale before it
             # arrives, so whoever writes has to be able to look first.
             assert "inspect_sheet" in names, spec.name
@@ -56,14 +54,13 @@ def test_each_subagent_is_described_and_told_what_it_cannot_do():
     for spec in SUBAGENTS:
         assert spec.description.strip()
         assert isinstance(spec.tools, tuple)
-        # The refusals are shared so a subagent cannot claim it can do
-        # something the single agent refuses.
+        # The refusals are shared, so a subagent cannot claim it can do
+        # something the orchestrator would refuse.
         assert CANNOT_DO in spec.system_prompt
 
 
 def test_the_orchestrator_is_told_the_same_refusals():
     assert CANNOT_DO in ORCHESTRATOR_PROMPT
-    assert CANNOT_DO in SYSTEM_PROMPT
 
 
 def test_the_names_are_the_ones_the_orchestrator_will_call():
@@ -86,42 +83,112 @@ def test_a_subagent_becomes_a_tool_taking_an_instruction():
     assert wrapped.description == SUBAGENTS[0].description
 
 
-def test_a_subagent_does_the_work_and_says_which_tools_it_used(tmp_path, use_workbook):
-    path = use_workbook(make_fixtures.clean_table(tmp_path))
+class RecordingModel(ScriptedModel):
+    """A scripted model that keeps what it was asked.
+
+    A subagent is invoked inside the tool that wraps it, so the instruction it
+    was handed is not visible from outside. This is how a test reads it.
+    """
+
+    seen: list[str] = []
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        self.seen.append(str(messages[-1].content))
+        return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
+
+
+def delegating_to(spec, model, state=None):
+    """An orchestrator holding one subagent, and the state it starts with.
+
+    The wrapped subagent asks for a ToolRuntime, which only whoever calls the
+    tool can supply, so a test drives it the way it really runs: through an
+    agent, which injects the runtime and hides it from the model.
+    """
+    orchestrator = create_agent(
+        ScriptedModel(
+            script=[
+                calling(spec.name, "1", instruction="do the thing"),
+                AIMessage("Done."),
+            ]
+        ),
+        [as_tool(spec, model)],
+        system_prompt=ORCHESTRATOR_PROMPT,
+        state_schema=OrchestratorState,
+        checkpointer=InMemorySaver(),
+    )
+    return orchestrator.invoke(
+        {"messages": [{"role": "user", "content": "do the thing"}], **(state or {})},
+        config={"configurable": {"thread_id": "one"}},
+    )
+
+
+def test_a_subagent_does_the_work_and_hands_back_what_it_said(a_spreadsheet):
+    sent = a_spreadsheet()
     row_editor = next(spec for spec in SUBAGENTS if spec.name == "row_editor")
-    wrapped = as_tool(
+
+    said = delegating_to(
         row_editor,
         ScriptedModel(
             script=[
-                calling("modify_row", "1", action="edit", row=2, values={"Units": 99}),
+                calling("update_row", "1", row=2, values={"Units": 99}),
                 AIMessage("Set row 2 to 99."),
             ]
         ),
     )
 
-    answer = wrapped.invoke({"instruction": "set row 2 units to 99"})
+    # The write went out, and what the subagent said came back to the
+    # orchestrator as the result of the tool call that handed it the work.
+    #
+    # update_row reaches Google through spreadsheet_service rather than through
+    # a name imported from sheets.py, so this is also what proves the fixture
+    # covers that second path: without it there is no write to see here.
+    assert sent
+    assert sent[0]["call"] == "update_cells"
+    assert any(
+        isinstance(message, ToolMessage) and "Set row 2 to 99." in str(message.content)
+        for message in said["messages"]
+    )
 
-    assert "Set row 2 to 99." in answer
-    # What the tool returned travels with the answer, so the orchestrator has
-    # the evidence rather than a summary it would have to take on trust.
-    assert "What the tools returned:" in answer
-    assert "Updated row 2" in answer
-    assert load_workbook(path).active["D2"].value == 99
+
+# What the subagent is told about the spreadsheet
 
 
-# Choosing a variant
+def test_a_subagent_is_told_which_spreadsheet_is_in_hand(a_spreadsheet):
+    a_spreadsheet()
+    analyst = next(spec for spec in SUBAGENTS if spec.name == "analyst")
+    inside = RecordingModel(script=[AIMessage("read it")], seen=[])
+
+    delegating_to(
+        analyst,
+        inside,
+        state={"spreadsheet_id": "abc123", "spreadsheet_name": "TEST - Sales Orders"},
+    )
+
+    # A subagent holds no tool for choosing a spreadsheet, so what it is
+    # working on has to arrive with the instruction.
+    assert "TEST - Sales Orders" in inside.seen[0]
+    assert "abc123" in inside.seen[0]
+    assert "do the thing" in inside.seen[0]
 
 
-def test_a_name_that_is_neither_variant_is_refused():
-    with pytest.raises(ValueError, match="single, multi"):
-        build("both")
+def test_a_subagent_is_told_when_nothing_has_been_chosen(a_spreadsheet):
+    a_spreadsheet()
+    analyst = next(spec for spec in SUBAGENTS if spec.name == "analyst")
+    inside = RecordingModel(script=[AIMessage("read it")], seen=[])
+
+    delegating_to(analyst, inside)
+
+    # Nothing writes these two yet: use_spreadsheet settles config.SPREADSHEET
+    # and returns a sentence, so the state stays empty and every instruction
+    # says so. The tools still fall back to the file being worked on.
+    assert "Not selected" in inside.seen[0]
 
 
 # The orchestrator through the runner
 
 
-def test_the_orchestrator_answers_through_the_same_events(tmp_path, use_workbook):
-    use_workbook(make_fixtures.clean_table(tmp_path))
+def test_the_orchestrator_answers_through_the_same_events(a_spreadsheet):
+    a_spreadsheet()
     analyst = next(spec for spec in SUBAGENTS if spec.name == "analyst")
     # A script each, so the test does not depend on the order the two of them
     # happen to reach for the model.
@@ -141,25 +208,13 @@ def test_the_orchestrator_answers_through_the_same_events(tmp_path, use_workbook
         outside,
         [as_tool(analyst, inside)],
         system_prompt=ORCHESTRATOR_PROMPT,
+        state_schema=OrchestratorState,
         checkpointer=InMemorySaver(),
     )
 
     events = list(Session(orchestrator).ask("how many rows?"))
 
-    # The events look the same as the single agent's. What changed is that the
-    # tool call names a subagent rather than a spreadsheet tool.
+    # Delegating changes nothing about what crosses the runner: a tool call
+    # naming a subagent, then the answer, the same as any other turn.
     assert events[0] == ToolCall("analyst", {"instruction": "how many rows?"})
     assert events[-1] == Answer("There are five rows.")
-
-
-def test_the_orchestrator_gets_the_file_tool_of_the_backend_in_use():
-    from excel_agent.config import BACKEND
-    from excel_agent.tools import select_tools
-
-    offered = {tool.name: tool for tool in select_tools(BACKEND)}
-
-    # Both backends have a tool called list_workbooks. Importing one of them
-    # by name gave the orchestrator the local one while every subagent under
-    # it talked to Drive, so it has to be picked out of the set in use.
-    assert "list_workbooks" in offered
-    assert offered["list_workbooks"] in select_tools(BACKEND)

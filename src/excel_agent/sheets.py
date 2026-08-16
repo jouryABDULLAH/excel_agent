@@ -1,25 +1,31 @@
-"""How to deal with the Google Sheets and Drive APIs.
+"""
+Google API clients.
+How to deal with the Google Sheets and Drive APIs.
 
-Rules the tools do not have to repeat: building a service, turning a name into
-an id, reading a sheet into cells, and turning rows and columns counting from
-one into the ranges Google wants. A tool that worked any of this out for
-itself would be one more place to get it wrong.
-
-Everything here raises ValueError with a message worth showing the model, or
-HttpError for the caller to pass through readable().
 """
 
 import random
 import time
-from dataclasses import dataclass
 from typing import Any
 
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
+# from googleapiclient.discovery import build
+# from googleapiclient.errors import HttpError
 
 from excel_agent import config
-from excel_agent.auth import get_credentials
-from excel_agent.scopes import SCOPES
+from excel_agent.services.google import google_api, readable
+from excel_agent.services.drive import DriveService
+# Taken from the service rather than declared here as well. A second class of
+# the same name and the same fields is still a different class: read_sheet
+# returns the service's Cell, and a helper annotated with a local one does not
+# accept it, which is a type error on every tool that reads a sheet and then
+# measures it. GRID_FIELDS is here for the same reason: one list of the fields
+# a Cell is built from.
+from excel_agent.services.spreadsheet import Cell, EMPTY, GRID_FIELDS
+# from excel_agent.auth import get_credentials
+# from excel_agent.scopes import SCOPES
+
+
+_drive = DriveService()
 
 # Worth trying again: too many requests, and the five hundreds that mean
 # Google rather than the request. A 400 would be just as wrong the second time.
@@ -29,75 +35,22 @@ MAX_BACKOFF = 32.0
 
 SPREADSHEET_MIME = "application/vnd.google-apps.spreadsheet"
 
-# What a cell is worth reading for: what it shows, what was typed into it, what
-# it works out to, and whether the sheet is formatting it as a date. Asked for
-# by name because the whole of a spreadsheet is far more than any tool here
-# needs, and one call for all three beats three calls for one each.
-GRID_FIELDS = (
-    "sheets(properties(sheetId,title,gridProperties(rowCount,columnCount)),"
-    "data(rowData(values(formattedValue,userEnteredValue,effectiveValue,"
-    "effectiveFormat(numberFormat(type))))))"
-)
-
-# The number formats that mean a cell holds a date rather than a number. Both
-# arrive as a count of days, so without this a column of dates would be
-# summarised as arithmetic on five figure numbers.
-DATE_FORMATS = ("DATE", "DATE_TIME")
-
-
-@dataclass(frozen=True)
-class Cell:
-    """One cell, in the three ways a tool might need to read it.
-
-    displayed is what a person looking at the sheet sees, formula is what was
-    typed in if that was a formula, and value is what it works out to, as a
-    number or a string rather than as text. A tool showing the sheet wants the
-    first; a tool adding a column up wants the last.
-    """
-
-    displayed: str | None = None
-    formula: str | None = None
-    value: object = None
-    number_format: str | None = None
-
-    @property
-    def is_date(self) -> bool:
-        """Whether the sheet is treating this cell as a date."""
-        return self.number_format in DATE_FORMATS
-
-
-EMPTY = Cell()
 
 # Looked up once and kept, because none of it changes while the agent runs and
 # all of it costs a round trip.
-_services: dict[str, Any] = {}
-_spreadsheet_ids: dict[str, str] = {}
+# _services: dict[str, Any] = {}
+# _spreadsheet_ids: dict[str, str] = {}
 _sheets_in: dict[str, dict[str, dict]] = {}
 
 
-def service(api: str, version: str) -> Any:
-    """One built service per API, kept for the life of the process.
-
-    Building one is not free, and a tool that built its own would pay for it
-    on every call. Discovery documents ship inside the client library now, so
-    this does not reach the network.
-    """
-    if api not in _services:
-        _services[api] = build(
-            api, version, credentials=get_credentials(SCOPES), cache_discovery=False
-        )
-
-    return _services[api]
-
-
 def sheets():
-    """The Sheets service, for reading and writing a spreadsheet."""
-    return service("sheets", "v4")
+    """Return the shared Google Sheets API client."""
+    return google_api.sheets
 
 
 def drive():
-    """The Drive service, for finding a spreadsheet by name."""
-    return service("drive", "v3")
+    """Return the shared Google Drive API client."""
+    return google_api.drive
 
 
 def forget(spreadsheet_id: str) -> None:
@@ -111,93 +64,46 @@ def forget(spreadsheet_id: str) -> None:
     _sheets_in.pop(spreadsheet_id, None)
 
 
-def readable(failure: HttpError) -> str:
-    """Turn an HttpError into a sentence worth showing the model.
-
-    A tool returns prose that the model reads and acts on, so a traceback is
-    no use to it. The four below are the ones a wrong argument or a missing
-    scope actually produces.
-    """
-    status = getattr(failure.resp, "status", None)
-    detail = getattr(failure, "reason", None) or str(failure)
-
-    if status == 401:
-        return (
-            "Google would not accept the saved sign in. Delete token.json and "
-            "run the agent again to sign in afresh."
-        )
-    if status == 403:
-        # Not always about permission: Drive also answers 403 for a query it
-        # will not run, so what Google said matters more than any guess made
-        # here about why.
-        return f"Google refused the request: {detail}"
-    if status == 404:
-        return "That spreadsheet does not exist, or the signed in account cannot see it."
-    if status == 400:
-        return f"Google rejected the request as malformed: {detail}."
-
-    return f"Google returned an error: {detail}."
-
-
 def with_retries(call):
-    """Send a prepared request, waiting and trying again when told to slow down.
+    """Execute a Google API request using the shared Google API client."""
+    return google_api.execute(call)
 
-    Only the statuses in RETRY_ON are worth repeating: a 400 means the request
-    itself is wrong and would be just as wrong the second time. The wait grows
-    with a little randomness in it, so several agents running at once do not
-    come back in step with each other.
-    """
-    for attempt in range(MAX_ATTEMPTS):
-        try:
-            return call.execute()
-        except HttpError as failure:
-            status = getattr(failure.resp, "status", None)
-            if status not in RETRY_ON or attempt == MAX_ATTEMPTS - 1:
-                raise
-
-            waiting = min(2**attempt + random.random(), MAX_BACKOFF)
-            time.sleep(waiting)
-
-    raise RuntimeError("unreachable: the loop above either returns or raises")
-
-
-def batch(spreadsheet_id: str, requests: list[dict]) -> dict:
-    """Send one or more changes as a single batchUpdate.
-
-    One call rather than several means the changes land together, and means
-    one request against the quota instead of one each. Every caller here goes
-    through this, so nothing writes without the retries above.
-
-    What is remembered about the spreadsheet is dropped afterwards, since a
-    change may have moved the very things that were remembered.
-    """
-    answer = with_retries(
+def batch(
+    spreadsheet_id: str, 
+    requests: list[dict]
+) -> dict:
+    """Send one or more changes as a single batchUpdate."""
+    answer = google_api.execute(
         sheets()
         .spreadsheets()
-        .batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests})
+        .batchUpdate(
+            spreadsheetId=spreadsheet_id,
+            body={"requests": requests},
+        )
     )
+
     forget(spreadsheet_id)
     return answer
 
 
-def write_values(spreadsheet_id: str, data: list[dict]) -> dict:
-    """Write cells by A1 range, letting Google read what is typed.
-
-    Each entry is a range and the values for it, so cells that are nowhere
-    near each other go in one call. USER_ENTERED means what is written is read
-    the way it would be if a person typed it: "=B2*C2" becomes a formula and
-    "5" becomes a number, rather than both being stored as text.
-
-    Values go through a different endpoint from structural changes, so this
-    exists alongside batch() rather than inside it, and drops what is
-    remembered for the same reason.
-    """
-    answer = with_retries(
-        sheets().spreadsheets().values().batchUpdate(
+def write_values(
+    spreadsheet_id: str, 
+    data: list[dict]
+) -> dict:
+    """Write values to one or more ranges."""
+    answer = google_api.execute(
+        sheets()
+        .spreadsheets()
+        .values()
+        .batchUpdate(
             spreadsheetId=spreadsheet_id,
-            body={"valueInputOption": "USER_ENTERED", "data": data},
+            body={
+                "valueInputOption": "USER_ENTERED",
+                "data": data,
+            },
         )
     )
+
     forget(spreadsheet_id)
     return answer
 
@@ -213,49 +119,12 @@ def quoted(text: str) -> str:
 
 
 def search(name: str | None = None) -> list[tuple[str, str]]:
-    """Every spreadsheet whose name matches, as id and title.
-
-    Asked of Drive rather than Sheets, because only Drive knows what files
-    there are. Reading Drive is all this needs, so it works under the
-    drive.readonly scope the agent asks for.
-    """
-    query = f"mimeType = '{SPREADSHEET_MIME}' and trashed = false"
-    if name:
-        query += f" and name contains '{quoted(name)}'"
-
-    answer = with_retries(
-        drive().files().list(
-            q=query, pageSize=50, fields="files(id,name)", orderBy="name"
-        )
-    )
-    return [(found["id"], found["name"]) for found in answer.get("files", [])]
-
+    """Find spreadsheets by name."""
+    return _drive.search_spreadsheets(name)
 
 def containing(text: str) -> list[tuple[str, str]]:
-    """Every spreadsheet holding the given text anywhere inside it.
-
-    Drive searches the contents of a spreadsheet, not only its name, which is
-    what makes it possible to find the right file without opening each one in
-    turn. Reading is all it needs, so this works under drive.readonly.
-
-    The search is Drive's own: it matches whole words rather than parts of
-    them, and it can lag a change by a little while, since a file is indexed
-    after it is written rather than as it is written.
-
-    Nothing is asked to be sorted. Drive refuses a fullText query that names
-    an order, because it returns these by how well they match instead, which
-    is the more useful order anyway.
-    """
-    query = (
-        f"mimeType = '{SPREADSHEET_MIME}' and trashed = false "
-        f"and fullText contains '{quoted(text)}'"
-    )
-
-    answer = with_retries(
-        drive().files().list(q=query, pageSize=25, fields="files(id,name)")
-    )
-    return [(found["id"], found["name"]) for found in answer.get("files", [])]
-
+    """Find spreadsheets containing text."""
+    return _drive.search_spreadsheets_by_content(text)
 
 def number_forms(text: str) -> list[str]:
     """The ways a number might be written in a sheet, given one of them.
@@ -282,29 +151,10 @@ def number_forms(text: str) -> list[str]:
 
 
 def resolve_spreadsheet(name: str | None = None) -> tuple[str, str]:
-    """Turn the name of a spreadsheet into its id, and give back both.
-
-    Returns the spreadsheet being worked on when given nothing, which is what
-    a tool called without one wants. Names arrive from the model, so they are
-    matched against what Drive actually holds rather than trusted: the id that
-    comes back has been seen to exist.
-
-    Drive matches a name by what contains it, so asking for one file can bring
-    back several. A title that matches exactly is the answer rather than one
-    candidate among many: without that, a file whose name begins another's
-    could never be reached, and "Sales Orders" would be ambiguous for as long
-    as "Sales Orders - scratch" existed beside it.
-
-    Raises ValueError, with a message worth showing the model, when the name
-    reaches nothing, or when it reaches more than one file and none of them is
-    called exactly that.
-    """
+    """Turn the name of a spreadsheet into its id, and give back both."""
     wanted = (name or "").strip()
 
     if not wanted:
-        # Read at the moment it is asked for rather than when this module was
-        # imported, so a spreadsheet chosen while the agent is running is the
-        # one that answers.
         if not config.SPREADSHEET:
             raise ValueError(
                 "No spreadsheet has been chosen yet. Call list_workbooks and "
@@ -313,41 +163,7 @@ def resolve_spreadsheet(name: str | None = None) -> tuple[str, str]:
             )
         wanted = config.SPREADSHEET
 
-    if wanted in _spreadsheet_ids:
-        return _spreadsheet_ids[wanted], wanted
-
-    found = search(wanted)
-
-    if not found:
-        raise ValueError(
-            f'There is no spreadsheet called "{wanted}". Call list_workbooks '
-            "to see the ones there are."
-        )
-
-    exact = [pair for pair in found if pair[1].strip().lower() == wanted.lower()]
-
-    # Two files really do share a name. Nothing here can tell them apart, and
-    # picking one would be picking for the user.
-    if len(exact) > 1:
-        names = ", ".join(title for _, title in exact)
-        raise ValueError(
-            f'More than one spreadsheet is called "{wanted}": {names}. Say '
-            "which one, by its id."
-        )
-
-    # Nothing is called this, but several files have it in their name. Asking
-    # for the full name of one of them is something the tools can act on,
-    # which asking for an id is not.
-    if not exact and len(found) > 1:
-        names = ", ".join(title for _, title in found)
-        raise ValueError(
-            f'No spreadsheet is called exactly "{wanted}". These have it in '
-            f"their name: {names}. Say which one, by its full name."
-        )
-
-    spreadsheet_id, title = (exact or found)[0]
-    _spreadsheet_ids[wanted] = spreadsheet_id
-    return spreadsheet_id, title
+    return _drive.resolve_spreadsheet(wanted)
 
 
 def sheets_in(spreadsheet_id: str) -> dict[str, dict]:

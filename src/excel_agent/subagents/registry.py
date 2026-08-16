@@ -1,9 +1,8 @@
 """subagents registry.
 
-Four subagents, whichever backend is in use. What changes between backends is
-what each one holds and what it is told, and both of those are looked up
-rather than named here: the tools by the names they answer to, the prompts and
-descriptions from the module for that backend.
+Four subagents. The tools are looked up by the names they answer to rather
+than imported one by one, so this reads as a division of labour and not as a
+second copy of the tool list.
 
 inspect_sheet belongs to several of them on purpose: an agent that writes
 without reading first is guessing, and a row number handed between two agents
@@ -12,78 +11,100 @@ is stale before it arrives.
 
 from dataclasses import dataclass
 
-from excel_agent.config import BACKEND
-from excel_agent.subagents.prompts import prompts_for
-from excel_agent.tools import select_tools
+from langchain.tools import BaseTool
+
+from excel_agent.subagents import prompts
+from excel_agent.tools import TOOLS
 
 
 @dataclass(frozen=True)
 class SubagentSpec:
-    """One subagent: what it is called, what it is for, and what it holds."""
+    """Configuration for a specialized subagent."""
 
     name: str
     description: str
     system_prompt: str
-    tools: tuple
+    tools: tuple[BaseTool, ...]
+    return_tool_results: bool = False
+
+def subagents() -> tuple[SubagentSpec, ...]:
+    """Define the subagents and the capabilities each one receives."""
+
+    tools = {tool.name: tool for tool in TOOLS}
 
 
-def subagents_for(backend: str) -> tuple[SubagentSpec, ...]:
-    """The four subagents, holding one backend's tools and told its rules.
-
-    The tools are picked out by name, which works for either backend because
-    the Google tools answer to the same names as the local ones. A backend
-    that grows a tool no subagent holds would leave the multi agent variant
-    unable to do something the single agent can, which is what the test on
-    that coverage is for.
-    """
-    tools = {tool.name: tool for tool in select_tools(backend)}
-    prompts = prompts_for(backend)
-
-    # Held by whoever might change something, and by the analyst as its whole
-    # reason for being.
     reading = tools["inspect_sheet"]
 
-    # Finding a row by what is in it is reading, and it gives back a row
-    # number: whoever will act on that number should be the one who asked for
-    # it, which is why this is not the orchestrator's.
-    reading_tools = [reading, tools["sheet_stats"]]
-    if "find_data" in tools:
-        reading_tools.append(tools["find_data"])
+    searching_tools = (
+        tools["list_workbooks"],
+        tools["find_spreadsheet"],
+        tools["resolve_spreadsheet_choice"],
+    )
 
-    # Styling is structural work, so it goes to the subagent that already
-    # changes the shape of the sheet rather than to a fifth one.
-    structural = [tools["modify_column"]]
-    if "modify_style" in tools:
-        structural.append(tools["modify_style"])
+    reading_tools = (
+        reading, 
+        tools["sheet_stats"], 
+        tools["find_data"],
+    )
+
+    row_tools = (
+        reading,
+        tools["find_data"],
+        tools["update_row"],
+        tools["insert_row"],
+        tools["append_row"],
+        tools["delete_row"],
+        tools["move_row"],
+    )
+
+    structural = (
+        tools["insert_column"],
+        tools["rename_column"],
+        tools["delete_column"],
+        tools["move_column"],
+        tools["set_column_formula"],
+        tools["format_range"],
+        tools["copy_format"],
+    )
 
     return (
         SubagentSpec(
-            "analyst",
-            prompts.ANALYST_DESCRIPTION,
-            prompts.ANALYST_PROMPT,
-            tuple(reading_tools),
+            name="file_manager",
+            description=prompts.FILE_MANAGER_DESCRIPTION,
+            system_prompt=prompts.FILE_MANAGER_PROMPT,
+            tools=searching_tools,
         ),
         SubagentSpec(
-            "row_editor",
-            prompts.ROW_EDITOR_DESCRIPTION,
-            prompts.ROW_EDITOR_PROMPT,
-            (reading, tools["modify_row"]),
+            name="analyst",
+            description=prompts.ANALYST_DESCRIPTION,
+            system_prompt=prompts.ANALYST_PROMPT,
+            tools=reading_tools,
+            return_tool_results=True,
         ),
         SubagentSpec(
-            "structure_editor",
-            prompts.STRUCTURE_DESCRIPTION,
-            prompts.STRUCTURE_PROMPT,
-            (reading, *structural),
+            name="row_editor",
+            description=prompts.ROW_EDITOR_DESCRIPTION,
+            system_prompt=prompts.ROW_EDITOR_PROMPT,
+            tools=row_tools,
+        ),
+        SubagentSpec(
+            name="structure_editor",
+            description=prompts.STRUCTURE_DESCRIPTION,
+            system_prompt=prompts.STRUCTURE_PROMPT,
+            tools=(reading, *structural),
         ),
         SubagentSpec(
             "chart_maker",
             prompts.CHART_DESCRIPTION,
             prompts.CHART_PROMPT,
-            (reading, tools["modify_chart"]),
+            (
+                reading,
+                tools["create_chart"],
+                tools["update_chart"],
+                tools["delete_chart"],
+            ),
         ),
     )
 
 
-# The four the orchestrator is built from. Which backend's they are comes from
-# config, so nothing downstream has to know there is more than one.
-SUBAGENTS = subagents_for(BACKEND)
+SUBAGENTS = subagents()

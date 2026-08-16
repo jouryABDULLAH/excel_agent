@@ -1,216 +1,756 @@
-"""Tool for changing the columns of a sheet.
+"""Tools for changing spreadsheet columns."""
 
-Adds, renames and deletes whole columns. A column is added at the right hand
-end rather than pushed in between two others, because openpyxl moves cells
-without moving the formulas that read them: anything that shifts columns
-sideways leaves every formula after the shift pointing at the wrong cells.
-Deleting shifts by its nature, which is why it is refused whenever a formula
-would be left behind reading the wrong thing.
-"""
+from typing import Any
 
-from pathlib import Path
-from typing import Literal
-
+from googleapiclient.errors import HttpError
 from langchain_core.tools import tool
-from openpyxl.utils import get_column_letter
 
-from excel_agent.config import resolve_workbook
-from excel_agent.workbook import (
-    WRITE_LOCK,
-    columns_referenced,
+from excel_agent.services.google import readable
+from excel_agent.services.spreadsheet import spreadsheet_service
+from excel_agent.sheets import (
+    a1,
+    column_letter,
     find_header_row,
-    formula_cells,
     header_map,
-    is_blank,
     last_data_row,
-    load_book,
-    location,
-    resolve_sheet,
-    save,
+    resolve_spreadsheet,
+    to_grid_range,
 )
 
 
-def column_holding(cell, headers: dict[str, int]) -> str:
-    """The name of the column a cell sits in, or its letter if it has none."""
-    for name, number in headers.items():
-        if number == cell.column:
-            return f'"{name}"'
-    return f"column {get_column_letter(cell.column)}"
+def _error(
+    code: str,
+    message: str,
+    *,
+    spreadsheet: str | None = None,
+    sheet: str | None = None,
+    **details: Any,
+) -> dict:
+    """Return one consistent structured tool failure."""
+    return {
+        "ok": False,
+        "error": code,
+        "message": message,
+        "spreadsheet": spreadsheet,
+        "sheet": sheet,
+        **details,
+    }
+
+
+def _load_table(
+    spreadsheet: str | None,
+    sheet: str | None,
+) -> tuple[
+    str,
+    str,
+    dict,
+    int,
+    dict[str, int],
+    int,
+]:
+    """Resolve the sheet and inspect its table structure."""
+    spreadsheet_id, spreadsheet_name = resolve_spreadsheet(
+        spreadsheet
+    )
+
+    properties = spreadsheet_service.resolve_sheet(
+        spreadsheet_id,
+        sheet,
+    )
+
+    sheet_name = properties["title"]
+
+    rows = spreadsheet_service.read_sheet(
+        spreadsheet_id,
+        sheet_name,
+    )
+
+    header_row = find_header_row(rows)
+    headers = header_map(rows, header_row)
+    last_row = last_data_row(rows, header_row)
+
+    return (
+        spreadsheet_id,
+        spreadsheet_name,
+        properties,
+        header_row,
+        headers,
+        last_row,
+    )
+
+
+def _require_headers(
+    headers: dict[str, int],
+    *,
+    spreadsheet: str,
+    sheet: str,
+    header_row: int,
+) -> dict | None:
+    """Return an error when the sheet has no usable headers."""
+    if headers:
+        return None
+
+    return _error(
+        "headers_not_found",
+        "No column headers were found.",
+        spreadsheet=spreadsheet,
+        sheet=sheet,
+        header_row=header_row,
+    )
+
+
+def _require_column(
+    column: str,
+    headers: dict[str, int],
+    *,
+    spreadsheet: str,
+    sheet: str,
+) -> dict | None:
+    """Return an error when a named column does not exist."""
+    if column in headers:
+        return None
+
+    return _error(
+        "column_not_found",
+        "The requested column does not exist.",
+        spreadsheet=spreadsheet,
+        sheet=sheet,
+        column=column,
+        available_columns=list(headers),
+    )
 
 
 @tool
-def modify_column(
-    action: Literal["add", "rename", "delete"],
-    name: str | None = None,
-    new_name: str | None = None,
-    workbook: str | None = None,
+def insert_column(
+    name: str,
+    position: int | None = None,
+    spreadsheet: str | None = None,
     sheet: str | None = None,
-) -> str:
-    """Add, rename or delete a whole column.
+) -> dict:
+    """Insert a new empty column.
 
-    Call inspect_sheet first, so the column names you use are the real ones.
-    This changes the columns themselves, not the values in them: use
-    modify_row to put values into a column once it exists.
+    By default the column is added immediately after the last named column.
+    On an empty sheet with no headers, this creates the first column at
+    position 1.
+
+    Give position to insert it somewhere specific, counting from 1 at the
+    left side of the table.
 
     Args:
-        action: What to do. "add" puts a new empty column after the last one,
-            "rename" changes a column's name and leaves its data alone,
-            "delete" removes a column and everything in it.
-        name: The column to act on. For "add" this is the name the new column
-            will have. For "rename" and "delete" it is the column that is
-            already there, spelled exactly as inspect_sheet reports it.
-        new_name: The name a renamed column takes. Only used by "rename".
-        workbook: Which workbook to change, by file name. Leave this out to
-            change the one being worked on.
-        sheet: Which sheet to change, by name. Leave this out to change the
-            sheet the workbook opens on.
-
-    Returns:
-        A sentence saying what changed, or an explanation of why nothing was
-        changed. Nothing is written to the file when the answer is an
-        explanation, so you are free to correct the arguments and try again.
-
-        Deleting a column throws its data away for good. A column that some
-        formula depends on cannot be deleted at all, and the explanation says
-        which formula is in the way.
-
-    Examples:
-        modify_column(action="add", name="Notes")
-        modify_column(action="rename", name="Units", new_name="Quantity")
-        modify_column(action="delete", name="Notes")
+        name: Header for the new column.
+        position: Optional final position of the new column.
+        spreadsheet: Spreadsheet name. Omit to use the current spreadsheet.
+        sheet: Sheet name. Omit to use the first sheet.
     """
-    try:
-        path = resolve_workbook(workbook)
-    except ValueError as explanation:
-        return str(explanation)
-
-    with WRITE_LOCK:
-        return apply_column_change(action, name, new_name, path, sheet)
-
-
-def apply_column_change(
-    action: str,
-    name: str | None,
-    new_name: str | None,
-    path: Path,
-    sheet_name: str | None = None,
-) -> str:
-    """Do the work of modify_column, with the write lock already held."""
-    book = load_book(path)
-
-    try:
-        sheet = resolve_sheet(book, sheet_name)
-    except ValueError as explanation:
-        return str(explanation)
-
-    header_row = find_header_row(sheet)
-    headers = header_map(sheet, header_row)
-    if not headers:
-        return (
-            f"No column names were found. Row {header_row} is empty, and no "
-            "row near the top of the sheet looks like a header."
+    if not name or not name.strip():
+        return _error(
+            "missing_name",
+            "The new column needs a name.",
+            spreadsheet=spreadsheet,
+            sheet=sheet,
         )
 
-    if is_blank(name):
-        return f"The {action} action needs the name of a column."
-
-    assert name is not None
     name = name.strip()
 
-    if action in ("rename", "delete") and name not in headers:
-        return (
-            f'There is no column called "{name}". '
-            f"The sheet has: {', '.join(headers)}."
+    try:
+        (
+            spreadsheet_id,
+            spreadsheet_name,
+            properties,
+            header_row,
+            headers,
+            _,
+        ) = _load_table(
+            spreadsheet,
+            sheet,
         )
 
-    if action == "add":
+        sheet_name = properties["title"]
+
         if name in headers:
-            return (
-                f'There is already a column called "{name}". '
-                "Two columns of one name cannot be told apart."
+            return _error(
+                "duplicate_column",
+                "A column with that name already exists.",
+                spreadsheet=spreadsheet_name,
+                sheet=sheet_name,
+                column=name,
+                available_columns=list(headers),
             )
 
-        column = max(headers.values()) + 1
-        sheet.cell(row=header_row, column=column).value = name
-        save(book, path)
-        return (
-            f'Added a column called "{name}", at {get_column_letter(column)}. '
-            "It is empty: use modify_row to put values into it."
-        ) + location(sheet, path)
-
-    if action == "rename":
-        if is_blank(new_name):
-            return "The rename action needs a new_name to give the column."
-
-        assert new_name is not None
-        new_name = new_name.strip()
-
-        if new_name in headers and new_name != name:
-            return (
-                f'There is already a column called "{new_name}". '
-                "Two columns of one name cannot be told apart."
-            )
-
-        sheet.cell(row=header_row, column=headers[name]).value = new_name
-        save(book, path)
-        return (
-            f'Renamed the column "{name}" to "{new_name}". '
-            "Its data has not moved, and the values in it are unchanged."
-        ) + location(sheet, path)
-
-    if action == "delete":
-        target = headers[name]
-        last_row = last_data_row(sheet, header_row)
-
-        # A formula in the column being deleted goes with it, so only the ones
-        # that will still be there afterwards matter.
-        for cell in formula_cells(sheet, header_row, last_row):
-            if cell.column == target:
-                continue
-            if any(read >= target for read in columns_referenced(str(cell.value))):
-                return (
-                    f'"{name}" cannot be deleted. {column_holding(cell, headers)} '
-                    f"is worked out by a formula that reads it, or a column to "
-                    f"the right of it ({cell.coordinate}: {cell.value}). "
-                    "Deleting a column slides everything after it one place to "
-                    "the left without moving the formulas as well, so that "
-                    "formula would end up reading the wrong cells."
-                )
-
-        sheet.delete_cols(target)
-        save(book, path)
-        return (
-            f'Deleted the column "{name}" and everything in it, which cannot '
-            "be brought back. Every column that was to its right has moved one "
-            "place left."
-        ) + location(sheet, path)
-
-    return f'Unknown action "{action}". Use add, rename or delete.'
-
-
-def main() -> None:
-    """Try the tool by hand with `python -m excel_agent.tools.columns`.
-
-    Refuses one deletion, then adds a column, renames it and deletes it again,
-    so the sheet is left as it was found. Close the file in Excel first,
-    otherwise saving fails because Excel holds a lock on it while it is open.
-    """
-    print("--- a column a formula depends on, so nothing is written ---")
-    print(modify_column.invoke({"action": "delete", "name": "Units"}))
-
-    print("\n--- add a column ---")
-    print(modify_column.invoke({"action": "add", "name": "Test Column"}))
-
-    print("\n--- rename it ---")
-    print(
-        modify_column.invoke(
-            {"action": "rename", "name": "Test Column", "new_name": "Renamed Column"}
+        # If the sheet has no headers yet, there is no rightmost named
+        # column. Treat that as position 0 so the first valid column is 1.
+        rightmost = (
+            max(headers.values())
+            if headers
+            else 0
         )
-    )
 
-    print("\n--- delete it again ---")
-    print(modify_column.invoke({"action": "delete", "name": "Renamed Column"}))
+        if position is None:
+            position = rightmost + 1
+
+        if (
+            position < 1
+            or position > rightmost + 1
+        ):
+            return _error(
+                "invalid_position",
+                (
+                    "The requested column position is outside the table."
+                    if headers
+                    else (
+                        "The first column of an empty sheet "
+                        "must be at position 1."
+                    )
+                ),
+                spreadsheet=spreadsheet_name,
+                sheet=sheet_name,
+                position=position,
+                first_position=1,
+                last_position=rightmost + 1,
+            )
+
+        spreadsheet_service.insert_columns(
+            spreadsheet_id=spreadsheet_id,
+            sheet_id=properties["sheetId"],
+            start_column=position,
+            count=1,
+        )
+
+        # Headers are identifiers, not user-entered spreadsheet values.
+        # RAW preserves names such as 007, 1-2 and +Notes exactly as written.
+        spreadsheet_service.update_cells(
+            spreadsheet_id=spreadsheet_id,
+            updates=[
+                {
+                    "range": a1(
+                        sheet_name,
+                        first_row=header_row,
+                        last_row=header_row,
+                        first_column=position,
+                        last_column=position,
+                    ),
+                    "values": [[name]],
+                }
+            ],
+            value_input_option="RAW",
+        )
+
+        return {
+            "ok": True,
+            "operation": "insert_column",
+            "spreadsheet": spreadsheet_name,
+            "sheet": sheet_name,
+            "column": name,
+            "position": position,
+            "column_letter": column_letter(position),
+            "column_positions_changed": (
+                bool(headers)
+                and position <= rightmost
+            ),
+            "created_first_column": not bool(headers),
+        }
+
+    except ValueError as failure:
+        return _error(
+            "invalid_request",
+            str(failure),
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
+
+    except HttpError as failure:
+        return _error(
+            "google_api_error",
+            readable(failure),
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
+    
+@tool
+def rename_column(
+    column: str,
+    new_name: str,
+    spreadsheet: str | None = None,
+    sheet: str | None = None,
+) -> dict:
+    """Rename one existing column without moving its data.
+
+    Args:
+        column: Current header name.
+        new_name: New header name.
+        spreadsheet: Spreadsheet name. Omit to use the current spreadsheet.
+        sheet: Sheet name. Omit to use the first sheet.
+    """
+    if not column or not column.strip():
+        return _error(
+            "missing_column",
+            "The column to rename must be named.",
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
+
+    if not new_name or not new_name.strip():
+        return _error(
+            "missing_new_name",
+            "The column needs a new name.",
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
+
+    column = column.strip()
+    new_name = new_name.strip()
+
+    try:
+        (
+            spreadsheet_id,
+            spreadsheet_name,
+            properties,
+            header_row,
+            headers,
+            _,
+        ) = _load_table(
+            spreadsheet,
+            sheet,
+        )
+
+        sheet_name = properties["title"]
+
+        if name in headers:
+            return _error(
+                "duplicate_column",
+                "A column with that name already exists.",
+                spreadsheet=spreadsheet_name,
+                sheet=sheet_name,
+                column=name,
+                available_columns=list(headers),
+            )
+
+        # An empty sheet has no rightmost named column yet.
+        # Treat its right edge as position 0, making position 1 the only
+        # valid place for the first header.
+        rightmost = (
+            max(headers.values())
+            if headers
+            else 0
+        )
+
+        if position is None:
+            position = rightmost + 1
+
+        if (
+            position < 1
+            or position > rightmost + 1
+        ):
+            return _error(
+                "invalid_position",
+                (
+                    "The requested column position is outside the table."
+                    if headers
+                    else "The first column of an empty sheet must be at position 1."
+                ),
+                spreadsheet=spreadsheet_name,
+                sheet=sheet_name,
+                position=position,
+                first_position=1,
+                last_position=rightmost + 1,
+            )
+
+        spreadsheet_service.insert_columns(
+            spreadsheet_id=spreadsheet_id,
+            sheet_id=properties["sheetId"],
+            start_column=position,
+            count=1,
+        )
+
+        spreadsheet_service.update_cells(
+            spreadsheet_id=spreadsheet_id,
+            updates=[
+                {
+                    "range": a1(
+                        sheet_name,
+                        first_row=header_row,
+                        last_row=header_row,
+                        first_column=position,
+                        last_column=position,
+                    ),
+                    "values": [[name]],
+                }
+            ],
+            value_input_option="RAW",
+        )
+
+        return {
+            "ok": True,
+            "operation": "insert_column",
+            "spreadsheet": spreadsheet_name,
+            "sheet": sheet_name,
+            "column": name,
+            "position": position,
+            "column_letter": column_letter(position),
+            "column_positions_changed": (
+                bool(headers)
+                and position <= rightmost
+            ),
+            "created_first_column": not bool(headers),
+        }
+
+    except ValueError as failure:
+        return _error(
+            "invalid_request",
+            str(failure),
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
+
+    except HttpError as failure:
+        return _error(
+            "google_api_error",
+            readable(failure),
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
 
 
-if __name__ == "__main__":
-    main()
+@tool
+def delete_column(
+    column: str,
+    spreadsheet: str | None = None,
+    sheet: str | None = None,
+) -> dict:
+    """Delete one existing column and every value in it.
+
+    Args:
+        column: Header name of the column to delete.
+        spreadsheet: Spreadsheet name. Omit to use the current spreadsheet.
+        sheet: Sheet name. Omit to use the first sheet.
+    """
+    if not column or not column.strip():
+        return _error(
+            "missing_column",
+            "The column to delete must be named.",
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
+
+    column = column.strip()
+
+    try:
+        (
+            spreadsheet_id,
+            spreadsheet_name,
+            properties,
+            _,
+            headers,
+            _,
+        ) = _load_table(
+            spreadsheet,
+            sheet,
+        )
+
+        sheet_name = properties["title"]
+
+        missing = _require_column(
+            column,
+            headers,
+            spreadsheet=spreadsheet_name,
+            sheet=sheet_name,
+        )
+        if missing:
+            return missing
+
+        position = headers[column]
+
+        spreadsheet_service.delete_columns(
+            spreadsheet_id=spreadsheet_id,
+            sheet_id=properties["sheetId"],
+            start_column=position,
+        )
+
+        return {
+            "ok": True,
+            "operation": "delete_column",
+            "spreadsheet": spreadsheet_name,
+            "sheet": sheet_name,
+            "deleted_column": column,
+            "deleted_position": position,
+            "column_positions_changed": True,
+        }
+
+    except ValueError as failure:
+        return _error(
+            "invalid_request",
+            str(failure),
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
+
+    except HttpError as failure:
+        return _error(
+            "google_api_error",
+            readable(failure),
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
+
+
+@tool
+def move_column(
+    column: str,
+    to_position: int,
+    spreadsheet: str | None = None,
+    sheet: str | None = None,
+) -> dict:
+    """Move an existing column to another table position.
+
+    Args:
+        column: Header name of the column to move.
+        to_position: Final position, counting from 1 at the left.
+        spreadsheet: Spreadsheet name. Omit to use the current spreadsheet.
+        sheet: Sheet name. Omit to use the first sheet.
+    """
+    if not column or not column.strip():
+        return _error(
+            "missing_column",
+            "The column to move must be named.",
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
+
+    column = column.strip()
+
+    try:
+        (
+            spreadsheet_id,
+            spreadsheet_name,
+            properties,
+            _,
+            headers,
+            _,
+        ) = _load_table(
+            spreadsheet,
+            sheet,
+        )
+
+        sheet_name = properties["title"]
+
+        missing = _require_column(
+            column,
+            headers,
+            spreadsheet=spreadsheet_name,
+            sheet=sheet_name,
+        )
+        if missing:
+            return missing
+
+        from_position = headers[column]
+        rightmost = max(headers.values())
+
+        if to_position < 1 or to_position > rightmost:
+            return _error(
+                "invalid_position",
+                "The destination position is outside the table.",
+                spreadsheet=spreadsheet_name,
+                sheet=sheet_name,
+                to_position=to_position,
+                first_position=1,
+                last_position=rightmost,
+            )
+
+        if to_position == from_position:
+            return {
+                "ok": True,
+                "operation": "move_column",
+                "spreadsheet": spreadsheet_name,
+                "sheet": sheet_name,
+                "column": column,
+                "from_position": from_position,
+                "to_position": to_position,
+                "changed": False,
+            }
+
+        spreadsheet_service.move_column(
+            spreadsheet_id=spreadsheet_id,
+            sheet_id=properties["sheetId"],
+            column=from_position,
+            to_position=to_position,
+        )
+
+        return {
+            "ok": True,
+            "operation": "move_column",
+            "spreadsheet": spreadsheet_name,
+            "sheet": sheet_name,
+            "column": column,
+            "from_position": from_position,
+            "to_position": to_position,
+            "changed": True,
+            "column_positions_changed": True,
+        }
+
+    except ValueError as failure:
+        return _error(
+            "invalid_request",
+            str(failure),
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
+
+    except HttpError as failure:
+        return _error(
+            "google_api_error",
+            readable(failure),
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
+
+
+@tool
+def set_column_formula(
+    column: str,
+    formula: str,
+    spreadsheet: str | None = None,
+    sheet: str | None = None,
+) -> dict:
+    """Fill an existing column with a relative spreadsheet formula.
+
+    The formula is written to the first data row and copied downward so
+    relative references change naturally from row to row.
+
+    Args:
+        column: Header name of the destination column.
+        formula: Formula as typed in Google Sheets, beginning with "=".
+        spreadsheet: Spreadsheet name. Omit to use the current spreadsheet.
+        sheet: Sheet name. Omit to use the first sheet.
+    """
+    if not column or not column.strip():
+        return _error(
+            "missing_column",
+            "The formula destination column must be named.",
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
+
+    if not formula or not formula.strip():
+        return _error(
+            "missing_formula",
+            "A formula must be supplied.",
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
+
+    column = column.strip()
+    formula = formula.strip()
+
+    if not formula.startswith("="):
+        return _error(
+            "invalid_formula",
+            'A formula must begin with "=".',
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+            formula=formula,
+        )
+
+    try:
+        (
+            spreadsheet_id,
+            spreadsheet_name,
+            properties,
+            header_row,
+            headers,
+            last_row,
+        ) = _load_table(
+            spreadsheet,
+            sheet,
+        )
+
+        sheet_name = properties["title"]
+
+        missing = _require_column(
+            column,
+            headers,
+            spreadsheet=spreadsheet_name,
+            sheet=sheet_name,
+        )
+        if missing:
+            return missing
+
+        first_data_row = header_row + 1
+
+        if last_row < first_data_row:
+            return _error(
+                "no_data_rows",
+                "There are no data rows to fill.",
+                spreadsheet=spreadsheet_name,
+                sheet=sheet_name,
+                column=column,
+            )
+
+        position = headers[column]
+
+        # Formula text should be interpreted by Sheets.
+        spreadsheet_service.update_cells(
+            spreadsheet_id=spreadsheet_id,
+            updates=[
+                {
+                    "range": a1(
+                        sheet_name,
+                        first_row=first_data_row,
+                        last_row=first_data_row,
+                        first_column=position,
+                        last_column=position,
+                    ),
+                    "values": [[formula]],
+                }
+            ],
+            value_input_option="USER_ENTERED",
+        )
+
+        if last_row > first_data_row:
+            spreadsheet_service.copy_paste(
+                spreadsheet_id=spreadsheet_id,
+                source=to_grid_range(
+                    properties["sheetId"],
+                    first_data_row,
+                    first_data_row,
+                    position,
+                    position,
+                ),
+                destination=to_grid_range(
+                    properties["sheetId"],
+                    first_data_row + 1,
+                    last_row,
+                    position,
+                    position,
+                ),
+                paste_type="PASTE_FORMULA",
+            )
+
+        filled_rows = last_row - first_data_row + 1
+
+        return {
+            "ok": True,
+            "operation": "set_column_formula",
+            "spreadsheet": spreadsheet_name,
+            "sheet": sheet_name,
+            "column": column,
+            "formula": formula,
+            "first_row": first_data_row,
+            "last_row": last_row,
+            "filled_rows": filled_rows,
+        }
+
+    except ValueError as failure:
+        return _error(
+            "invalid_request",
+            str(failure),
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
+
+    except HttpError as failure:
+        return _error(
+            "google_api_error",
+            readable(failure),
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )

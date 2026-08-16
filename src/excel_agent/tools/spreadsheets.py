@@ -10,8 +10,9 @@ choosing a file is the question asked before any sheet is opened.
 """
 
 from googleapiclient.errors import HttpError
-from langchain_core.tools import tool
-
+from langchain.tools import tool, ToolRuntime
+from langchain.messages import ToolMessage
+from langgraph.types import Command
 from excel_agent import config
 from excel_agent.sheets import (
     containing,
@@ -22,6 +23,73 @@ from excel_agent.sheets import (
     sheets_in,
 )
 
+
+@tool(
+    response_format="content_and_artifact"
+)
+def resolve_spreadsheet_choice(
+    spreadsheet: str,
+) -> tuple[str, dict]:
+    """Resolve one exact spreadsheet choice without changing session state.
+
+    This is used by the file manager after it has identified the spreadsheet
+    the user means. It validates the choice and returns the id/name for the
+    outer orchestrator to commit to its state.
+
+    Args:
+        spreadsheet: Exact spreadsheet name chosen from the available files.
+    """
+    if not spreadsheet or not spreadsheet.strip():
+        return (
+            "No spreadsheet was named.",
+            {
+                "ok": False,
+                "operation": "resolve_spreadsheet_choice",
+                "reason": "missing_spreadsheet",
+            },
+        )
+
+    try:
+        spreadsheet_id, name = resolve_spreadsheet(
+            spreadsheet
+        )
+
+    except HttpError as failure:
+        message = readable(failure)
+
+        return (
+            message,
+            {
+                "ok": False,
+                "operation": "resolve_spreadsheet_choice",
+                "reason": "google_error",
+                "message": message,
+            },
+        )
+
+    except ValueError:
+        return (
+            (
+                f'"{spreadsheet}" did not resolve to exactly '
+                "one spreadsheet."
+            ),
+            {
+                "ok": False,
+                "operation": "resolve_spreadsheet_choice",
+                "reason": "not_unique",
+                "requested": spreadsheet,
+            },
+        )
+
+    return (
+        f'Selected spreadsheet "{name}".',
+        {
+            "ok": True,
+            "operation": "resolve_spreadsheet_choice",
+            "spreadsheet_id": spreadsheet_id,
+            "spreadsheet_name": name,
+        },
+    )
 
 @tool
 def list_workbooks(name: str | None = None) -> str:
@@ -74,69 +142,87 @@ def list_workbooks(name: str | None = None) -> str:
     if not in_use:
         lines.append("")
         lines.append(
-            "No spreadsheet has been chosen yet. Ask the user which of these "
-            "to work on, then name it in the spreadsheet argument."
+            "No spreadsheet is currently selected. Choose the best match for "
+            "the user's request, then call use_spreadsheet."
         )
 
     return "\n".join(lines)
 
 
-
-
 @tool
-def use_spreadsheet(name: str) -> str:
-    """Work on this spreadsheet from now on.
+def use_spreadsheet(
+    spreadsheet: str,
+    runtime: ToolRuntime
+) -> Command:
+    """Select the spreadsheet to work on for the rest of the session.
 
-    Call this when the user wants to move to a different spreadsheet and stay
-    there. Every tool called afterwards without a spreadsheet argument works on
-    this one, so the name does not have to be repeated on every call.
-
-    Do not call this to read something out of another file. Every tool takes a
-    spreadsheet argument of its own for that. Calling this instead would leave
-    the file being worked on changed, and every later edit would land in the
-    file that was only meant to be read.
+    The name does not have to be exact. If it reaches no file, or more than
+    one, this answers with the names that do exist, so the best match can be
+    chosen and passed back.
 
     Args:
-        name: The spreadsheet to work on, by name, as list_workbooks or
-            find_spreadsheet gives it.
+        spreadsheet: The spreadsheet the user wants to work with, by name or
+            by how they described it.
 
     Returns:
-        A sentence saying which spreadsheet is now being worked on and naming
-        the sheets inside it, or an explanation of why the name reached none.
+        A Command storing the chosen spreadsheet in the session state, or one
+        carrying the available names when the argument reached no single file.
 
     Examples:
-        use_spreadsheet(name="TEST - Sales Orders")
+        use_spreadsheet(spreadsheet="TEST - Sales Orders")
     """
-    if not name or not name.strip():
-        return "Say which spreadsheet to work on."
 
-    try:
-        # Resolved before it is settled on, so a name that reaches nothing, or
-        # two files at once, is refused here rather than by every later call.
-        spreadsheet_id, title = resolve_spreadsheet(name)
-        inside = list(sheets_in(spreadsheet_id))
-    except ValueError as explanation:
-        return str(explanation)
-    except HttpError as failure:
-        return readable(failure)
-
-    config.SPREADSHEET = title
-
-    answer = (
-        f'Now working on "{title}". Tools called without a spreadsheet '
-        "argument will use it."
-    )
-
-    # The sheets are named here because nothing else says what they are, and
-    # the name of a file is not the name of a sheet inside it. Told only the
-    # file name, an agent will invent a sheet called after it.
-    if inside:
-        answer += (
-            f" It holds {len(inside)} sheet(s): {', '.join(inside)}. "
-            f"Calls that name no sheet work on {inside[0]}."
+    def answer(content: str) -> Command:
+        """One message back to the orchestrator, changing nothing else."""
+        return Command(
+            update={
+                "messages": [
+                    ToolMessage(content=content, tool_call_id=runtime.tool_call_id)
+                ]
+            }
         )
 
-    return answer
+    if not spreadsheet or not spreadsheet.strip():
+        return answer("No spreadsheet was named.")
+
+    try:
+        spreadsheet_id, name = resolve_spreadsheet(spreadsheet)
+    except HttpError as failure:
+        return answer(readable(failure))
+    except ValueError:
+        # What resolve_spreadsheet says here sends the reader to list_workbooks,
+        # or asks for an id no tool accepts. Both are dead ends, so the names
+        # themselves go back instead and the choice gets made from those.
+        try:
+            candidates = search()
+        except HttpError as failure:
+            return answer(readable(failure))
+
+        names = "\n".join(f"  {title}" for _, title in candidates)
+
+        return answer(
+            f'"{spreadsheet}" did not match exactly one spreadsheet.\n\n'
+            f"Available:\n{names}\n\n"
+            "Choose the best matching spreadsheet and call use_spreadsheet "
+            "again with its exact name."
+        )
+
+    # Temporary. The subagents' tools fall back to this when their spreadsheet
+    # argument is left out; delete once they read spreadsheet_id from state.
+    config.SPREADSHEET = name
+
+    return Command(
+        update={
+            "spreadsheet_id": spreadsheet_id,
+            "spreadsheet_name": name,
+            "messages": [
+                ToolMessage(
+                    content=f'Selected spreadsheet "{name}".',
+                    tool_call_id=runtime.tool_call_id,
+                )
+            ]
+        }
+    )
 
 
 
@@ -234,7 +320,7 @@ FIND_CASES = [
 
 
 def main() -> None:
-    """Try the tool by hand with `python -m excel_agent.tools.sheets.spreadsheets`."""
+    """Try the tool by hand with `python -m excel_agent.tools.spreadsheets`."""
     for label, arguments in CASES:
         print(f"--- {label}: {arguments} ---")
         print(list_workbooks.invoke(arguments))

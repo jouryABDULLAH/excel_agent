@@ -1,190 +1,371 @@
-"""Tool for summarising a sheet.
-
-Answers questions about a whole column - how many, how much, what range, what
-appears most - without the model reading every row and counting.
-
-Read-only tool: nothing here writes to the file.
-"""
+"""Tool for summarising one spreadsheet column."""
 
 from collections import Counter
-from datetime import date, datetime
+from typing import Any
 
+from googleapiclient.errors import HttpError
 from langchain_core.tools import tool
 
-from excel_agent.config import resolve_workbook
-from excel_agent.tools.inspect import as_text
-from excel_agent.workbook import (
+from excel_agent.services.google import readable
+from excel_agent.services.spreadsheet import (
+    Cell,
+    spreadsheet_service,
+)
+from excel_agent.sheets import (
+    cell,
     find_header_row,
     header_map,
     is_blank,
     last_data_row,
-    load_book,
-    load_values,
-    resolve_sheet,
+    resolve_spreadsheet,
 )
 
 
-def is_number(value) -> bool:
-    """Whether a value is a number to do arithmetic on.
-
-    True and False are whole numbers as far as Python is concerned, and adding
-    them up would be nonsense, so they are left out.
-    """
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+COMMON_LIMIT = 3
 
 
-def total_of(values: list) -> str:
-    """Add numbers up and render the answer without a trailing .0 or a long tail."""
-    added = sum(values)
-    return as_text(round(added, 2))
+def _is_number(one: Cell) -> bool:
+    """Return whether the cell contains an arithmetic number."""
+    return (
+        isinstance(one.value, (int, float))
+        and not isinstance(one.value, bool)
+        and not one.is_date
+    )
 
 
-def summarise(values: list) -> str:
-    """Describe a column's values in a phrase.
+def _rounded(number: float) -> int | float:
+    """Keep totals compact without turning everything into text."""
+    result = round(number, 2)
 
-    Numbers get their range and their total, dates get their range, and
-    anything else gets whatever turns up most often, since a total means
-    nothing for text.
-    """
-    if not values:
-        return "nothing to summarise"
+    if result == int(result):
+        return int(result)
 
-    if all(is_number(value) for value in values):
-        return (
-            f"{as_text(min(values))} to {as_text(max(values))}, "
-            f"adding up to {total_of(values)}"
-        )
-
-    if all(isinstance(value, (datetime, date)) for value in values):
-        return f"{as_text(min(values))} to {as_text(max(values))}"
-
-    most_common, seen = Counter(as_text(value) for value in values).most_common(1)[0]
-    if seen == 1:
-        return "every value different"
-    return f'"{most_common}" most often, {seen} times'
+    return result
 
 
-@tool
-def sheet_stats(
-    columns: list[str] | None = None,
-    workbook: str | None = None,
+def _shown(one: Cell) -> str:
+    if one.displayed is None:
+        return ""
+
+    return str(one.displayed)
+
+
+def _error(
+    code: str,
+    message: str,
+    *,
+    spreadsheet: str | None = None,
     sheet: str | None = None,
-) -> str:
-    """Summarise the columns of a sheet: how many, how much, what range.
+    **details: Any,
+) -> tuple[str, dict]:
+    artifact = {
+        "ok": False,
+        "operation": "sheet_stats",
+        "error": code,
+        "message": message,
+        "spreadsheet": spreadsheet,
+        "sheet": sheet,
+        **details,
+    }
 
-    Use this instead of reading every row and working it out yourself. It
-    answers questions like how many rows there are, how many are blank, how
-    many different values a column holds, and the smallest, largest and total
-    of a column of numbers.
+    return message, artifact
+
+
+@tool(response_format="content_and_artifact")
+def sheet_stats(
+    column: str,
+    spreadsheet: str | None = None,
+    sheet: str | None = None,
+) -> tuple[str, dict]:
+    """Summarise one complete spreadsheet column.
 
     Args:
-        columns: Column names to summarise. Leave empty to summarise all.
-        workbook: Which workbook to read, by file name. Leave this out to read
-            the one being worked on.
-        sheet: Which sheet to read, by name. Leave this out to read the sheet
-            the workbook opens on.
+        column: Column name.
+        spreadsheet: Spreadsheet name. Omit for the current spreadsheet.
+        sheet: Sheet name. Omit for the first sheet.
 
     Returns:
-        A table with a line per column: how many rows hold a value, how many
-        are blank, how many different values there are, and a summary.
-
-        A column the sheet works out for itself has no summary unless the file
-        has been opened in Excel since the formulas were last changed, because
-        until then the results are not stored in the file. That is said
-        plainly rather than reported as a total of zero.
-
-    Examples:
-        sheet_stats()
-        sheet_stats(columns=["Units", "Region"])
+        Readable statistics plus structured numerical/textual metadata.
     """
-    try:
-        path = resolve_workbook(workbook)
-    except ValueError as explanation:
-        return str(explanation)
+    if not column or not column.strip():
+        return _error(
+            "missing_column",
+            "The column to summarise must be named.",
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
+
+    column = column.strip()
 
     try:
-        worksheet = resolve_sheet(load_values(path), sheet)
-    except ValueError as explanation:
-        return str(explanation)
+        spreadsheet_id, spreadsheet_name = resolve_spreadsheet(
+            spreadsheet
+        )
 
-    formulas = load_book(path)[worksheet.title]
+        properties = spreadsheet_service.resolve_sheet(
+            spreadsheet_id,
+            sheet,
+        )
 
-    header_row = find_header_row(worksheet)
-    headers = header_map(worksheet, header_row)
+        sheet_name = properties["title"]
+
+        rows = spreadsheet_service.read_sheet(
+            spreadsheet_id,
+            sheet_name,
+        )
+
+    except ValueError as failure:
+        return _error(
+            "invalid_request",
+            str(failure),
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
+
+    except HttpError as failure:
+        return _error(
+            "google_api_error",
+            readable(failure),
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
+
+    header_row = find_header_row(rows)
+    headers = header_map(rows, header_row)
+
     if not headers:
-        return (
-            f"No column names were found. Row {header_row} is empty, and no "
-            "row near the top of the sheet looks like a header."
+        return _error(
+            "headers_not_found",
+            "No column headers were found.",
+            spreadsheet=spreadsheet_name,
+            sheet=sheet_name,
         )
 
-    last_row = last_data_row(worksheet, header_row)
-    total_rows = max(last_row - header_row, 0)
-    if total_rows == 0:
-        return (
-            f"Sheet: {worksheet.title} in {path.name}. It has column names but "
-            "no rows of data yet."
+    if column not in headers:
+        return _error(
+            "column_not_found",
+            "The requested column does not exist.",
+            spreadsheet=spreadsheet_name,
+            sheet=sheet_name,
+            column=column,
+            available_columns=list(headers),
         )
 
-    names = list(headers)
-    if columns:
-        unknown = [name for name in columns if name not in headers]
-        if unknown:
-            return (
-                f"Unknown column(s): {', '.join(unknown)}. "
-                f"The sheet has: {', '.join(names)}."
-            )
-        names = list(columns)
+    last_row = last_data_row(
+        rows,
+        header_row,
+    )
 
-    rows = range(header_row + 1, last_row + 1)
-    lines = [
-        f"Sheet: {worksheet.title} in {path.name} ({total_rows} rows of data, "
-        f"column names in row {header_row})",
-        "",
-        "| column | filled | blank | different | summary |",
-        "|---|---|---|---|---|",
+    if last_row <= header_row:
+        content = (
+            f'"{column}" in {sheet_name} in '
+            f"{spreadsheet_name} has no data rows."
+        )
+
+        return content, {
+            "ok": True,
+            "operation": "sheet_stats",
+            "spreadsheet": spreadsheet_name,
+            "sheet": sheet_name,
+            "column": column,
+            "filled": 0,
+            "blank": 0,
+            "different": 0,
+            "formula_count": 0,
+            "kind": "empty",
+            "rendered": content,
+        }
+
+    column_number = headers[column]
+
+    values = [
+        cell(
+            rows,
+            row_number,
+            column_number,
+        )
+        for row_number in range(
+            header_row + 1,
+            last_row + 1,
+        )
     ]
 
-    for name in names:
-        column = headers[name]
-        values = [worksheet.cell(row=row, column=column).value for row in rows]
-        filled = [value for value in values if not is_blank(value)]
+    filled = [
+        one
+        for one in values
+        if not is_blank(one.displayed)
+    ]
 
-        calculated = any(
-            str(formulas.cell(row=row, column=column).value or "").startswith("=")
-            for row in rows
+    blank_count = len(values) - len(filled)
+
+    different = len(
+        {
+            _shown(one).strip()
+            for one in filled
+        }
+    )
+
+    formula_count = sum(
+        1
+        for one in filled
+        if one.formula
+    )
+
+    base = {
+        "ok": True,
+        "operation": "sheet_stats",
+        "spreadsheet": spreadsheet_name,
+        "sheet": sheet_name,
+        "column": column,
+        "filled": len(filled),
+        "blank": blank_count,
+        "different": different,
+        "formula_count": formula_count,
+    }
+
+    if not filled:
+        content = (
+            f'"{column}" in {sheet_name} in '
+            f"{spreadsheet_name}: 0 filled, "
+            f"{blank_count} blank."
         )
-        if calculated and not filled:
-            summary = "worked out by the sheet, and its results are not stored in the file"
-        else:
-            summary = summarise(filled)
 
-        different = len({as_text(value) for value in filled})
-        lines.append(
-            f"| {name} | {len(filled)} | {len(values) - len(filled)} | "
-            f"{different} | {summary} |"
+        return content, {
+            **base,
+            "kind": "empty",
+            "rendered": content,
+        }
+
+    if all(_is_number(one) for one in filled):
+        least = min(
+            filled,
+            key=lambda one: one.value,
+        ) # type: ignore
+
+        greatest = max(
+            filled,
+            key=lambda one: one.value,
         )
 
-    return "\n".join(lines)
+        total = sum(
+            one.value
+            for one in filled
+        )
 
+        content = (
+            f'"{column}" in {sheet_name} in '
+            f"{spreadsheet_name}: "
+            f"{len(filled)} filled, "
+            f"{blank_count} blank, "
+            f"{different} different. "
+            f"{_shown(least)} to {_shown(greatest)}, "
+            f"adding up to {_rounded(total)}."
+        )
 
-CASES = [
-    ("every column", {}),
-    ("one column", {"columns": ["Units"]}),
-    ("two columns", {"columns": ["Region", "Unit Price"]}),
-    ("a column that does not exist", {"columns": ["Profit"]}),
-]
+        if formula_count:
+            content += (
+                f" {formula_count} of them are worked "
+                "out by a formula in the sheet."
+            )
 
+        return content, {
+            **base,
+            "kind": "number",
+            "minimum": {
+                "value": least.value,
+                "displayed": _shown(least),
+            },
+            "maximum": {
+                "value": greatest.value,
+                "displayed": _shown(greatest),
+            },
+            "total": _rounded(total),
+            "rendered": content,
+        }
 
-def main() -> None:
-    """Try the tool by hand with `python -m excel_agent.tools.stats`.
+    if all(one.is_date for one in filled):
+        earliest = min(
+            filled,
+            key=lambda one: one.value,
+        )
 
-    Reading only, so running this never changes the file.
-    """
-    for label, arguments in CASES:
-        print(f"--- {label}: {arguments} ---")
-        print(sheet_stats.invoke(arguments))
-        print()
+        latest = max(
+            filled,
+            key=lambda one: one.value,
+        )
 
+        content = (
+            f'"{column}" in {sheet_name} in '
+            f"{spreadsheet_name}: "
+            f"{len(filled)} filled, "
+            f"{blank_count} blank, "
+            f"{different} different. "
+            f"{_shown(earliest)} to {_shown(latest)}."
+        )
 
-if __name__ == "__main__":
-    main()
+        return content, {
+            **base,
+            "kind": "date",
+            "earliest": {
+                "value": earliest.value,
+                "displayed": _shown(earliest),
+            },
+            "latest": {
+                "value": latest.value,
+                "displayed": _shown(latest),
+            },
+            "rendered": content,
+        }
+
+    counts = Counter(
+        _shown(one).strip()
+        for one in filled
+    )
+
+    common = counts.most_common(
+        COMMON_LIMIT
+    )
+
+    repeated = [
+        {
+            "value": value,
+            "count": count,
+        }
+        for value, count in common
+        if count > 1
+    ]
+
+    if repeated:
+        common_text = ", ".join(
+            f'"{item["value"]}" {item["count"]} times'
+            for item in repeated
+        )
+
+        description = (
+            f"most often {common_text}"
+        )
+
+    else:
+        description = "every value different"
+
+    content = (
+        f'"{column}" in {sheet_name} in '
+        f"{spreadsheet_name}: "
+        f"{len(filled)} filled, "
+        f"{blank_count} blank, "
+        f"{different} different. "
+        f"{description}."
+    )
+
+    if formula_count:
+        content += (
+            f" {formula_count} of them are worked out "
+            "by a formula in the sheet."
+        )
+
+    return content, {
+        **base,
+        "kind": "text",
+        "most_common": repeated,
+        "rendered": content,
+    }

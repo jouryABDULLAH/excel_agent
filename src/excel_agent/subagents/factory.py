@@ -1,121 +1,419 @@
-"""Factory for building the agents.
+"""Build spreadsheet subagents and expose them to the orchestrator as tools."""
 
-A subagent is wrapped as a tool the orchestrator can call with an instruction
-in plain English. That keeps the orchestrator an ordinary agent, so the same
-Session, the same events and the same command line drive either variant and
-the two can be compared without being two programs.
-"""
+from typing import Any
 
-from langchain.agents import create_agent
-from langchain_core.messages import ToolMessage
-from langchain_core.tools import tool
+from langchain.agents import AgentState, create_agent
+from langchain.messages import HumanMessage, ToolMessage
+from langchain.tools import ToolRuntime, tool
 from langgraph.checkpoint.memory import InMemorySaver
-
-from excel_agent.agent import RECURSION_LIMIT, build_agent, build_model
+from langgraph.types import Command
+from excel_agent.model import build_model
+from excel_agent import config
+from excel_agent.model import RECURSION_LIMIT, build_model
 from excel_agent.subagents.prompts import ORCHESTRATOR_PROMPT
-from excel_agent.subagents.registry import SUBAGENTS, SubagentSpec
-from excel_agent.config import BACKEND
-from excel_agent.tools import select_tools
-
-VARIANTS = ("single", "multi")
-
-# What the agent at the top of each variant is called in a trace. Handed to a
-# Session, so a turn is recorded against the name of whoever answered it.
-ROOT_NAME = {"single": "agent", "multi": "orchestrator"}
+from excel_agent.subagents.registry import SUBAGENTS
 
 
-def agent_name(variant: str) -> str:
-    """What to call the agent at the top of one variant, for traces."""
-    return ROOT_NAME.get(variant, "agent")
+class OrchestratorState(AgentState):
+    """Conversation state owned by the outer orchestrator."""
+
+    spreadsheet_id: str | None
+    spreadsheet_name: str | None
 
 
-def as_tool(spec: SubagentSpec, model):
-    """Wrap a subagent so the orchestrator can hand it work.
+def _original_user_request(
+    runtime: ToolRuntime,
+) -> str:
+    """Return the latest real user message from the outer conversation."""
+    messages = runtime.state.get("messages") or []
 
-    The subagent keeps no conversation of its own: each instruction is answered
-    on its own, and what was said before lives in the orchestrator's thread.
-    Four more threads per turn would double the cost of a comparison that is
-    about cost.
-    """
-    agent = create_agent(model, list(spec.tools), system_prompt=spec.system_prompt)
+    for message in reversed(messages):
+        if not isinstance(message, HumanMessage):
+            continue
 
-    @tool(spec.name, description=spec.description)
-    def delegate(instruction: str) -> str:
-        """Hand one piece of work to this subagent and return what it says."""
-        finished = agent.invoke(
-            {"messages": [{"role": "user", "content": instruction}]},
-            # Named for the subagent, so a trace says who was handed the work
-            # rather than showing a second "LangGraph" under the first.
-            config={"recursion_limit": RECURSION_LIMIT, "run_name": spec.name},
+        if isinstance(message.content, str):
+            return message.content
+
+        return str(message.content)
+
+    return ""
+
+
+def _subagent_instruction(
+    *,
+    instruction: str,
+    runtime: ToolRuntime,
+) -> str:
+    """Build the context passed from the orchestrator to a specialist."""
+    original_request = _original_user_request(runtime)
+
+    spreadsheet_id = runtime.state.get(
+        "spreadsheet_id"
+    )
+
+    spreadsheet_name = runtime.state.get(
+        "spreadsheet_name"
+    )
+
+    return (
+        "ORIGINAL USER REQUEST:\n"
+        f"{original_request or '(not available)'}\n\n"
+        "CURRENT SPREADSHEET:\n"
+        f"{spreadsheet_name or 'Not selected'}\n"
+        "CURRENT SPREADSHEET ID:\n"
+        f"{spreadsheet_id or 'Not selected'}\n\n"
+        "TASK:\n"
+        f"{instruction}"
+    )
+
+
+def _collect_inner_results(
+    messages: list,
+) -> tuple[
+    list[str],
+    list[dict],
+    list[dict],
+]:
+    """Collect results, artifacts and tool calls from a nested subagent run."""
+    tool_results: list[str] = []
+    tool_artifacts: list[dict] = []
+    tool_calls: list[dict] = []
+
+    for message in messages:
+        for call in (
+            getattr(
+                message,
+                "tool_calls",
+                None,
+            )
+            or []
+        ):
+            tool_calls.append(
+                {
+                    "name": call["name"],
+                    "arguments": dict(
+                        call.get("args")
+                        or {}
+                    ),
+                }
+            )
+
+        if not isinstance(
+            message,
+            ToolMessage,
+        ):
+            continue
+
+        if message.content:
+            tool_results.append(
+                str(message.content)
+            )
+
+        if isinstance(
+            message.artifact,
+            dict,
+        ):
+            tool_artifacts.append(
+                message.artifact
+            )
+
+    return (
+        tool_results,
+        tool_artifacts,
+        tool_calls,
+    )
+
+
+def _selected_spreadsheet(
+    messages: list,
+) -> dict | None:
+    """Find a successful spreadsheet selection made by the file manager."""
+    for message in reversed(messages):
+        if not isinstance(
+            message,
+            ToolMessage,
+        ):
+            continue
+
+        artifact = message.artifact
+
+        if not isinstance(
+            artifact,
+            dict,
+        ):
+            continue
+
+        if (
+            artifact.get("operation")
+            == "resolve_spreadsheet_choice"
+            and artifact.get("ok") is True
+        ):
+            return artifact
+
+    return None
+
+
+def _delegate_tool(
+    spec,
+    agent,
+):
+    """Expose one ordinary spreadsheet specialist as an orchestrator tool."""
+
+    @tool(
+        spec.name,
+        description=spec.description,
+        response_format="content_and_artifact",
+    )
+    def delegate(
+        instruction: str,
+        runtime: ToolRuntime,
+        render_data: bool = False,
+    ) -> tuple[str, dict]:
+        subagent_instruction = (
+            _subagent_instruction(
+                instruction=instruction,
+                runtime=runtime,
+            )
         )
-        messages = finished["messages"]
-        used = [
-            call["name"]
-            for message in messages
-            for call in getattr(message, "tool_calls", None) or []
-        ]
 
-        # What the tools returned goes up with the answer. A subagent writes as
-        # though its reader watched it work, and the reader did not: given a
-        # summary alone, an orchestrator asked for the data has nothing to
-        # answer from, and fills the gap by inventing it.
-        evidence = [
-            str(message.content)
-            for message in messages
-            if isinstance(message, ToolMessage)
-        ]
+        result = agent.invoke(
+            {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": (
+                            subagent_instruction
+                            + "\n\n"
+                            + (
+                                "RENDER DATA:\ntrue"
+                                if render_data
+                                else "RENDER DATA:\nfalse"
+                            )
+                        ),
+                    }
+                ]
+            },
+            config={
+                "recursion_limit": (
+                    RECURSION_LIMIT
+                ),
+                "run_name": spec.name,
+            },
+        )
 
-        answer = str(messages[-1].content)
-        # an attempt to control hallucination
-        if evidence:
-            answer += "\n\nWhat the tools returned:\n" + "\n\n".join(evidence)
-        if not used:
-            answer += "\n\n(No tool was used. Nothing here was read from the file.)"
-        return answer
+        messages = result.get(
+            "messages",
+            [],
+        )
+
+        response = ""
+
+        if messages:
+            response = str(
+                messages[-1].content
+                or ""
+            )
+
+        (
+            tool_results,
+            tool_artifacts,
+            tool_calls,
+        ) = _collect_inner_results(
+            messages
+        )
+
+        return (
+            response,
+            {
+                "subagent": spec.name,
+                "response": response,
+                "tool_calls": tool_calls,
+                "tool_results": tool_results,
+                "tool_artifacts": tool_artifacts,
+                "render_data": render_data,
+            },
+        )
 
     return delegate
 
 
-def build_orchestrator():
-    """Build the orchestrator and the subagents it hands work to.
+def _file_manager_tool(
+    spec,
+    agent,
+):
+    """Expose the file manager and commit its selection to outer state."""
 
-    One model serves all of them, so the orchestrator and every subagent run
-    on the same settings as the single agent they are being compared against.
-    """
-    model = build_model()
-    delegates = [as_tool(spec, model) for spec in SUBAGENTS]
+    @tool(
+        spec.name,
+        description=spec.description,
+    )
+    def delegate(
+        instruction: str,
+        runtime: ToolRuntime,
+    ) -> Command:
+        
+        subagent_instruction = (
+            _subagent_instruction(
+                instruction=instruction,
+                runtime=runtime,
+            )
+        )
 
-    # Picked out of the backend in use rather than imported by name. Both
-    # backends have a tool called list_workbooks, and importing one of them
-    # here gave the orchestrator the local one (/Data) while everything under it
-    # talked to Drive.
-    tools = {tool.name: tool for tool in select_tools(BACKEND)}
+        result = agent.invoke(
+            {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": (
+                            subagent_instruction
+                        ),
+                    }
+                ]
+            },
+            config={
+                "recursion_limit": (
+                    RECURSION_LIMIT
+                ),
+                "run_name": spec.name,
+            },
+        )
 
-    # Choosing which file to work on is the orchestrator's own question, and
-    # neither of these gives back a row number, so neither of them tempts it
-    # into work that belongs to a subagent.
-    choosing = [tools["list_workbooks"]]
-    for name in ("find_spreadsheet", "use_spreadsheet"):
-        if name in tools:
-            choosing.append(tools[name])
+        messages = result.get(
+            "messages",
+            [],
+        )
 
+        response = ""
+
+        if messages:
+            response = str(
+                messages[-1].content
+                or ""
+            )
+
+        (
+            tool_results,
+            tool_artifacts,
+            tool_calls,
+        ) = _collect_inner_results(
+            messages
+        )
+
+        delegate_artifact = {
+            "subagent": spec.name,
+            "response": response,
+            "tool_calls": tool_calls,
+            "tool_results": tool_results,
+            "tool_artifacts": tool_artifacts,
+            "render_data": False,
+        }
+
+        selected = _selected_spreadsheet(
+            messages
+        )
+
+        if selected is None:
+            return Command(
+                update={
+                    "messages": [
+                        ToolMessage(
+                            content=response,
+                            artifact=delegate_artifact,
+                            tool_call_id=(
+                                runtime.tool_call_id
+                            ),
+                        )
+                    ]
+                }
+            )
+
+        selected_id = selected[
+            "spreadsheet_id"
+        ]
+
+        selected_name = selected[
+            "spreadsheet_name"
+        ]
+
+        # Temporary compatibility until spreadsheet state is
+        # removed from config during service/discovery cleanup.
+        config.SPREADSHEET = (
+            selected_name
+        )
+
+        return Command(
+            update={
+                "spreadsheet_id": (
+                    selected_id
+                ),
+                "spreadsheet_name": (
+                    selected_name
+                ),
+                "messages": [
+                    ToolMessage(
+                        content=response,
+                        artifact=delegate_artifact,
+                        tool_call_id=(
+                            runtime.tool_call_id
+                        ),
+                    )
+                ],
+            }
+        )
+
+    return delegate
+
+
+def build_subagent(spec, model):
+    """Build one stateless specialist agent."""
     return create_agent(
-        model,
-        [*choosing, *delegates],
-        system_prompt=ORCHESTRATOR_PROMPT,
-        checkpointer=InMemorySaver(),
+        model=model,
+        tools=spec.tools,
+        system_prompt=spec.system_prompt,
     )
 
 
-def build(variant: str = "single"):
-    """Build one of the two ways of working, by name.
+def build_orchestrator():
+    """Build the persistent planner and all of its specialist tools."""
 
-    Both come back as something a Session can be handed, which is what lets
-    the command line and the measurements stay the same either way.
-    """
-    if variant == "single":
-        return build_agent()
-    if variant == "multi":
-        return build_orchestrator()
+    model = build_model()
+    delegates = []
 
-    raise ValueError(f'Unknown variant "{variant}". Use one of: {", ".join(VARIANTS)}.')
+    for spec in SUBAGENTS:
+        agent = build_subagent(
+            spec,
+            model,
+        )
+
+        if spec.name == "file_manager":
+            delegate = (
+                _file_manager_tool(
+                    spec,
+                    agent,
+                )
+            )
+        else:
+            delegate = (
+                _delegate_tool(
+                    spec,
+                    agent,
+                )
+            )
+
+        delegates.append(
+            delegate
+        )
+
+    return create_agent(
+        model=model,
+        tools=delegates,
+        system_prompt=(
+            ORCHESTRATOR_PROMPT
+        ),
+        state_schema=(
+            OrchestratorState
+        ),
+        checkpointer=(
+            InMemorySaver()
+        ),
+    )
