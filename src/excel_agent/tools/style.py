@@ -1,7 +1,6 @@
 """Tool for changing how spreadsheet cells are displayed."""
 
-from typing import Any
-
+from typing import Any, Literal
 from googleapiclient.errors import HttpError
 from langchain_core.tools import tool
 
@@ -221,11 +220,49 @@ def format_range(
     columns: list[str] | None = None,
     first_row: int | None = None,
     last_row: int | None = None,
+
     number_format: str | None = None,
     clear_number_format: bool = False,
+
     bold: bool | None = None,
+    italic: bool | None = None,
+    underline: bool | None = None,
+    strikethrough: bool | None = None,
+
+    font_color: str | None = None,
+
     background: str | None = None,
     clear_background: bool = False,
+
+    horizontal_alignment: Literal[
+        "LEFT",
+        "CENTER",
+        "RIGHT",
+    ] | None = None,
+
+    vertical_alignment: Literal[
+        "TOP",
+        "MIDDLE",
+        "BOTTOM",
+    ] | None = None,
+
+    wrap: Literal[
+        "WRAP",
+        "CLIP",
+        "OVERFLOW_CELL",
+    ] | None = None,
+
+    border_style: Literal[
+        "DOTTED",
+        "DASHED",
+        "SOLID",
+        "SOLID_MEDIUM",
+        "SOLID_THICK",
+        "DOUBLE",
+    ] | None = None,
+
+    border_color: str | None = None,
+
     spreadsheet: str | None = None,
     sheet: str | None = None,
 ) -> dict:
@@ -251,13 +288,32 @@ def format_range(
         background: Fill colour by common name or "#RRGGBB".
         spreadsheet: Spreadsheet name. Omit for the current spreadsheet.
         sheet: Sheet name. Omit for the first sheet.
+        italic: True to italicize text, False to remove italics.
+        underline: True to underline text, False to remove underlining.
+        strikethrough: True to strike through text, False to remove it.
+        font_color: Text colour as a common name or "#RRGGBB".
+        horizontal_alignment: LEFT, CENTER, or RIGHT.
+        vertical_alignment: TOP, MIDDLE, or BOTTOM.
+        wrap: WRAP, CLIP, or OVERFLOW_CELL.
+        border_style: Apply the same border style to all four sides.
+        border_color: Optional border colour. Requires border_style.
     """
+
     if (
         number_format is None
         and not clear_number_format
         and bold is None
+        and italic is None
+        and underline is None
+        and strikethrough is None
+        and font_color is None
         and background is None
         and not clear_background
+        and horizontal_alignment is None
+        and vertical_alignment is None
+        and wrap is None
+        and border_style is None
+        and border_color is None
     ):
         return _error(
             "no_format_change",
@@ -282,6 +338,14 @@ def format_range(
             sheet=sheet,
         )
 
+    if border_color is not None and border_style is None:
+        return _error(
+            "border_style_required",
+            "border_color requires border_style.",
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
+
     if last_row is not None and first_row is None:
         return _error(
             "missing_first_row",
@@ -302,6 +366,43 @@ def format_range(
                 spreadsheet=spreadsheet,
                 sheet=sheet,
                 background=background,
+                named_colours=sorted(set(COLOURS)),
+            )
+
+    font_fill = None
+
+    if font_color is not None:
+        font_fill = _as_colour(font_color)
+
+        if font_fill is None:
+            return _error(
+                "invalid_font_colour",
+                (
+                    "The font colour is not a supported name "
+                    "or #RRGGBB value."
+                ),
+                spreadsheet=spreadsheet,
+                sheet=sheet,
+                font_color=font_color,
+                named_colours=sorted(set(COLOURS)),
+            )
+
+
+    border_fill = None
+
+    if border_color is not None:
+        border_fill = _as_colour(border_color)
+
+        if border_fill is None:
+            return _error(
+                "invalid_border_colour",
+                (
+                    "The border colour is not a supported name "
+                    "or #RRGGBB value."
+                ),
+                spreadsheet=spreadsheet,
+                sheet=sheet,
+                border_color=border_color,
                 named_colours=sorted(set(COLOURS)),
             )
 
@@ -395,51 +496,177 @@ def format_range(
         fields: list[str] = []
         changes: dict[str, Any] = {}
 
+
+        # Number format
         if number_format is not None:
             cell_format["numberFormat"] = _as_number_format(
                 number_format
             )
+
             fields.append(
                 "userEnteredFormat.numberFormat"
             )
+
             changes["number_format"] = number_format
 
         elif clear_number_format:
-            # An empty numberFormat with this field mask clears the explicit
-            # number format rather than replacing it with another pattern.
             cell_format["numberFormat"] = {}
+
             fields.append(
                 "userEnteredFormat.numberFormat"
             )
+
             changes["number_format"] = None
 
+
+        # Text formatting
+        text_format: dict = {}
+
         if bold is not None:
-            cell_format.setdefault(
-                "textFormat",
-                {},
-            )["bold"] = bold
+            text_format["bold"] = bold
 
             fields.append(
                 "userEnteredFormat.textFormat.bold"
             )
+
             changes["bold"] = bold
 
+
+        if italic is not None:
+            text_format["italic"] = italic
+
+            fields.append(
+                "userEnteredFormat.textFormat.italic"
+            )
+
+            changes["italic"] = italic
+
+
+        if underline is not None:
+            text_format["underline"] = underline
+
+            fields.append(
+                "userEnteredFormat.textFormat.underline"
+            )
+
+            changes["underline"] = underline
+
+
+        if strikethrough is not None:
+            text_format["strikethrough"] = strikethrough
+
+            fields.append(
+                "userEnteredFormat.textFormat.strikethrough"
+            )
+
+            changes["strikethrough"] = strikethrough
+
+
+        if font_fill is not None:
+            text_format["foregroundColorStyle"] = {
+                "rgbColor": font_fill,
+            }
+
+            fields.append(
+                "userEnteredFormat.textFormat.foregroundColorStyle"
+            )
+
+            changes["font_color"] = font_color
+
+
+        if text_format:
+            cell_format["textFormat"] = text_format
+
+
+        # Background
         if fill is not None:
             cell_format["backgroundColor"] = fill
+
             fields.append(
                 "userEnteredFormat.backgroundColor"
             )
+
             changes["background"] = background
 
         elif clear_background:
-            # The field mask targets only the background. Leaving the new
-            # background value unset clears that explicit formatting while
-            # preserving every other format on the cells.
             fields.append(
                 "userEnteredFormat.backgroundColor"
             )
+
             changes["background"] = None
 
+
+        # Alignment
+        if horizontal_alignment is not None:
+            cell_format[
+                "horizontalAlignment"
+            ] = horizontal_alignment
+
+            fields.append(
+                "userEnteredFormat.horizontalAlignment"
+            )
+
+            changes[
+                "horizontal_alignment"
+            ] = horizontal_alignment
+
+
+        if vertical_alignment is not None:
+            cell_format[
+                "verticalAlignment"
+            ] = vertical_alignment
+
+            fields.append(
+                "userEnteredFormat.verticalAlignment"
+            )
+
+            changes[
+                "vertical_alignment"
+            ] = vertical_alignment
+
+
+        # Wrapping
+        if wrap is not None:
+            cell_format["wrapStrategy"] = wrap
+
+            fields.append(
+                "userEnteredFormat.wrapStrategy"
+            )
+
+            changes["wrap"] = wrap
+
+
+        # Borders
+        if border_style is not None:
+            border: dict = {
+                "style": border_style,
+            }
+
+            if border_fill is not None:
+                border["colorStyle"] = {
+                    "rgbColor": border_fill,
+                }
+
+            cell_format["borders"] = {
+                "top": dict(border),
+                "bottom": dict(border),
+                "left": dict(border),
+                "right": dict(border),
+            }
+
+            fields.extend(
+                [
+                    "userEnteredFormat.borders.top",
+                    "userEnteredFormat.borders.bottom",
+                    "userEnteredFormat.borders.left",
+                    "userEnteredFormat.borders.right",
+                ]
+            )
+
+            changes["border"] = {
+                "style": border_style,
+                "color": border_color,
+            }
         ranges = [
             to_grid_range(
                 properties["sheetId"],

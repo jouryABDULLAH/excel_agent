@@ -1,164 +1,293 @@
-"""Tool for finding a row without knowing its number.
+"""Tool for finding rows by their cell contents."""
 
-Answers where something is inside one sheet. Which spreadsheet holds it is a
-different question, asked of Drive by find_spreadsheet, and kept apart because
-this one gives back row numbers: a row number is only good in the sheet it
-came from, so whoever will act on it should be the one who asked.
-"""
+from typing import Any
 
 from googleapiclient.errors import HttpError
 from langchain_core.tools import tool
 
+from excel_agent.services.google import readable
+from excel_agent.services.spreadsheet import spreadsheet_service
 from excel_agent.sheets import (
     cell,
     find_header_row,
-    grid,
     header_map,
     is_blank,
     last_data_row,
-    readable,
-    resolve_sheet,
     resolve_spreadsheet,
 )
 
-# Enough to show what matched without turning an answer into a whole sheet.
+
 MATCH_LIMIT = 30
 
 
-def matches(text: str, wanted: str, whole: bool) -> bool:
-    """Whether one cell's text counts as a match.
-
-    Matched without regard to case, because a person looking for "north"
-    means the column that says "North".
-    """
+def _matches(
+    text: str,
+    wanted: str,
+    whole: bool,
+) -> bool:
+    """Return whether displayed cell text matches the query."""
     if is_blank(text):
         return False
 
     text = str(text).strip().lower()
     wanted = wanted.strip().lower()
 
-    return text == wanted if whole else wanted in text
+    return (
+        text == wanted
+        if whole
+        else wanted in text
+    )
 
 
-@tool
+def _shown(one) -> str:
+    """Return displayed cell text without rendering None."""
+    if one.displayed is None:
+        return ""
+
+    return str(one.displayed)
+
+
+def _error(
+    code: str,
+    message: str,
+    *,
+    spreadsheet: str | None = None,
+    sheet: str | None = None,
+    **details: Any,
+) -> tuple[str, dict]:
+    artifact = {
+        "ok": False,
+        "operation": "find_data",
+        "error": code,
+        "message": message,
+        "spreadsheet": spreadsheet,
+        "sheet": sheet,
+        **details,
+    }
+
+    return message, artifact
+
+
+@tool(response_format="content_and_artifact")
 def find_data(
     text: str,
     column: str | None = None,
     whole_cell: bool = False,
     spreadsheet: str | None = None,
     sheet: str | None = None,
-) -> str:
-    """Find where something appears in a spreadsheet, by its value rather than its row number.
-
-    Use this instead of reading the sheet and looking through it yourself. It
-    gives back real row numbers, which is what a change has to be pointed at.
+) -> tuple[str, dict]:
+    """Find rows containing some displayed cell text.
 
     Args:
-        text: What to look for.
-        column: Look only in this column, by name. Leave it out to look in
-            every column.
-        whole_cell: True to match only a cell holding exactly this and nothing
-            else. False, the default, matches a cell containing it.
-        spreadsheet: Which spreadsheet to look in, by name. Leave this out to
-            look in the one being worked on.
-        sheet: Which sheet to look in, by name. Leave this out to look in the
-            first sheet.
+        text: Text/value to find.
+        column: Optional column name to search only there.
+        whole_cell: Require an exact whole-cell match when True.
+        spreadsheet: Spreadsheet name. Omit for the current spreadsheet.
+        sheet: Sheet name. Omit for the first sheet.
 
     Returns:
-        The rows that matched, with their row numbers, or a sentence saying
-        nothing matched. Use find_spreadsheet instead when the question is
-        which file holds something.
-
-    Examples:
-        find_data(text="ORD-1042")
-        find_data(text="North", column="Region")
+        Readable matching rows plus structured match metadata.
     """
     if is_blank(text):
-        return "Say what to look for."
+        return _error(
+            "missing_text",
+            "Say what to look for.",
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
 
     try:
-        spreadsheet_id, title = resolve_spreadsheet(spreadsheet)
-        properties = resolve_sheet(spreadsheet_id, sheet)
-        rows = grid(spreadsheet_id, properties["title"])
-    except ValueError as explanation:
-        return str(explanation)
-    except HttpError as failure:
-        return readable(failure)
+        spreadsheet_id, spreadsheet_name = resolve_spreadsheet(
+            spreadsheet
+        )
 
-    where = f"{properties['title']} in {title}"
+        properties = spreadsheet_service.resolve_sheet(
+            spreadsheet_id,
+            sheet,
+        )
+
+        sheet_name = properties["title"]
+
+        rows = spreadsheet_service.read_sheet(
+            spreadsheet_id,
+            sheet_name,
+        )
+
+    except ValueError as failure:
+        return _error(
+            "invalid_request",
+            str(failure),
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
+
+    except HttpError as failure:
+        return _error(
+            "google_api_error",
+            readable(failure),
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
 
     header_row = find_header_row(rows)
     headers = header_map(rows, header_row)
+
     if not headers:
-        return (
-            f"Sheet: {where}. No column names were found, so there is nothing "
-            "to search by column."
+        return _error(
+            "headers_not_found",
+            "No column headers were found.",
+            spreadsheet=spreadsheet_name,
+            sheet=sheet_name,
         )
 
-    looking_in = list(headers)
-    if column:
-        if column not in headers:
-            return (
-                f'There is no column called "{column}". '
-                f"The sheet has: {', '.join(looking_in)}."
-            )
-        looking_in = [column]
+    available_columns = list(headers)
 
-    last_row = last_data_row(rows, header_row)
+    if column is not None:
+        column = column.strip()
+
+        if column not in headers:
+            return _error(
+                "column_not_found",
+                "The requested column does not exist.",
+                spreadsheet=spreadsheet_name,
+                sheet=sheet_name,
+                column=column,
+                available_columns=available_columns,
+            )
+
+        search_columns = [column]
+
+    else:
+        search_columns = available_columns
+
+    last_row = last_data_row(
+        rows,
+        header_row,
+    )
+
     hits = []
-    for row in range(header_row + 1, last_row + 1):
-        for name in looking_in:
-            if matches(cell(rows, row, headers[name]).displayed, text, whole_cell): # type: ignore
-                hits.append((row, name))
+
+    for row_number in range(
+        header_row + 1,
+        last_row + 1,
+    ):
+        for name in search_columns:
+            one = cell(
+                rows,
+                row_number,
+                headers[name],
+            )
+
+            if _matches(
+                _shown(one),
+                text,
+                whole_cell,
+            ):
+                hits.append(
+                    {
+                        "row": row_number,
+                        "matched_in": name,
+                        "values": {
+                            header: _shown(
+                                cell(
+                                    rows,
+                                    row_number,
+                                    headers[header],
+                                )
+                            )
+                            for header in available_columns
+                        },
+                    }
+                )
+
                 break
 
     if not hits:
-        searched = f'"{column}"' if column else "any column"
-        return f'Nothing in {searched} holds "{text}", in {where}.'
-
-    shown = hits[:MATCH_LIMIT]
-    names = list(headers)
-    lines = [
-        f'{len(hits)} row(s) in {where} hold "{text}"'
-        + (f" in {column}" if column else "")
-        + ".",
-        "",
-        "| row | matched in | " + " | ".join(names) + " |",
-        "|" + "---|" * (len(names) + 2),
-    ]
-
-    for row, matched_in in shown:
-        values = [
-            str(cell(rows, row, headers[name]).displayed or "") for name in names
-        ]
-        lines.append(f"| {row} | {matched_in} | " + " | ".join(values) + " |")
-
-    if len(hits) > len(shown):
-        lines.append("")
-        lines.append(
-            f"{len(hits) - len(shown)} more row(s) matched and are not shown. "
-            "Narrow the search with a column, or with more of the text."
+        searched = (
+            f'"{column}"'
+            if column
+            else "any column"
         )
 
-    return "\n".join(lines)
+        content = (
+            f'Nothing in {searched} holds "{text}", '
+            f"in {sheet_name} in {spreadsheet_name}."
+        )
 
+        return content, {
+            "ok": True,
+            "operation": "find_data",
+            "spreadsheet": spreadsheet_name,
+            "sheet": sheet_name,
+            "query": text,
+            "column": column,
+            "whole_cell": whole_cell,
+            "match_count": 0,
+            "matches": [],
+            "truncated": False,
+            "rendered": content,
+        }
 
-CASES = [
-    ("a value anywhere", {"text": "North"}),
-    ("a value in one column", {"text": "North", "column": "Region"}),
-    ("a whole cell only", {"text": "North", "whole_cell": True}),
-    ("something that is not there", {"text": "no such value anywhere"}),
-    ("a column that does not exist", {"text": "North", "column": "Nonsense"}),
-]
+    shown_hits = hits[:MATCH_LIMIT]
+    truncated = len(hits) > MATCH_LIMIT
 
+    lines = [
+        (
+            f'{len(hits)} row(s) in {sheet_name} in '
+            f'{spreadsheet_name} hold "{text}"'
+            + (
+                f" in {column}"
+                if column
+                else ""
+            )
+            + "."
+        ),
+        "",
+        "| row | matched in | "
+        + " | ".join(available_columns)
+        + " |",
+        "|"
+        + "---|"
+        * (len(available_columns) + 2),
+    ]
 
-def main() -> None:
-    """Try the tool by hand with `python -m excel_agent.tools.find`."""
-    for label, arguments in CASES:
-        print(f"--- {label}: {arguments} ---")
-        print(find_data.invoke(arguments))
-        print()
+    for hit in shown_hits:
+        values = [
+            hit["values"][name]
+            for name in available_columns
+        ]
 
+        lines.append(
+            f'| {hit["row"]} | '
+            f'{hit["matched_in"]} | '
+            + " | ".join(values)
+            + " |"
+        )
 
-if __name__ == "__main__":
-    main()
+    if truncated:
+        lines.extend(
+            [
+                "",
+                (
+                    f"{len(hits) - len(shown_hits)} more "
+                    "matching row(s) are not displayed."
+                ),
+            ]
+        )
+
+    rendered = "\n".join(lines)
+
+    return rendered, {
+        "ok": True,
+        "operation": "find_data",
+        "spreadsheet": spreadsheet_name,
+        "sheet": sheet_name,
+        "query": text,
+        "column": column,
+        "whole_cell": whole_cell,
+        "match_count": len(hits),
+        "matches": shown_hits,
+        "returned_matches": len(shown_hits),
+        "truncated": truncated,
+        "rendered": rendered,
+    }
