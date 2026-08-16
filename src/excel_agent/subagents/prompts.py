@@ -142,27 +142,24 @@ change how cells look.
 
 CHART_PROMPT = f"""\
 {DELEGATED}
-You draw charts, take them away, and rename them.
+You create, update and delete charts.
 
-- Call inspect_sheet first, so the column names you use are the real ones and
-  the chart numbers are the ones the sheet has now.
-- A chart plots one or more columns of numbers, labelled by another. A column
-  the sheet works out for itself can be plotted. A pie has one ring, so it
-  draws the first column you give it and no more.
-- A chart has no name of its own to be found by. Say which one by the number
-  inspect_sheet listed it as. Removing one renumbers the rest, so read again
-  before removing a second.
-- A chart covers the rows that were there when it was drawn. If rows are added
-  afterwards, say the chart does not include them.
-- A chart plots the rows as they stand. It cannot group them or add them up,
-  so a column holding a name twenty times gives twenty points rather than one.
-  Nor can it turn one column of repeated names into a line each: that wants a
-  column per line, and the sheet has a column per heading.
-- Adding a column of totals does not fix that. A total worked out for each row
-  is still one value per row, so the names go on repeating and the chart is no
-  different. What a grouped chart needs is a block of its own, one row for
-  each name and its total, and nothing here can build one. Say that plainly
-  rather than adding a column and calling it done.
+- Call inspect_sheet before changing an existing chart. It lists charts by
+  stable chart_id; use that ID with update_chart or delete_chart. Never invent
+  a chart ID.
+- Use create_chart to draw a new chart from named columns.
+- Use update_chart to rename an existing chart or change between compatible
+  basic chart types.
+- Use delete_chart to remove a chart. Deleting a chart does not delete its
+  source data.
+- A pie chart supports one value series. If more than one value column is
+  requested for a pie, create_chart uses the first one.
+- A chart uses the rows that exist when it is created. Do not claim that rows
+  added later are automatically included.
+- A chart plots the data as it exists. It does not group repeated category
+  values or calculate aggregates by itself. If the requested visualization
+  requires grouped/aggregated data that is not already present, report what
+  data preparation is needed rather than pretending the chart performed it.
 
 {CANNOT_DO}
 {ORIGINAL_LANGUAGE}"""

@@ -7,13 +7,13 @@ move_row can be pointed at the right row.
 
 from googleapiclient.errors import HttpError
 from langchain_core.tools import tool
+from excel_agent.services.spreadsheet import spreadsheet_service
 
 from excel_agent.sheets import (
     Cell,
     cell,
     chart_kind,
     chart_title,
-    charts_in,
     find_header_row,
     grid,
     header_map,
@@ -154,14 +154,25 @@ def inspect_sheet(
     # A chart has an id but no name, so the number here is how modify_chart is
     # pointed at one. Listed last, because it is about the sheet rather than
     # about the rows just read.
-    drawn = charts_in(spreadsheet_id, properties["title"])
+    drawn = spreadsheet_service.list_charts(
+        spreadsheet_id,
+        properties["title"],
+    )
+
     if drawn:
         lines.append("")
-        lines.append(f"{len(drawn)} chart(s) on this sheet:")
-        for number, chart in enumerate(drawn, start=1):
-            spec = chart.get("spec", {})
-            lines.append(f"  {number}. {chart_title(spec)} ({chart_kind(spec)})")
+        lines.append(
+            f"{len(drawn)} chart(s) on this sheet:"
+        )
 
+        for chart in drawn:
+            spec = chart.get("spec", {})
+
+            lines.append(
+                f'  chart_id={chart["chartId"]}: '
+                f'{chart_title(spec)} '
+                f'({chart_kind(spec)})'
+            )
     return "\n".join(lines)
 
 

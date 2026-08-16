@@ -1,6 +1,10 @@
 """The tools the agent is allowed to use on Google spreadsheets."""
 
-from excel_agent.tools.charts import modify_chart
+from excel_agent.tools.charts import (
+    create_chart,
+    delete_chart,
+    update_chart,
+)
 from excel_agent.tools.columns import (
     delete_column,
     insert_column,
@@ -50,7 +54,9 @@ TOOLS = [
     move_column,
     set_column_formula,
 
-    modify_chart,
+    create_chart,
+    update_chart,
+    delete_chart,
 
     format_range,
     copy_format,

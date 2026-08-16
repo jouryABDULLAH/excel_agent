@@ -82,10 +82,15 @@ def subagents() -> tuple[SubagentSpec, ...]:
             tools=(reading, *structural),
         ),
         SubagentSpec(
-            name="chart_maker",
-            description=prompts.CHART_DESCRIPTION,
-            system_prompt=prompts.CHART_PROMPT,
-            tools=(reading, tools["modify_chart"]),
+            "chart_maker",
+            prompts.CHART_DESCRIPTION,
+            prompts.CHART_PROMPT,
+            (
+                reading,
+                tools["create_chart"],
+                tools["update_chart"],
+                tools["delete_chart"],
+            ),
         ),
     )
 

@@ -536,77 +536,57 @@ class SpreadsheetService:
     # Charts
     # ------------------------------------------------------------------
 
-    def list_charts(
-        self,
-        spreadsheet_id: str,
-    ) -> list[dict]:
-        """Return charts from all sheets."""
-        response = self._google.execute(
-            self._google.sheets
-            .spreadsheets()
-            .get(
-                spreadsheetId=spreadsheet_id,
-                fields="sheets(properties(title),charts(chartId,spec,position))",
-            )
-        )
-
-        charts = []
-
-        for sheet in response.get("sheets", []):
-            title = sheet.get("properties", {}).get("title")
-
-            for chart in sheet.get("charts", []):
-                charts.append(
-                    {
-                        "sheet": title,
-                        **chart,
-                    }
-                )
-
-        return charts
-
     def add_chart(
         self,
         spreadsheet_id: str,
-        chart_spec: dict,
+        chart: dict,
     ) -> dict:
-        """Create a chart using a Google Sheets AddChartRequest."""
-        return self.batch_update(
+        """Add one embedded chart and return Google's response."""
+        result = self.batch_update(
             spreadsheet_id,
             [
                 {
                     "addChart": {
-                        "chart": chart_spec,
+                        "chart": chart,
                     }
                 }
             ],
         )
 
-    def update_chart(
+        replies = result.get("replies") or []
+
+        if not replies:
+            return {}
+
+        return replies[0].get("addChart", {}).get("chart", {})
+
+
+    def update_chart_spec(
         self,
         spreadsheet_id: str,
         chart_id: int,
-        chart_spec: dict,
+        spec: dict,
     ) -> dict:
-        """Replace a chart's specification."""
+        """Replace the specification of one embedded chart."""
         return self.batch_update(
             spreadsheet_id,
             [
                 {
                     "updateChartSpec": {
                         "chartId": chart_id,
-                        "spec": chart_spec,
+                        "spec": spec,
                     }
                 }
             ],
         )
+
 
     def delete_chart(
         self,
         spreadsheet_id: str,
         chart_id: int,
     ) -> dict:
-        """Delete a chart."""
+        """Delete one embedded chart by its stable chart ID."""
         return self.batch_update(
             spreadsheet_id,
             [
@@ -618,6 +598,34 @@ class SpreadsheetService:
             ],
         )
 
+    def list_charts(
+        self,
+        spreadsheet_id: str,
+        sheet_name: str | None = None,
+    ) -> list[dict]:
+        """Return embedded charts, optionally from one sheet only."""
+        spreadsheet = self.get_spreadsheet(spreadsheet_id)
+
+        charts = []
+
+        for sheet in spreadsheet.get("sheets", []):
+            properties = sheet.get("properties", {})
+            title = properties.get("title")
+
+            if sheet_name is not None and title != sheet_name:
+                continue
+
+            for chart in sheet.get("charts", []) or []:
+                charts.append(
+                    {
+                        **chart,
+                        "sheet": title,
+                        "sheetId": properties.get("sheetId"),
+                    }
+                )
+
+        return charts
+    
     # ------------------------------------------------------------------
     # Cache / conversion helpers
     # ------------------------------------------------------------------

@@ -1,64 +1,112 @@
-"""Tool for the charts on a sheet."""
+"""Tools for creating, updating and deleting spreadsheet charts."""
 
-from typing import Literal
+from typing import Any, Literal
 
 from googleapiclient.errors import HttpError
 from langchain_core.tools import tool
 
+from excel_agent.services.google import readable
+from excel_agent.services.spreadsheet import spreadsheet_service
 from excel_agent.sheets import (
-    batch,
-    chart_kind,
-    chart_title,
-    charts_in,
     find_header_row,
-    grid,
     header_map,
     last_data_row,
-    readable,
-    resolve_sheet,
     resolve_spreadsheet,
     to_grid_range,
 )
 
-# A pie chart is described differently from the rest, so it is the one kind
-# that does not go through basicChart.
-BASIC_KINDS = {"column": "COLUMN", "bar": "BAR", "line": "LINE", "scatter": "SCATTER"}
-KINDS = (*BASIC_KINDS, "pie")
 
-# Where a new chart is anchored, and how far the next one sits below it, so
-# two charts do not land on top of each other.
+ChartKind = Literal[
+    "column",
+    "bar",
+    "line",
+    "area",
+    "scatter",
+    "pie",
+]
+
+
+BASIC_KINDS = {
+    "column": "COLUMN",
+    "bar": "BAR",
+    "line": "LINE",
+    "area": "AREA",
+    "scatter": "SCATTER",
+}
+
+
 CHART_ROWS = 18
 
 
-def source(sheet_id: int, column: int, first_row: int, last_row: int) -> dict:
-    """One column of a sheet, as a chart reads it.
+def _error(
+    code: str,
+    message: str,
+    *,
+    spreadsheet: str | None = None,
+    sheet: str | None = None,
+    **details: Any,
+) -> dict:
+    return {
+        "ok": False,
+        "error": code,
+        "message": message,
+        "spreadsheet": spreadsheet,
+        "sheet": sheet,
+        **details,
+    }
 
-    The header row is taken in on purpose: Google names a series after the
-    first cell of its range, so including it is what gives the legend the
-    column's own name instead of "Series 1".
-    """
+
+def _source(
+    sheet_id: int,
+    column: int,
+    first_row: int,
+    last_row: int,
+) -> dict:
+    """Represent one column as a chart data source."""
     return {
         "sourceRange": {
-            "sources": [to_grid_range(sheet_id, first_row, last_row, column, column)]
+            "sources": [
+                to_grid_range(
+                    sheet_id,
+                    first_row,
+                    last_row,
+                    column,
+                    column,
+                )
+            ]
         }
     }
 
 
-def spec_for(
-    kind: str,
+def _chart_spec(
+    *,
+    kind: ChartKind,
     title: str,
     sheet_id: int,
-    labels: int,
-    values: list[int],
+    labels_column: int,
+    value_columns: list[int],
     header_row: int,
     last_row: int,
 ) -> dict:
-    """What to draw, in the shape the API wants it."""
-    domain = source(sheet_id, labels, header_row, last_row)
-    series = [source(sheet_id, column, header_row, last_row) for column in values]
+    """Build an EmbeddedChart specification."""
+    domain = _source(
+        sheet_id,
+        labels_column,
+        header_row,
+        last_row,
+    )
+
+    series = [
+        _source(
+            sheet_id,
+            column,
+            header_row,
+            last_row,
+        )
+        for column in value_columns
+    ]
 
     if kind == "pie":
-        # A pie has one ring, so only the first column asked for is drawn.
         return {
             "title": title,
             "pieChart": {
@@ -74,238 +122,511 @@ def spec_for(
             "chartType": BASIC_KINDS[kind],
             "legendPosition": "BOTTOM_LEGEND",
             "headerCount": 1,
-            "domains": [{"domain": domain}],
-            "series": [{"series": one, "targetAxis": "LEFT_AXIS"} for one in series],
+            "domains": [
+                {
+                    "domain": domain,
+                }
+            ],
+            "series": [
+                {
+                    "series": one,
+                    "targetAxis": "LEFT_AXIS",
+                }
+                for one in series
+            ],
         },
     }
 
 
+def _load_table(
+    spreadsheet: str | None,
+    sheet: str | None,
+) -> tuple[
+    str,
+    str,
+    dict,
+    list,
+    int,
+    dict[str, int],
+    int,
+]:
+    """Resolve the sheet and read its table/chart structure."""
+    spreadsheet_id, spreadsheet_name = resolve_spreadsheet(
+        spreadsheet
+    )
+
+    properties = spreadsheet_service.resolve_sheet(
+        spreadsheet_id,
+        sheet,
+    )
+
+    sheet_name = properties["title"]
+
+    rows = spreadsheet_service.read_sheet(
+        spreadsheet_id,
+        sheet_name,
+    )
+
+    header_row = find_header_row(rows)
+    headers = header_map(rows, header_row)
+    last_row = last_data_row(rows, header_row)
+
+    charts = spreadsheet_service.list_charts(
+        spreadsheet_id,
+        sheet_name,
+    )
+
+    return (
+        spreadsheet_id,
+        spreadsheet_name,
+        properties,
+        charts,
+        header_row,
+        headers,
+        last_row,
+    )
+
+
+def _chart_by_id(
+    charts: list[dict],
+    chart_id: int,
+) -> dict | None:
+    """Find one chart by Google's stable chart ID."""
+    for chart in charts:
+        if chart.get("chartId") == chart_id:
+            return chart
+
+    return None
+
+
 @tool
-def modify_chart(
-    action: Literal["add", "remove", "retitle"],
-    kind: Literal["column", "bar", "line", "pie", "scatter"] | None = None,
-    labels_column: str | None = None,
-    value_columns: list[str] | None = None,
-    title: str | None = None,
-    chart: int | None = None,
+def create_chart(
+    kind: ChartKind,
+    labels_column: str,
+    value_columns: list[str],
+    title: str,
     spreadsheet: str | None = None,
     sheet: str | None = None,
-) -> str:
-    """Add a chart to the sheet, remove one, or change its title.
-
-    Call inspect_sheet first, so the column names you use are the real ones,
-    and so the chart numbers are the ones the sheet has now.
+) -> dict:
+    """Create an embedded chart from existing table columns.
 
     Args:
-        action: What to do.
-        kind: What sort of chart to draw. Needed for add only.
-        labels_column: The column whose values label the chart, by header
-            name. Needed for add only.
-        value_columns: The columns to plot, by header name. Needed for add
-            only. A pie chart draws the first of them.
-        title: What the chart should be called. Needed for add and retitle.
-        chart: Which chart to change, by the number inspect_sheet gives it.
-            Needed for remove and retitle.
-        spreadsheet: Which spreadsheet to change, by name. Leave this out to
-            change the one being worked on.
-        sheet: Which sheet to change, by name. Leave this out to change the
-            first sheet in the spreadsheet.
-
-    Returns:
-        A sentence saying what changed, or an explanation of why nothing was
-        changed. Nothing is drawn when the answer is an explanation.
-
-    Examples:
-        modify_chart(action="add", kind="column", labels_column="Product",
-                     value_columns=["Units"], title="Units by product")
-        modify_chart(action="retitle", chart=1, title="Sales by region")
-        modify_chart(action="remove", chart=1)
+        kind: Chart type: column, bar, line, area, scatter, or pie.
+        labels_column: Column supplying category/x-axis labels.
+        value_columns: One or more columns containing values to plot.
+        title: Chart title.
+        spreadsheet: Spreadsheet name. Omit for the current spreadsheet.
+        sheet: Sheet name. Omit for the first sheet.
     """
+    if not title or not title.strip():
+        return _error(
+            "missing_title",
+            "The chart needs a title.",
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
+
+    if not labels_column or not labels_column.strip():
+        return _error(
+            "missing_labels_column",
+            "The chart needs a labels column.",
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
+
+    if not value_columns:
+        return _error(
+            "missing_value_columns",
+            "The chart needs at least one value column.",
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
+
+    labels_column = labels_column.strip()
+    value_columns = [
+        column.strip()
+        for column in value_columns
+        if column and column.strip()
+    ]
+
+    if not value_columns:
+        return _error(
+            "missing_value_columns",
+            "The chart needs at least one value column.",
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
+
     try:
-        spreadsheet_id, name = resolve_spreadsheet(spreadsheet)
-        properties = resolve_sheet(spreadsheet_id, sheet)
-        drawn = charts_in(spreadsheet_id, properties["title"])
-    except ValueError as explanation:
-        return str(explanation)
-    except HttpError as failure:
-        return readable(failure)
+        (
+            spreadsheet_id,
+            spreadsheet_name,
+            properties,
+            charts,
+            header_row,
+            headers,
+            last_row,
+        ) = _load_table(
+            spreadsheet,
+            sheet,
+        )
 
-    sheet_id = properties["sheetId"]
-    where = f"({properties['title']} in {name})"
+        sheet_name = properties["title"]
 
-    # Everything is checked before anything is drawn, so a rejected call
-    # leaves the sheet exactly as it was.
-    if action in ("remove", "retitle"):
-        if chart is None:
-            return (
-                f"The {action} action needs the number of a chart. Call "
-                "inspect_sheet to see which charts there are."
-            )
-        if not drawn:
-            return f"There are no charts on this sheet. {where}"
-        if chart < 1 or chart > len(drawn):
-            return (
-                f"There is no chart {chart}. This sheet has "
-                f"{len(drawn)} of them, numbered 1 to {len(drawn)}. {where}"
-            )
-
-    if action in ("add", "retitle") and (not title or not title.strip()):
-        return f"The {action} action needs a title to give the chart."
-
-    if action == "add":
-        # A kind that is not one of these is refused by the schema before the
-        # tool runs, so what is left to catch here is not naming one at all.
-        if kind is None:
-            return f'The add action needs a kind: {", ".join(KINDS)}.'
-        if not labels_column:
-            return "The add action needs labels_column, the column to label by."
-        if not value_columns:
-            return "The add action needs value_columns, the columns to plot."
-
-        try:
-            rows = grid(spreadsheet_id, properties["title"])
-        except HttpError as failure:
-            return readable(failure)
-
-        header_row = find_header_row(rows)
-        headers = header_map(rows, header_row)
         if not headers:
-            return (
-                f"No column names were found, so there is nothing to plot "
-                f"by name. {where}"
+            return _error(
+                "headers_not_found",
+                "No column headers were found.",
+                spreadsheet=spreadsheet_name,
+                sheet=sheet_name,
             )
+
+        requested = [
+            labels_column,
+            *value_columns,
+        ]
 
         unknown = [
             column
-            for column in [labels_column, *value_columns]
+            for column in requested
             if column not in headers
         ]
+
         if unknown:
-            return (
-                f"Unknown column(s): {', '.join(unknown)}. "
-                f"The sheet has: {', '.join(headers)}. {where}"
+            return _error(
+                "unknown_columns",
+                "One or more chart columns do not exist.",
+                spreadsheet=spreadsheet_name,
+                sheet=sheet_name,
+                unknown_columns=unknown,
+                available_columns=list(headers),
             )
 
-        last_row = last_data_row(rows, header_row)
         if last_row <= header_row:
-            return f"There are no rows of data to draw a chart from. {where}"
+            return _error(
+                "no_data_rows",
+                "There are no data rows to chart.",
+                spreadsheet=spreadsheet_name,
+                sheet=sheet_name,
+            )
+
+        used_value_columns = value_columns
+
+        # A pie has only one series.
+        if kind == "pie":
+            used_value_columns = value_columns[:1]
+
+        anchor = {
+            "sheetId": properties["sheetId"],
+            "rowIndex": len(charts) * CHART_ROWS,
+            # Grid position is zero-based. The 1-based number of the final
+            # named column is therefore already the first free zero-based
+            # column index.
+            "columnIndex": max(headers.values()),
+        }
+
+        spec = _chart_spec(
+            kind=kind,
+            title=title.strip(),
+            sheet_id=properties["sheetId"],
+            labels_column=headers[labels_column],
+            value_columns=[
+                headers[column]
+                for column in used_value_columns
+            ],
+            header_row=header_row,
+            last_row=last_row,
+        )
+
+        created = spreadsheet_service.add_chart(
+            spreadsheet_id,
+            {
+                "spec": spec,
+                "position": {
+                    "overlayPosition": {
+                        "anchorCell": anchor,
+                    }
+                },
+            },
+        )
+
+        chart_id = created.get("chartId")
+
+        return {
+            "ok": True,
+            "operation": "create_chart",
+            "spreadsheet": spreadsheet_name,
+            "sheet": sheet_name,
+            "chart_id": chart_id,
+            "title": title.strip(),
+            "kind": kind,
+            "labels_column": labels_column,
+            "value_columns": used_value_columns,
+            "first_data_row": header_row + 1,
+            "last_data_row": last_row,
+        }
+
+    except ValueError as failure:
+        return _error(
+            "invalid_request",
+            str(failure),
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
+
+    except HttpError as failure:
+        return _error(
+            "google_api_error",
+            readable(failure),
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
+
+
+@tool
+def update_chart(
+    chart_id: int,
+    title: str | None = None,
+    kind: ChartKind | None = None,
+    spreadsheet: str | None = None,
+    sheet: str | None = None,
+) -> dict:
+    """Update an existing chart's title and/or chart type.
+
+    The chart is addressed by its stable Google Sheets chart ID.
+
+    Changing between basic chart types such as column, bar, line, area and
+    scatter preserves the chart's existing data ranges. Changing to or from a
+    pie chart is not supported by this operation because pie and basic charts
+    use different specification shapes.
+
+    Args:
+        chart_id: Stable ID of the chart to update.
+        title: Optional new title.
+        kind: Optional new chart type.
+        spreadsheet: Spreadsheet name. Omit for the current spreadsheet.
+        sheet: Sheet name. Omit for the first sheet.
+    """
+    if title is None and kind is None:
+        return _error(
+            "no_chart_change",
+            "No chart change was supplied.",
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+            chart_id=chart_id,
+        )
+
+    if title is not None:
+        title = title.strip()
+
+        if not title:
+            return _error(
+                "missing_title",
+                "The new chart title cannot be blank.",
+                spreadsheet=spreadsheet,
+                sheet=sheet,
+                chart_id=chart_id,
+            )
 
     try:
-        if action == "add":
-            assert title and kind and labels_column and value_columns
-            # Anchored clear of the data, and one chart's depth lower for each
-            # one already there, so a second chart does not cover the first.
-            # An anchor counts from zero, while a column number counts from
-            # one, so the last column's number is already the first free one.
-            anchor = {
-                "sheetId": sheet_id,
-                "rowIndex": len(drawn) * CHART_ROWS,
-                "columnIndex": max(headers.values()),
-            }
-            batch(
-                spreadsheet_id,
-                [
-                    {
-                        "addChart": {
-                            "chart": {
-                                "spec": spec_for(
-                                    kind,
-                                    title.strip(),
-                                    sheet_id,
-                                    headers[labels_column],
-                                    [headers[column] for column in value_columns],
-                                    header_row,
-                                    last_row,
-                                ),
-                                "position": {
-                                    "overlayPosition": {"anchorCell": anchor}
-                                },
-                            }
-                        }
-                    }
+        (
+            spreadsheet_id,
+            spreadsheet_name,
+            properties,
+            charts,
+            _,
+            _,
+            _,
+        ) = _load_table(
+            spreadsheet,
+            sheet,
+        )
+
+        sheet_name = properties["title"]
+
+        chart = _chart_by_id(
+            charts,
+            chart_id,
+        )
+
+        if chart is None:
+            return _error(
+                "chart_not_found",
+                "No chart with that ID exists on this sheet.",
+                spreadsheet=spreadsheet_name,
+                sheet=sheet_name,
+                chart_id=chart_id,
+                available_chart_ids=[
+                    chart.get("chartId")
+                    for chart in charts
                 ],
             )
-            plotted = ", ".join(value_columns)
-            drawn_note = (
-                " A pie draws one ring, so only the first was used."
-                if kind == "pie" and len(value_columns) > 1
-                else ""
-            )
-            return (
-                f'Drew a {kind} chart called "{title.strip()}", plotting '
-                f"{plotted} against {labels_column}, over rows "
-                f"{header_row + 1} to {last_row}.{drawn_note} It covers the "
-                "rows that were there when it was drawn: rows added later are "
-                f"not in it. {where}"
+
+        spec = dict(chart.get("spec", {}))
+
+        old_title = spec.get("title", "")
+        old_kind: str | None = None
+
+        if "pieChart" in spec:
+            old_kind = "pie"
+
+        elif "basicChart" in spec:
+            api_kind = (
+                spec.get("basicChart", {})
+                .get("chartType")
             )
 
-        if action == "remove":
-            assert chart is not None
-            going = drawn[chart - 1]
-            spec = going.get("spec", {})
-            batch(
-                spreadsheet_id,
-                [{"deleteEmbeddedObject": {"objectId": going["chartId"]}}],
-            )
-            return (
-                f'Removed chart {chart}, "{chart_title(spec)}" '
-                f"({chart_kind(spec)}). The data it was drawn from is "
-                f"untouched, and the charts after it have moved up a number. "
-                f"{where}"
+            old_kind = next(
+                (
+                    name
+                    for name, api_name
+                    in BASIC_KINDS.items()
+                    if api_name == api_kind
+                ),
+                None,
             )
 
-        if action == "retitle":
-            assert chart is not None and title is not None
-            changing = drawn[chart - 1]
-            # The whole spec goes back with one thing altered, because there
-            # is no way to change a title on its own.
-            spec = dict(changing.get("spec", {}))
-            was = chart_title(spec)
-            spec["title"] = title.strip()
-            batch(
-                spreadsheet_id,
-                [
-                    {
-                        "updateChartSpec": {
-                            "chartId": changing["chartId"],
-                            "spec": spec,
-                        }
-                    }
-                ],
+        if title is not None:
+            spec["title"] = title
+
+        if kind is not None and kind != old_kind:
+            if kind == "pie" or old_kind == "pie":
+                return _error(
+                    "incompatible_chart_type_change",
+                    (
+                        "Changing to or from a pie chart requires recreating "
+                        "the chart because pie and basic charts use different "
+                        "data specifications."
+                    ),
+                    spreadsheet=spreadsheet_name,
+                    sheet=sheet_name,
+                    chart_id=chart_id,
+                    current_kind=old_kind,
+                    requested_kind=kind,
+                )
+
+            basic = dict(
+                spec.get("basicChart", {})
             )
-            return (
-                f'Renamed chart {chart} from "{was}" to "{title.strip()}". '
-                f"What it draws is unchanged. {where}"
-            )
+            basic["chartType"] = BASIC_KINDS[kind]
+            spec["basicChart"] = basic
+
+        spreadsheet_service.update_chart_spec(
+            spreadsheet_id,
+            chart_id,
+            spec,
+        )
+
+        return {
+            "ok": True,
+            "operation": "update_chart",
+            "spreadsheet": spreadsheet_name,
+            "sheet": sheet_name,
+            "chart_id": chart_id,
+            "old_title": old_title,
+            "title": spec.get("title"),
+            "old_kind": old_kind,
+            "kind": kind or old_kind,
+        }
+
+    except ValueError as failure:
+        return _error(
+            "invalid_request",
+            str(failure),
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
+
     except HttpError as failure:
-        return readable(failure)
-
-    return f'Unknown action "{action}". Use add, remove or retitle.'
-
-
-CASES = [
-    ("add with no kind", {"action": "add", "title": "X",
-                          "labels_column": "Region", "value_columns": ["Units"]}),
-    ("add with no title", {"action": "add", "kind": "column",
-                           "labels_column": "Region", "value_columns": ["Units"]}),
-    ("a column that does not exist", {"action": "add", "kind": "column", "title": "X",
-                                      "labels_column": "Nonsense", "value_columns": ["Units"]}),
-    ("remove with no number", {"action": "remove"}),
-    ("a chart number that does not exist", {"action": "remove", "chart": 99}),
-]
+        return _error(
+            "google_api_error",
+            readable(failure),
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
 
 
-def main() -> None:
-    """Try the refusals by hand with `python -m excel_agent.tools.charts`.
+@tool
+def delete_chart(
+    chart_id: int,
+    spreadsheet: str | None = None,
+    sheet: str | None = None,
+) -> dict:
+    """Delete one embedded chart by its stable chart ID.
 
-    Only the calls that draw nothing are here. Anything that writes belongs in
-    a scratch spreadsheet, run by hand.
+    The source spreadsheet data is not deleted.
+
+    Args:
+        chart_id: Stable Google Sheets chart ID.
+        spreadsheet: Spreadsheet name. Omit for the current spreadsheet.
+        sheet: Sheet name. Omit for the first sheet.
     """
-    for label, arguments in CASES:
-        print(f"--- {label}: {arguments} ---")
-        print(modify_chart.invoke(arguments))
-        print()
+    try:
+        (
+            spreadsheet_id,
+            spreadsheet_name,
+            properties,
+            charts,
+            _,
+            _,
+            _,
+        ) = _load_table(
+            spreadsheet,
+            sheet,
+        )
 
+        sheet_name = properties["title"]
 
-if __name__ == "__main__":
-    main()
+        chart = _chart_by_id(
+            charts,
+            chart_id,
+        )
+
+        if chart is None:
+            return _error(
+                "chart_not_found",
+                "No chart with that ID exists on this sheet.",
+                spreadsheet=spreadsheet_name,
+                sheet=sheet_name,
+                chart_id=chart_id,
+                available_chart_ids=[
+                    chart.get("chartId")
+                    for chart in charts
+                ],
+            )
+
+        title = (
+            chart.get("spec", {})
+            .get("title", "")
+        )
+
+        spreadsheet_service.delete_chart(
+            spreadsheet_id,
+            chart_id,
+        )
+
+        return {
+            "ok": True,
+            "operation": "delete_chart",
+            "spreadsheet": spreadsheet_name,
+            "sheet": sheet_name,
+            "chart_id": chart_id,
+            "title": title,
+            "data_changed": False,
+        }
+
+    except ValueError as failure:
+        return _error(
+            "invalid_request",
+            str(failure),
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
+
+    except HttpError as failure:
+        return _error(
+            "google_api_error",
+            readable(failure),
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
