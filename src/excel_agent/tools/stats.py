@@ -240,7 +240,7 @@ def sheet_stats(
         least = min(
             filled,
             key=lambda one: one.value,
-        )
+        ) # type: ignore
 
         greatest = max(
             filled,

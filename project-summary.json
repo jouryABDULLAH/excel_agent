@@ -1,0 +1,218 @@
+{
+  "project": {
+    "name": "excel-agent",
+    "version": "0.1.0",
+    "description": "An agent that turns natural language into add, edit and remove actions on a Google spreadsheet.",
+    "language": "python",
+    "requires_python": ">=3.10",
+    "layout": "src",
+    "entry_points": {
+      "cli": "excel-agent = excel_agent.cli:main",
+      "module": "python -m excel_agent",
+      "ui": "streamlit run src/excel_agent/ui.py"
+    },
+    "branch": "orchestrator-separation"
+  },
+
+  "stack": {
+    "agent_framework": ["langchain>=0.3", "langgraph>=0.2"],
+    "model_provider": {
+      "package": "langchain-groq>=0.2",
+      "client": "ChatGroq",
+      "default_model": "openai/gpt-oss-120b",
+      "env_override": "EXCEL_AGENT_MODEL",
+      "temperature": 0.3,
+      "parallel_tool_calls": false,
+      "built_by": "excel_agent.model.build_model"
+    },
+    "backend": [
+      "google-api-python-client>=2.100",
+      "google-auth-httplib2>=0.2",
+      "google-auth-oauthlib>=1.2"
+    ],
+    "optional": {
+      "ui": ["streamlit>=1.40"],
+      "dev": ["pytest>=8.0", "python-dotenv>=1.0"]
+    },
+    "tracing": "LangSmith, enabled via environment variables"
+  },
+
+  "configuration": {
+    "module": "src/excel_agent/config.py",
+    "env": {
+      "GROQ_API_KEY": "required; read from the shell, not from .env by default",
+      "EXCEL_AGENT_MODEL": "optional model override",
+      "EXCEL_AGENT_SPREADSHEET": "optional starting spreadsheet, read lazily so a mid-conversation choice wins"
+    },
+    "credentials": ["credentials.json", "token.json"],
+    "max_turns": 10,
+    "recursion_limit": "MAX_TURNS * 2 + 1"
+  },
+
+  "architecture": {
+    "shape": "single persistent orchestrator; five stateless specialist subagents exposed to it as tools",
+    "built_in": "src/excel_agent/subagents/factory.py",
+    "model_sharing": "one ChatGroq instance built by build_model() and passed to the orchestrator and every subagent",
+    "orchestrator": {
+      "state_schema": "OrchestratorState(AgentState)",
+      "state_fields": ["messages", "spreadsheet_id", "spreadsheet_name"],
+      "checkpointer": "InMemorySaver",
+      "system_prompt": "ORCHESTRATOR_PROMPT",
+      "owns": "the conversation and the active spreadsheet; subagents receive it as context and never keep it"
+    },
+    "delegation": {
+      "context_passed_down": [
+        "ORIGINAL USER REQUEST",
+        "CURRENT SPREADSHEET",
+        "CURRENT SPREADSHEET ID",
+        "TASK"
+      ],
+      "ordinary_subagents": {
+        "wrapper": "_delegate_tool",
+        "response_format": "content_and_artifact",
+        "extra_arg": "render_data",
+        "artifact_fields": [
+          "subagent",
+          "response",
+          "tool_calls",
+          "tool_results",
+          "tool_artifacts",
+          "render_data"
+        ]
+      },
+      "file_manager": {
+        "wrapper": "_file_manager_tool",
+        "returns": "langgraph Command",
+        "writes_state": ["spreadsheet_id", "spreadsheet_name"],
+        "detected_by": "a ToolMessage artifact with operation=resolve_spreadsheet_choice and ok=true"
+      }
+    },
+    "interfaces": {
+      "streamlit": "src/excel_agent/ui.py",
+      "cli": "src/excel_agent/cli.py",
+      "runner": "src/excel_agent/runner.py"
+    },
+    "backend_layer": "src/excel_agent/services (google.py, drive.py, spreadsheet.py)"
+  },
+
+  "subagents": [
+    {
+      "name": "file_manager",
+      "role": "Find and select the workbook the rest of the conversation acts on.",
+      "tools": ["list_workbooks", "find_spreadsheet", "resolve_spreadsheet_choice"],
+      "writes_orchestrator_state": true,
+      "return_tool_results": false
+    },
+    {
+      "name": "analyst",
+      "role": "Read and summarise; never writes to the sheet.",
+      "tools": ["inspect_sheet", "sheet_stats", "find_data"],
+      "writes_orchestrator_state": false,
+      "return_tool_results": true
+    },
+    {
+      "name": "row_editor",
+      "role": "Edit rows, locating them by value rather than by assumed row number.",
+      "tools": [
+        "inspect_sheet",
+        "find_data",
+        "update_row",
+        "insert_row",
+        "append_row",
+        "delete_row",
+        "move_row"
+      ],
+      "writes_orchestrator_state": false,
+      "return_tool_results": false
+    },
+    {
+      "name": "structure_editor",
+      "role": "Columns, formulas and formatting.",
+      "tools": [
+        "inspect_sheet",
+        "insert_column",
+        "rename_column",
+        "delete_column",
+        "move_column",
+        "set_column_formula",
+        "format_range",
+        "copy_format"
+      ],
+      "writes_orchestrator_state": false,
+      "return_tool_results": false
+    },
+    {
+      "name": "chart_maker",
+      "role": "Build and edit charts.",
+      "tools": ["inspect_sheet", "create_chart", "update_chart", "delete_chart"],
+      "writes_orchestrator_state": false,
+      "return_tool_results": false
+    }
+  ],
+
+  "tools": {
+    "registered_in": "src/excel_agent/tools/__init__.py",
+    "count": 22,
+    "by_module": {
+      "spreadsheets.py": [
+        "list_workbooks",
+        "find_spreadsheet",
+        "resolve_spreadsheet_choice",
+        "use_spreadsheet"
+      ],
+      "inspect.py": ["inspect_sheet"],
+      "find.py": ["find_data"],
+      "stats.py": ["sheet_stats"],
+      "rows.py": ["append_row", "delete_row", "insert_row", "move_row", "update_row"],
+      "columns.py": [
+        "insert_column",
+        "rename_column",
+        "delete_column",
+        "move_column",
+        "set_column_formula"
+      ],
+      "charts.py": ["create_chart", "update_chart", "delete_chart"],
+      "style.py": ["format_range", "copy_format"]
+    },
+    "notes": [
+      "find_spreadsheet answers which file contains some text; find_data answers which row inside a file holds it.",
+      "inspect_sheet is deliberately shared by four subagents so no agent writes before reading.",
+      "use_spreadsheet is exported in TOOLS but is bound to no subagent and is no longer imported by the factory."
+    ]
+  },
+
+  "testing": {
+    "runner": "pytest",
+    "testpaths": ["tests"],
+    "fakes": ["tests/fake_google.py", "tests/fake_sheets.py", "tests/scripted.py"],
+    "files": [
+      "test_browsing.py",
+      "test_runner.py",
+      "test_services_drive.py",
+      "test_services_google.py",
+      "test_services_spreadsheet.py",
+      "test_sheets.py",
+      "test_sheets_tools.py",
+      "test_sheets_visuals.py",
+      "test_sheets_wiring.py",
+      "test_spreadsheet_selection.py",
+      "test_subagents.py",
+      "test_ui.py"
+    ]
+  },
+
+  "docs": {
+    "readme": "README.md",
+    "architecture_notes": "architecture.md",
+    "architecture_diagram": "architecture.png",
+    "google_setup": "google-api-setup-guide.md",
+    "known_gaps": "model-shortcomings.txt"
+  },
+
+  "open_issues": [
+    {
+      "item": "use_spreadsheet is orphaned",
+      "detail": "Exported in TOOLS and still referenced by the UI spinner labels (ui.py:201), but assigned to no subagent and no longer imported by the factory. Either dead code or a regression from the orchestrator split."
+    }
+  ]
+}
