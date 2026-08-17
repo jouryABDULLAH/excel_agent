@@ -13,11 +13,23 @@ os.environ["LANGSMITH_TRACING"] = "false"
 import pytest  # noqa: E402
 
 import fake_sheets  # noqa: E402
-from excel_agent import sheets  # noqa: E402
+from excel_agent import runner, sheets  # noqa: E402
 from excel_agent.services.google import GoogleAPI, google_api  # noqa: E402
 
 SPREADSHEET = "TEST - Sales Orders"
 SHEET = "Sales Orders"
+
+
+@pytest.fixture(autouse=True)
+def no_spreadsheet_from_the_environment(monkeypatch):
+    """Start every test having chosen nothing.
+
+    EXCEL_AGENT_SPREADSHEET names the file a conversation opens on, and a
+    Session seeds itself from it. Anyone who followed the README has it set,
+    and without this their suite runs against a different starting state than
+    everybody else's.
+    """
+    monkeypatch.setattr(runner, "START_SPREADSHEET", None)
 
 
 @pytest.fixture(autouse=True)

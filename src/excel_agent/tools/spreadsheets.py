@@ -145,7 +145,7 @@ def list_workbooks(
         lines.append("")
         lines.append(
             "No spreadsheet is currently selected. Choose the best match for "
-            "the user's request, then call use_spreadsheet."
+            "the user's request, then call resolve_spreadsheet_choice."
         )
 
     return "\n".join(lines)

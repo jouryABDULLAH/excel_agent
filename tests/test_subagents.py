@@ -440,3 +440,29 @@ def test_a_spreadsheet_named_by_the_model_still_wins(a_spreadsheet, monkeypatch)
     )
 
     assert asked == ["Another"]
+
+
+def test_no_tool_sends_the_model_to_a_tool_its_subagent_does_not_hold():
+    """Tool output is instruction, and instruction to call nothing bounces.
+
+    list_workbooks told the file manager to call use_spreadsheet, which no
+    subagent holds and the orchestrator never receives, so the one agent that
+    read the sentence could not act on it. Same shape as an instruction naming
+    a spreadsheet id that no tool accepts.
+    """
+    import re
+
+    from excel_agent.tools import spreadsheets
+
+    file_manager = next(spec for spec in SUBAGENTS if spec.name == "file_manager")
+    held = {tool.name for tool in file_manager.tools}
+
+    # The sentence lives in what the tool returns, not in its docstring, so
+    # the tool has to actually be run to see it.
+    spreadsheets.search = lambda name=None: [("1", "Sales"), ("2", "Returns")]
+    answer = spreadsheets.list_workbooks.func(None, None)
+
+    named = set(re.findall(r"call (\w+)", answer))
+
+    assert named, "the tool stopped naming a next step; drop this test if so"
+    assert named <= held, f"{named - held} is not a tool the file manager holds"

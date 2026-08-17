@@ -203,7 +203,9 @@ def test_every_spreadsheet_is_listed(monkeypatch):
     # Nothing chosen yet, so the model is told to pick rather than to ask:
     # working out which file the user means is the orchestrator's job.
     assert "No spreadsheet is currently selected" in answer
-    assert "call use_spreadsheet" in answer
+    # The tool it is sent to has to be one the file manager actually holds.
+    # use_spreadsheet is not: naming it here bounced as an unknown tool.
+    assert "call resolve_spreadsheet_choice" in answer
 
 
 class Working:
