@@ -263,7 +263,7 @@ def draw_artifact(
 
     if operation == "inspect_sheet":
         rows = artifact.get("rows") or []
-        columns = artifact.get("columns") or []
+        columns = artifact.get("headers") or []
 
         if not rows or not columns:
             return

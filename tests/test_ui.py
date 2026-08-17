@@ -14,7 +14,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from scripted import ScriptedModel, calling
 from streamlit.testing.v1 import AppTest
 
-from excel_agent import config
+from excel_agent import browsing, cli, config
 from excel_agent.runner import Session
 from excel_agent.tools import TOOLS
 
@@ -50,30 +50,30 @@ def test_the_page_draws_without_falling_over():
     # nothing else. It is the check that would catch a page that raises the
     # moment anyone opens it.
     assert [error.value for error in page.exception] == []
-    assert [title.value for title in page.title] == ["Sheets agent"]
+    # The title is drawn as markup rather than with st.title, so that it can
+    # be sized to sit above the conversation instead of over a dashboard.
+    assert any(browsing.TITLE in one.value for one in page.markdown)
     assert page.chat_input
 
 
-def test_the_sidebar_offers_the_spreadsheets_and_the_two_variants():
+def test_the_sidebar_offers_the_spreadsheets():
     page = AppTest.from_file(PAGE, default_timeout=60).run()
 
-    offered = {one.label: list(one.options) for one in page.sidebar.selectbox}
-    assert offered["Working on"] == [SPREADSHEET, OTHER]
+    offered = [list(one.options) for one in page.sidebar.selectbox]
+    assert offered == [[SPREADSHEET, OTHER]]
 
-    variants = {radio.label: list(radio.options) for radio in page.sidebar.radio}
-    assert variants["Agents"] == ["single", "multi"]
-    # The spreadsheet in use is named on the page, so it is never a guess where
-    # a change would land.
-    assert any(SPREADSHEET in caption.value for caption in page.caption)
+    # The spreadsheet in use is named on the page, so it is never a guess
+    # where a change would land.
+    assert any(SPREADSHEET in one.value for one in page.markdown)
 
 
 def test_a_spreadsheet_cannot_be_uploaded():
     page = AppTest.from_file(PAGE, default_timeout=60).run()
 
     # A spreadsheet is added in Drive, by Google, and nothing here has the
-    # scope to do it. The page says so rather than offering a picker that
-    # could not work.
-    assert any("come from your Drive" in caption.value for caption in page.sidebar.caption)
+    # scope to do it. Offering a picker that could not work would be worse
+    # than offering nothing.
+    assert page.get("file_uploader") == []
 
 
 def page_with_a_scripted_agent(says: str, script=None, tools=()) -> AppTest:
@@ -172,7 +172,8 @@ def test_a_turn_that_says_nothing_says_that(a_spreadsheet):
     # An empty bubble reads as the page having lost the answer. It must not
     # claim nothing happened either: the call above it did edit the sheet.
     said = page.session_state["transcript"][-1]
-    assert "ended without anything being said" in said["text"]
+    assert "finished without a written response" in said["text"]
+    assert "did run" in said["text"]
     assert said["calls"] == ["update_row(row=2, values={'Units': 99})"]
 
 
@@ -213,7 +214,9 @@ def test_the_suggestions_are_taken_off_the_page_once_one_is_used():
 
     # Left on screen they would belong to a run that has ended, and clicking
     # one again would do nothing at all.
-    assert [button.label for button in page.button] == ["New conversation"]
+    assert [button.label.strip("＋ ") for button in page.button] == [
+        "New conversation"
+    ]
 
 
 # Starting again
@@ -271,3 +274,46 @@ def test_the_picker_stops_naming_a_spreadsheet_that_was_let_go_of():
     assert page.session_state["workbook_choice"] is None
     # And nothing on the page still names it, which is the half a user sees.
     assert not any(SPREADSHEET in one.value for one in page.markdown)
+
+
+# What a read hands to whoever draws it
+
+
+def test_the_rows_a_read_returns_are_drawn_as_a_table(a_spreadsheet, capsys):
+    """The artifact a read produces has to be the one the front ends read.
+
+    Both of them looked for the columns under a key inspect_sheet does not
+    use, so the table was silently dropped and every read came back as prose
+    alone. Built from the real tool rather than by hand, so renaming the key
+    on either side fails here.
+    """
+    from excel_agent.tools import inspect
+
+    a_spreadsheet()
+
+    message = inspect.inspect_sheet.invoke(
+        {
+            "name": "inspect_sheet",
+            "args": {},
+            "id": "a-call",
+            "type": "tool_call",
+        }
+    )
+
+    drawn: list = []
+
+    class Box:
+        def dataframe(self, table, **named):
+            drawn.append(table)
+
+    excel_agent.ui.draw_artifact(message.artifact, Box())
+
+    assert [row["row"] for row in drawn[0]] == [2, 3, 4, 5, 6]
+    assert drawn[0][0]["Product"] == "Laptop"
+
+    # The terminal draws the same artifact, and read it under the same key.
+    cli.print_artifact(message.artifact)
+
+    printed = capsys.readouterr().out
+    assert "| row | Order ID | Region | Units | Product |" in printed
+    assert "| 2 | ORD-1001 | North | 1 | Laptop |" in printed

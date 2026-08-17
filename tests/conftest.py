@@ -103,11 +103,12 @@ SERVICE_WRITES = (
     "move_row",
     "insert_columns",
     "delete_columns",
-    "move_columns",
+    "move_column",
+    "copy_paste",
     "batch_update",
     "format_range",
     "add_chart",
-    "update_chart",
+    "update_chart_spec",
     "delete_chart",
 )
 
@@ -178,7 +179,7 @@ def a_spreadsheet(monkeypatch):
             ("list_sheets", lambda id: {title: properties}),
             ("read_sheet", lambda id, name: rows),
             ("read_range", lambda id, range_name: []),
-            ("list_charts", lambda id: []),
+            ("list_charts", lambda id, name=None: []),
             ("get_spreadsheet", lambda id: {"sheets": [{"properties": properties}]}),
             ("invalidate", lambda id: None),
         ):
@@ -193,6 +194,19 @@ def a_spreadsheet(monkeypatch):
                 return {}
 
             return called
+
+        # A method renamed on the service leaves a name here that patches
+        # nothing, which shows up as an unrelated test failing far away.
+        missing = [
+            name
+            for name in SERVICE_WRITES
+            if not hasattr(spreadsheet_service, name)
+        ]
+
+        assert not missing, (
+            f"SERVICE_WRITES names methods SpreadsheetService no longer has: "
+            f"{', '.join(missing)}. Update the list in conftest."
+        )
 
         for name in SERVICE_WRITES:
             monkeypatch.setattr(spreadsheet_service, name, recording(name))

@@ -36,6 +36,24 @@ def _as_text(one: Cell) -> str:
     return ""
 
 
+def _with_columns(
+    message: str,
+    details: dict,
+) -> str:
+    """Name the columns that do exist, when the failure was about one that does not.
+
+    The artifact carries them either way, but the content is the whole of what
+    the model reads: told only that a column is missing, its next call is
+    another guess.
+    """
+    available = details.get("available_columns")
+
+    if not available:
+        return message
+
+    return f"{message} The sheet has: {', '.join(available)}."
+
+
 def _error(
     code: str,
     message: str,
@@ -55,7 +73,7 @@ def _error(
         **details,
     }
 
-    return message, artifact
+    return _with_columns(message, details), artifact
 
 
 @tool(response_format="content_and_artifact")

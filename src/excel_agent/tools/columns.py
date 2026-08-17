@@ -46,11 +46,17 @@ def _load_table(
     str,
     str,
     dict,
+    list,
     int,
     dict[str, int],
     int,
 ]:
-    """Resolve the sheet and inspect its table structure."""
+    """Resolve the sheet and inspect its table structure.
+
+    The rows are returned as well as the structure read out of them, because
+    every tool that resolves a column by position needs the physical header
+    row and would otherwise read the whole grid a second time.
+    """
     spreadsheet_id, spreadsheet_name = resolve_spreadsheet(
         spreadsheet
     )
@@ -75,30 +81,40 @@ def _load_table(
         spreadsheet_id,
         spreadsheet_name,
         properties,
+        rows,
         header_row,
         headers,
         last_row,
     )
 
 
-def _require_headers(
-    headers: dict[str, int],
-    *,
-    spreadsheet: str,
-    sheet: str,
+def _named_headers(
+    rows: list[list[Any]],
     header_row: int,
-) -> dict | None:
-    """Return an error when the sheet has no usable headers."""
-    if headers:
-        return None
+    width: int,
+) -> list[tuple[int, str]]:
+    """Every named column in the physical header row, with its position.
 
-    return _error(
-        "headers_not_found",
-        "No column headers were found.",
-        spreadsheet=spreadsheet,
-        sheet=sheet,
-        header_row=header_row,
-    )
+    header_map cannot be used here: it drops unnamed columns and keeps only
+    one of any two columns sharing a name, which is exactly what the tools
+    resolving a column by position have to be able to see.
+    """
+    found = []
+
+    for position in range(1, width + 1):
+        header = _as_text(
+            cell(
+                rows,
+                header_row,
+                position,
+            )
+        ).strip()
+
+        if header:
+            found.append((position, header))
+
+    return found
+
 
 def _resolve_column_target(
     *,
@@ -172,6 +188,18 @@ def _resolve_column_target(
             column is not None
             and actual_header != column
         ):
+            # Where the named column really is, so the next call can be
+            # right rather than being another guess.
+            elsewhere = [
+                found_position
+                for found_position, found_header in _named_headers(
+                    rows,
+                    header_row,
+                    width,
+                )
+                if found_header == column
+            ]
+
             return (
                 None,
                 None,
@@ -185,6 +213,12 @@ def _resolve_column_target(
                     sheet=sheet,
                     column=column,
                     position=position,
+                    requested_position=position,
+                    column_position=(
+                        elsewhere[0]
+                        if len(elsewhere) == 1
+                        else None
+                    ),
                     actual_header=actual_header or None,
                 ),
             )
@@ -201,27 +235,11 @@ def _resolve_column_target(
 
     # One walk of the header row gives both the columns that match and the
     # ones worth naming back when none do.
-    named_positions: list[tuple[int, str]] = []
-
-    for candidate_position in range(
-        1,
-        width + 1,
-    ):
-        candidate_header = _as_text(
-            cell(
-                rows,
-                header_row,
-                candidate_position,
-            )
-        ).strip()
-
-        if candidate_header:
-            named_positions.append(
-                (
-                    candidate_position,
-                    candidate_header,
-                )
-            )
+    named_positions = _named_headers(
+        rows,
+        header_row,
+        width,
+    )
 
     matching_positions = [
         candidate_position
@@ -269,27 +287,6 @@ def _resolve_column_target(
         None,
     )
 
-def _require_column(
-    column: str,
-    headers: dict[str, int],
-    *,
-    spreadsheet: str,
-    sheet: str,
-) -> dict | None:
-    """Return an error when a named column does not exist."""
-    if column in headers:
-        return None
-
-    return _error(
-        "column_not_found",
-        "The requested column does not exist.",
-        spreadsheet=spreadsheet,
-        sheet=sheet,
-        column=column,
-        available_columns=list(headers),
-    )
-
-
 @tool
 def insert_column(
     name: str | None = None,
@@ -336,6 +333,7 @@ def insert_column(
             spreadsheet_id,
             spreadsheet_name,
             properties,
+            _,
             header_row,
             headers,
             _,
@@ -474,6 +472,7 @@ def rename_column(
             spreadsheet_id,
             spreadsheet_name,
             properties,
+            rows,
             header_row,
             _,
             _,
@@ -485,12 +484,8 @@ def rename_column(
         sheet_name = properties["title"]
 
         # header_map cannot represent unnamed columns or duplicate header
-        # names, so the physical header cells are needed here.
-        rows = spreadsheet_service.read_sheet(
-            spreadsheet_id,
-            sheet_name,
-        )
-
+        # names, so the physical header cells read by _load_table are what
+        # the target is resolved against.
         (
             target_position,
             old_name,
@@ -608,6 +603,7 @@ def delete_column(
             spreadsheet_id,
             spreadsheet_name,
             properties,
+            rows,
             header_row,
             headers,
             _,
@@ -617,11 +613,6 @@ def delete_column(
         )
 
         sheet_name = properties["title"]
-
-        rows = spreadsheet_service.read_sheet(
-            spreadsheet_id,
-            sheet_name,
-        )
 
         (
             target_position,
@@ -713,6 +704,7 @@ def move_column(
             spreadsheet_id,
             spreadsheet_name,
             properties,
+            rows,
             header_row,
             headers,
             _,
@@ -722,11 +714,6 @@ def move_column(
         )
 
         sheet_name = properties["title"]
-
-        rows = spreadsheet_service.read_sheet(
-            spreadsheet_id,
-            sheet_name,
-        )
 
         rightmost = (
             max(headers.values())
@@ -872,6 +859,7 @@ def set_column_formula(
             spreadsheet_id,
             spreadsheet_name,
             properties,
+            rows,
             header_row,
             headers,
             last_row,
@@ -881,11 +869,6 @@ def set_column_formula(
         )
 
         sheet_name = properties["title"]
-
-        rows = spreadsheet_service.read_sheet(
-            spreadsheet_id,
-            sheet_name,
-        )
 
         (
             target_position,

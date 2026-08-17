@@ -19,6 +19,7 @@ from excel_agent.sheets import (
     last_data_row,
     resolve_spreadsheet,
 )
+from excel_agent.tools.inspect import _with_columns
 
 
 COMMON_LIMIT = 3
@@ -68,7 +69,7 @@ def _error(
         **details,
     }
 
-    return message, artifact
+    return _with_columns(message, details), artifact
 
 
 @tool(response_format="content_and_artifact")

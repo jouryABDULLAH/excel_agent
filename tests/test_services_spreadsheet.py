@@ -145,6 +145,105 @@ def test_moving_a_row_onto_itself_is_refused():
     assert pretend.spreadsheets_endpoint.calls == []
 
 
+# Columns, which count the same way and are as easy to get wrong
+
+
+def test_deleting_one_column_asks_for_that_column_alone():
+    service, pretend = a_service()
+
+    service.delete_columns("an-id", sheet_id=0, start_column=2)
+
+    assert only_request(pretend) == {
+        "deleteDimension": {
+            "range": {
+                "sheetId": 0,
+                "dimension": "COLUMNS",
+                "startIndex": 1,
+                "endIndex": 2,
+            }
+        }
+    }
+
+
+def test_deleting_a_run_of_columns_covers_both_ends():
+    service, pretend = a_service()
+
+    service.delete_columns("an-id", sheet_id=0, start_column=2, end_column=4)
+
+    deleted = only_request(pretend)["deleteDimension"]["range"]
+    assert (deleted["startIndex"], deleted["endIndex"]) == (1, 4)
+
+
+def test_inserting_makes_the_gap_left_of_the_column_asked_for():
+    service, pretend = a_service()
+
+    service.insert_columns("an-id", sheet_id=0, start_column=3)
+
+    gap = only_request(pretend)["insertDimension"]["range"]
+    assert (gap["startIndex"], gap["endIndex"]) == (2, 3)
+
+
+def test_moving_a_column_right_lands_it_where_it_was_asked_for():
+    service, pretend = a_service()
+
+    service.move_column("an-id", sheet_id=0, column=2, to_position=5)
+
+    # As with rows: Google reads the destination against the grid before the
+    # column is lifted out, so moving right asks for the number it ends at.
+    moved = only_request(pretend)["moveDimension"]
+    assert moved["source"]["startIndex"] == 1
+    assert moved["source"]["endIndex"] == 2
+    assert moved["destinationIndex"] == 5
+
+
+def test_moving_a_column_left_lands_it_where_it_was_asked_for():
+    service, pretend = a_service()
+
+    service.move_column("an-id", sheet_id=0, column=5, to_position=2)
+
+    # Moving left it is the place before the one asked for, because nothing to
+    # the left of it has been lifted out yet. Using 2 would land it one place
+    # to the right of where it was wanted.
+    moved = only_request(pretend)["moveDimension"]
+    assert moved["source"]["startIndex"] == 4
+    assert moved["destinationIndex"] == 1
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"column": 0, "to_position": 2},
+        {"column": 2, "to_position": 0},
+        {"column": 3, "to_position": 3},
+    ],
+)
+def test_a_column_move_that_makes_no_sense_never_reaches_google(arguments):
+    service, pretend = a_service()
+
+    with pytest.raises(ValueError):
+        service.move_column("an-id", sheet_id=0, **arguments)
+
+    assert pretend.spreadsheets_endpoint.calls == []
+
+
+def test_a_formula_is_pasted_as_a_formula_rather_than_as_its_result():
+    service, pretend = a_service()
+
+    service.copy_paste(
+        "an-id",
+        source={"sheetId": 0, "startRowIndex": 1, "endRowIndex": 2},
+        destination={"sheetId": 0, "startRowIndex": 2, "endRowIndex": 6},
+        paste_type="PASTE_FORMULA",
+    )
+
+    # PASTE_FORMULA is what shifts =A2 into =A3 on the way down. Pasting the
+    # value instead would leave every row holding the first row's answer.
+    pasted = only_request(pretend)["copyPaste"]
+    assert pasted["pasteType"] == "PASTE_FORMULA"
+    assert pasted["source"]["startRowIndex"] == 1
+    assert pasted["destination"]["endRowIndex"] == 6
+
+
 # What a structural change does to what is remembered
 
 

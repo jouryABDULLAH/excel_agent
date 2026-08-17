@@ -449,9 +449,37 @@ def test_everything_the_tools_import_is_still_here():
 
 
 def test_every_tool_module_still_imports():
+    """Naming them rather than counting them.
+
+    A count says a tool went missing but not which, and reads as a failure
+    every time one is added on purpose.
+    """
     from excel_agent.tools import TOOLS
 
-    assert len(TOOLS) == 14
+    assert {tool.name for tool in TOOLS} == {
+        "list_workbooks",
+        "find_spreadsheet",
+        "resolve_spreadsheet_choice",
+        "use_spreadsheet",
+        "inspect_sheet",
+        "find_data",
+        "sheet_stats",
+        "append_row",
+        "delete_row",
+        "insert_row",
+        "move_row",
+        "update_row",
+        "insert_column",
+        "rename_column",
+        "delete_column",
+        "move_column",
+        "set_column_formula",
+        "create_chart",
+        "update_chart",
+        "delete_chart",
+        "format_range",
+        "copy_format",
+    }
 
 
 def test_the_error_reader_the_tools_use_is_the_services_own():

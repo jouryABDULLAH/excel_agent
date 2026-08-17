@@ -32,7 +32,7 @@ def print_artifact(
 
     if operation == "inspect_sheet":
         columns = artifact.get(
-            "columns",
+            "headers",
             [],
         )
 

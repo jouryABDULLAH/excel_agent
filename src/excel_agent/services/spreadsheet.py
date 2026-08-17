@@ -603,8 +603,25 @@ class SpreadsheetService:
         spreadsheet_id: str,
         sheet_name: str | None = None,
     ) -> list[dict]:
-        """Return embedded charts, optionally from one sheet only."""
-        spreadsheet = self.get_spreadsheet(spreadsheet_id)
+        """Return embedded charts, optionally from one sheet only.
+
+        Masked rather than reusing get_spreadsheet, which asks for the whole
+        spreadsheet: this runs on every sheet read, including reads that have
+        nothing to do with charts.
+        """
+        spreadsheet = self._google.execute(
+            self._google.sheets
+            .spreadsheets()
+            .get(
+                spreadsheetId=spreadsheet_id,
+                fields=(
+                    "sheets("
+                    "properties(sheetId,title),"
+                    "charts(chartId,spec)"
+                    ")"
+                ),
+            )
+        )
 
         charts = []
 
@@ -663,21 +680,5 @@ class SpreadsheetService:
             value=value,
             number_format=number_format,
         )
-
-    @staticmethod
-    def _validate_positive(value: int) -> None:
-        if value < 1:
-            raise ValueError("Row and column numbers must be at least 1.")
-
-    @staticmethod
-    def _validate_range(start: int, end: int) -> None:
-        if start < 1 or end < 1:
-            raise ValueError("Row and column numbers must be at least 1.")
-
-        if start > end:
-            raise ValueError(
-                f"Invalid range: start ({start}) is greater than end ({end})."
-            )
-
 
 spreadsheet_service = SpreadsheetService()

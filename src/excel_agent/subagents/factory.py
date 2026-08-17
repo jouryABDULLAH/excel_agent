@@ -1,13 +1,11 @@
 """Build spreadsheet subagents and expose them to the orchestrator as tools."""
 
-from typing import Any
-
 from langchain.agents import AgentState, create_agent
 from langchain.messages import HumanMessage, ToolMessage
 from langchain.tools import ToolRuntime, tool
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
-from excel_agent.model import build_model
+
 from excel_agent import config
 from excel_agent.model import RECURSION_LIMIT, build_model
 from excel_agent.subagents.prompts import ORCHESTRATOR_PROMPT
@@ -251,7 +249,6 @@ def _file_manager_tool(
         instruction: str,
         runtime: ToolRuntime,
     ) -> Command:
-        
         subagent_instruction = (
             _subagent_instruction(
                 instruction=instruction,
@@ -373,36 +370,39 @@ def build_subagent(spec, model):
     )
 
 
+def as_tool(spec, model):
+    """Build one specialist and expose it to the orchestrator as a tool.
+
+    The file manager is wrapped differently because it is the only one whose
+    result changes the orchestrator's own state: it settles which spreadsheet
+    everything after it works on.
+    """
+    agent = build_subagent(
+        spec,
+        model,
+    )
+
+    if spec.name == "file_manager":
+        return _file_manager_tool(
+            spec,
+            agent,
+        )
+
+    return _delegate_tool(
+        spec,
+        agent,
+    )
+
+
 def build_orchestrator():
     """Build the persistent planner and all of its specialist tools."""
 
     model = build_model()
-    delegates = []
 
-    for spec in SUBAGENTS:
-        agent = build_subagent(
-            spec,
-            model,
-        )
-
-        if spec.name == "file_manager":
-            delegate = (
-                _file_manager_tool(
-                    spec,
-                    agent,
-                )
-            )
-        else:
-            delegate = (
-                _delegate_tool(
-                    spec,
-                    agent,
-                )
-            )
-
-        delegates.append(
-            delegate
-        )
+    delegates = [
+        as_tool(spec, model)
+        for spec in SUBAGENTS
+    ]
 
     return create_agent(
         model=model,

@@ -10,29 +10,61 @@ whole of what a tool gives it.
 
 import fake_sheets
 import pytest
+from pydantic import ValidationError
 
+from excel_agent.services.spreadsheet import spreadsheet_service
 from excel_agent.tools import columns, find, inspect, rows as row_tools, spreadsheets, stats
 
 SPREADSHEET = "TEST - Sales Orders"
 SHEET = "Sales Orders"
 
 
+def read(**arguments) -> tuple[str, dict]:
+    """Invoke inspect_sheet and give back both halves of what it returns.
+
+    Invoking a content_and_artifact tool with plain arguments hands back the
+    content alone, so the call is made the way the agent makes it: as a tool
+    call, answered with a ToolMessage.
+    """
+    message = inspect.inspect_sheet.invoke(
+        {
+            "name": "inspect_sheet",
+            "args": arguments,
+            "id": "a-call",
+            "type": "tool_call",
+        }
+    )
+
+    return message.content, message.artifact
+
+
 @pytest.fixture
 def a_sheet(monkeypatch):
-    """Point the reading tools at a sheet built by hand."""
+    """Point the reading tools at a sheet built by hand.
+
+    Two seams. Which spreadsheet a name means is still resolved through the
+    name each tool imported from sheets.py, so that one is replaced inside the
+    tool's own module. Everything the sheet itself answers now comes from the
+    one shared spreadsheet_service, so those are replaced on the object and
+    reach every module at once.
+    """
 
     def use(rows, module=inspect, title=SHEET, spreadsheet=SPREADSHEET):
         monkeypatch.setattr(
             module, "resolve_spreadsheet", lambda name=None: ("an-id", spreadsheet)
         )
+
+        properties = {"title": title, "sheetId": 0}
+
         monkeypatch.setattr(
-            module, "resolve_sheet", lambda id, name=None: {"title": title, "sheetId": 0}
+            spreadsheet_service, "resolve_sheet", lambda id, name=None: properties
         )
-        monkeypatch.setattr(module, "grid", lambda id, title: rows)
+        monkeypatch.setattr(spreadsheet_service, "read_sheet", lambda id, name: rows)
         # A sheet with no charts on it. Without this, reading one would go out
         # to Google to ask, which is the one thing these tests must not do.
-        if hasattr(module, "charts_in"):
-            monkeypatch.setattr(module, "charts_in", lambda id, title: [])
+        monkeypatch.setattr(
+            spreadsheet_service, "list_charts", lambda id, name=None: []
+        )
         return rows
 
     return use
@@ -73,11 +105,19 @@ def test_a_column_that_is_not_there_is_named_with_the_ones_that_are(a_sheet):
 def test_a_shortened_read_says_how_to_see_the_rest(a_sheet):
     a_sheet(fake_sheets.orders())
 
-    answer = inspect.inspect_sheet.invoke({"max_rows": 2})
+    content, artifact = read(max_rows=2)
 
-    assert "Showing rows 2 to 3." in answer
-    assert "Rows 4 to 6 were not shown" in answer
-    assert "start_row=4" in answer
+    # Two rows of the five, and only those two.
+    assert "| 2 | ORD-1001 | North | 1 | Laptop |" in content
+    assert "| 4 |" not in content
+
+    # Where the rest is lives in the artifact rather than in the content. It
+    # is the application's business how a read is continued, and a sentence
+    # telling the model to call again is instruction, not spreadsheet data.
+    assert (artifact["first_returned_row"], artifact["last_returned_row"]) == (2, 3)
+    assert artifact["has_more"] is True
+    assert artifact["next_start_row"] == 4
+    assert artifact["last_data_row"] == 6
 
 
 def test_reading_past_the_end_says_where_the_data_ends(a_sheet):
@@ -85,14 +125,16 @@ def test_reading_past_the_end_says_where_the_data_ends(a_sheet):
 
     answer = inspect.inspect_sheet.invoke({"start_row": 500})
 
-    assert "ending at row 6" in answer
+    assert "The sheet ends at row 6" in answer
     assert "nothing to read from row 500" in answer
 
 
 def test_asking_for_no_rows_explains_itself(a_sheet):
     a_sheet(fake_sheets.orders())
 
-    assert "no rows were read" in inspect.inspect_sheet.invoke({"max_rows": 0})
+    assert "max_rows must be at least 1" in inspect.inspect_sheet.invoke(
+        {"max_rows": 0}
+    )
 
 
 def test_what_the_sheet_displays_is_what_is_shown(a_sheet):
@@ -128,7 +170,7 @@ def test_a_cell_still_being_worked_out_shows_its_formula(a_sheet):
 def test_a_sheet_with_no_data_says_so(a_sheet):
     a_sheet([[fake_sheets.text("Order ID"), fake_sheets.text("Region")]])
 
-    assert "column names but no rows of data yet" in inspect.inspect_sheet.invoke({})
+    assert "column names but no rows of data" in inspect.inspect_sheet.invoke({})
 
 
 def test_a_name_that_reaches_no_spreadsheet_comes_back_as_the_explanation(
@@ -333,7 +375,7 @@ def test_a_long_list_of_matches_is_cut_short(a_sheet, monkeypatch):
     answer = find.find_data.invoke({"text": "ORD", "column": "Order ID"})
 
     assert "5 row(s)" in answer
-    assert "3 more row(s) matched and are not shown" in answer
+    assert "3 more matching row(s) are not displayed" in answer
 
 
 # Summarising a column
@@ -428,14 +470,14 @@ def test_a_column_that_is_not_there_is_named_with_the_ones_that_are(a_sheet):
 
     answer = stats.sheet_stats.invoke({"column": "Profit"})
 
-    assert 'There is no column called "Profit"' in answer
+    assert "The requested column does not exist" in answer
     assert "Order ID, Region, Units, Product" in answer
 
 
 def test_a_sheet_with_no_rows_yet_says_so(a_sheet):
     a_sheet([[fake_sheets.text("Order ID"), fake_sheets.text("Region")]], module=stats)
 
-    assert "no rows of data yet" in stats.sheet_stats.invoke({"column": "Region"})
+    assert "has no data rows" in stats.sheet_stats.invoke({"column": "Region"})
 
 
 # Settling on a spreadsheet is covered in test_spreadsheet_selection.py, which
@@ -682,13 +724,20 @@ def test_a_google_failure_comes_back_as_a_structured_error(a_writable_sheet, mon
 
 @pytest.fixture
 def a_writable_columns_sheet(a_sheet, monkeypatch):
-    """A sheet whose columns can be changed, recording what would be sent."""
-    sent: dict[str, list] = {"values": [], "requests": []}
+    """A sheet whose columns can be changed, recording what the service is asked.
+
+    The arithmetic each of these turns into is the service's own, and is
+    covered against a Google built by hand in test_services_spreadsheet. What
+    is checked here is the layer above it: which column a tool decided to act
+    on, and whether it acted at all.
+    """
+    sent: list[dict] = []
 
     def use(rows=None, width=26):
         a_sheet(rows or fake_sheets.orders(), module=columns)
+
         monkeypatch.setattr(
-            columns,
+            spreadsheet_service,
             "resolve_sheet",
             lambda id, name=None: {
                 "title": SHEET,
@@ -696,101 +745,150 @@ def a_writable_columns_sheet(a_sheet, monkeypatch):
                 "gridProperties": {"columnCount": width},
             },
         )
-        monkeypatch.setattr(
-            columns, "write_values", lambda id, data: sent["values"].append(data)
-        )
-        monkeypatch.setattr(
-            columns, "batch", lambda id, requests: sent["requests"].append(requests)
-        )
+
+        def recording(name):
+            def called(*arguments, **named):
+                sent.append({"call": name, **named})
+                return {}
+
+            return called
+
+        for name in (
+            "insert_columns",
+            "delete_columns",
+            "move_column",
+            "update_cells",
+            "copy_paste",
+        ):
+            monkeypatch.setattr(spreadsheet_service, name, recording(name))
+
         return sent
 
     return use
 
 
+def calls(sent, name):
+    """Every recorded call to one service method."""
+    return [one for one in sent if one["call"] == name]
+
+
 def test_a_new_column_goes_past_the_last_named_one(a_writable_columns_sheet):
     sent = a_writable_columns_sheet()
 
-    answer = columns.modify_column.invoke({"action": "add", "column": "Profit"})
+    answer = columns.insert_column.invoke({"name": "Profit"})
 
-    # Four named columns, so the new one is E, which is empty already: nothing
-    # shifts and no formula moves.
-    assert 'Added a column called "Profit", at E' in answer
-    assert sent["values"][0][0]["range"] == "'Sales Orders'!E1:E1"
-    assert sent["requests"] == []
+    # Four named columns, so the new one is the fifth: E, which is empty
+    # already, so nothing that was there has to shift.
+    assert answer["ok"] is True
+    assert answer["position"] == 5
+    assert answer["column_letter"] == "E"
+    assert answer["column_positions_changed"] is False
+
+    assert calls(sent, "insert_columns")[0]["start_column"] == 5
+    assert calls(sent, "update_cells")[0]["updates"] == [
+        {"range": "'Sales Orders'!E1:E1", "values": [["Profit"]]}
+    ]
 
 
-def test_a_new_column_past_the_edge_of_the_grid_widens_it_first(
+def test_a_new_column_put_between_two_others_moves_the_ones_after_it(
     a_writable_columns_sheet,
 ):
-    sent = a_writable_columns_sheet(width=4)
+    sent = a_writable_columns_sheet()
 
-    columns.modify_column.invoke({"action": "add", "column": "Profit"})
+    answer = columns.insert_column.invoke({"name": "Profit", "position": 2})
 
-    # The grid is only four columns wide, so writing into the fifth would be
-    # outside it until the sheet is widened.
-    assert sent["requests"][0][0]["insertDimension"]["range"]["startIndex"] == 4
+    # Everything from the old second column rightwards is now one place over,
+    # which is worth saying: a position read before this call is stale after it.
+    assert answer["position"] == 2
+    assert answer["column_positions_changed"] is True
+    assert calls(sent, "insert_columns")[0]["start_column"] == 2
+
+
+def test_a_column_can_be_added_without_a_name(a_writable_columns_sheet):
+    sent = a_writable_columns_sheet()
+
+    answer = columns.insert_column.invoke({})
+
+    # No header is written, because none was asked for. Writing an empty
+    # string instead would make an unnamed column look like a named one.
+    assert answer["ok"] is True
+    assert answer["has_header"] is False
+    assert calls(sent, "update_cells") == []
 
 
 def test_renaming_writes_the_header_cell_and_nothing_else(a_writable_columns_sheet):
     sent = a_writable_columns_sheet()
 
-    answer = columns.modify_column.invoke(
-        {"action": "rename", "column": "Region", "new_name": "Area"}
-    )
+    answer = columns.rename_column.invoke({"column": "Region", "new_name": "Area"})
 
-    assert 'Renamed the column "Region" to "Area"' in answer
-    assert sent["values"][0] == [
+    assert answer["ok"] is True
+    assert (answer["old_name"], answer["new_name"]) == ("Region", "Area")
+    assert calls(sent, "update_cells")[0]["updates"] == [
         {"range": "'Sales Orders'!B1:B1", "values": [["Area"]]}
     ]
+    # The values under the header are not touched.
+    assert len(calls(sent, "update_cells")) == 1
 
 
-def test_removing_a_column_says_what_happens_to_formulas(a_writable_columns_sheet):
+def test_removing_a_column_takes_the_one_its_header_sits_in(
+    a_writable_columns_sheet,
+):
     sent = a_writable_columns_sheet()
 
-    answer = columns.modify_column.invoke({"action": "remove", "column": "Region"})
+    answer = columns.delete_column.invoke({"column": "Region"})
 
-    # Google rewrites what it can and leaves #REF! where it cannot, which is
-    # what happens if a person deletes the column by hand.
-    assert "#REF!" in answer
-    assert sent["requests"][0][0]["deleteDimension"]["range"] == {
-        "sheetId": 0,
-        "dimension": "COLUMNS",
-        "startIndex": 1,
-        "endIndex": 2,
-    }
+    assert answer["deleted_column"] == "Region"
+    assert answer["deleted_position"] == 2
+    assert answer["column_positions_changed"] is True
+    assert calls(sent, "delete_columns")[0]["start_column"] == 2
 
 
-def test_moving_a_column_left_and_right_lands_where_asked(a_writable_columns_sheet):
+def test_moving_a_column_names_where_it_came_from_and_went_to(
+    a_writable_columns_sheet,
+):
     sent = a_writable_columns_sheet()
 
-    columns.modify_column.invoke(
-        {"action": "move", "column": "Product", "to_position": 1}
-    )
-    columns.modify_column.invoke(
-        {"action": "move", "column": "Order ID", "to_position": 3}
-    )
+    answer = columns.move_column.invoke({"column": "Product", "to_position": 1})
 
-    # Moving left, the destination is the place before the one asked for;
-    # moving right, it is the place itself, because the column has not been
-    # lifted out yet when Google reads the number.
-    assert sent["requests"][0][0]["moveDimension"]["destinationIndex"] == 0
-    assert sent["requests"][1][0]["moveDimension"]["destinationIndex"] == 3
+    assert (answer["from_position"], answer["to_position"]) == (4, 1)
+    assert answer["changed"] is True
+
+    moved = calls(sent, "move_column")[0]
+    assert (moved["column"], moved["to_position"]) == (4, 1)
+
+
+def test_moving_a_column_to_where_it_already_is_changes_nothing(
+    a_writable_columns_sheet,
+):
+    sent = a_writable_columns_sheet()
+
+    answer = columns.move_column.invoke({"column": "Region", "to_position": 2})
+
+    assert answer["ok"] is True
+    assert answer["changed"] is False
+    assert calls(sent, "move_column") == []
 
 
 def test_a_formula_is_copied_down_rather_than_repeated(a_writable_columns_sheet):
     sent = a_writable_columns_sheet()
 
-    answer = columns.modify_column.invoke(
-        {"action": "set_formula", "column": "Units", "formula": "=A2&B2"}
+    answer = columns.set_column_formula.invoke(
+        {"column": "Units", "formula": "=A2&B2"}
     )
 
-    assert 'Filled "Units" with =A2&B2, down 5 row(s)' in answer
+    assert answer["ok"] is True
+    assert (answer["first_row"], answer["last_row"]) == (2, 6)
+    assert answer["filled_rows"] == 5
+
     # The first row is written, then copied: copying is what shifts =A2&B2
     # into =A3&B3 as it goes down. Repeating the text would leave every row
     # reading row 2.
-    assert sent["values"][0][0]["range"] == "'Sales Orders'!C2:C2"
-    pasted = sent["requests"][0][0]["copyPaste"]
-    assert pasted["pasteType"] == "PASTE_FORMULA"
+    assert calls(sent, "update_cells")[0]["updates"][0]["range"] == (
+        "'Sales Orders'!C2:C2"
+    )
+
+    pasted = calls(sent, "copy_paste")[0]
+    assert pasted["paste_type"] == "PASTE_FORMULA"
     assert pasted["source"] == {
         "sheetId": 0,
         "startRowIndex": 1,
@@ -805,51 +903,59 @@ def test_a_formula_is_copied_down_rather_than_repeated(a_writable_columns_sheet)
 def test_something_that_is_not_a_formula_is_refused(a_writable_columns_sheet):
     sent = a_writable_columns_sheet()
 
-    answer = columns.modify_column.invoke(
-        {"action": "set_formula", "column": "Units", "formula": "B2*C2"}
+    answer = columns.set_column_formula.invoke(
+        {"column": "Units", "formula": "B2*C2"}
     )
 
-    assert 'A formula starts with "="' in answer
-    assert sent["values"] == [] and sent["requests"] == []
+    assert answer["ok"] is False
+    assert answer["error"] == "invalid_formula"
+    assert sent == []
 
 
 def test_a_column_that_is_not_there_is_refused(a_writable_columns_sheet):
     sent = a_writable_columns_sheet()
 
-    answer = columns.modify_column.invoke(
-        {"action": "rename", "column": "Nonsense", "new_name": "X"}
-    )
+    answer = columns.rename_column.invoke({"column": "Nonsense", "new_name": "X"})
 
-    assert 'There is no column called "Nonsense"' in answer
-    assert "Order ID, Region, Units, Product" in answer
-    assert sent["values"] == []
+    assert answer["ok"] is False
+    assert answer["error"] == "column_not_found"
+    # The names that do exist come back, so the next call can be right.
+    assert answer["available_columns"] == ["Order ID", "Region", "Units", "Product"]
+    assert sent == []
 
 
-def test_a_second_column_of_the_same_name_is_refused(a_writable_columns_sheet):
+def test_a_second_column_of_the_same_name_is_allowed(a_writable_columns_sheet):
     sent = a_writable_columns_sheet()
 
-    answer = columns.modify_column.invoke({"action": "add", "column": "Region"})
+    answer = columns.insert_column.invoke({"name": "Region"})
 
-    assert 'There is already a column called "Region"' in answer
-    assert sent["values"] == []
+    # Two columns may share a header, the way they may in a sheet someone
+    # filled in by hand. What that costs is that the name alone no longer
+    # reaches one of them, which is what a position is for; the refusal that
+    # follows from that is covered in test_column_positions.
+    assert answer["ok"] is True
+    assert answer["column"] == "Region"
+    assert calls(sent, "insert_columns") != []
 
 
 def test_renaming_needs_a_new_name(a_writable_columns_sheet):
     sent = a_writable_columns_sheet()
 
-    answer = columns.modify_column.invoke({"action": "rename", "column": "Region"})
+    # new_name has no default, so a call without one never reaches the tool.
+    with pytest.raises(ValidationError):
+        columns.rename_column.invoke({"column": "Region"})
 
-    assert "needs a new_name" in answer
-    assert sent["values"] == []
+    assert sent == []
 
 
-def test_moving_needs_somewhere_to_go(a_writable_columns_sheet):
+def test_moving_needs_somewhere_a_column_can_go(a_writable_columns_sheet):
     sent = a_writable_columns_sheet()
 
-    assert "needs to_position" in columns.modify_column.invoke(
-        {"action": "move", "column": "Region"}
-    )
-    assert "not somewhere a column can go" in columns.modify_column.invoke(
-        {"action": "move", "column": "Region", "to_position": 99}
-    )
-    assert sent["requests"] == []
+    with pytest.raises(ValidationError):
+        columns.move_column.invoke({"column": "Region"})
+
+    outside = columns.move_column.invoke({"column": "Region", "to_position": 99})
+
+    assert outside["ok"] is False
+    assert outside["error"] == "invalid_position"
+    assert sent == []

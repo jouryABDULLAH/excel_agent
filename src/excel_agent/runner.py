@@ -203,10 +203,10 @@ def _merge_inspect_artifacts(
                 "sheet"
             )
             and previous.get(
-                "columns"
+                "headers"
             )
             == artifact.get(
-                "columns"
+                "headers"
             )
             and continuous
         )
@@ -502,10 +502,11 @@ class Session:
             )
         )
 
-        if final_answer:
-            yield Answer(
-                final_answer
-            )
+        # Emitted even when empty, so a client always gets one end-of-turn
+        # answer and decides for itself what silence should look like.
+        yield Answer(
+            final_answer
+        )
 
         for artifact in artifacts:
             yield Artifact(

@@ -65,6 +65,7 @@ def test_the_orchestrator_is_told_the_same_refusals():
 
 def test_the_names_are_the_ones_the_orchestrator_will_call():
     assert [spec.name for spec in SUBAGENTS] == [
+        "file_manager",
         "analyst",
         "row_editor",
         "structure_editor",
@@ -76,11 +77,29 @@ def test_the_names_are_the_ones_the_orchestrator_will_call():
 
 
 def test_a_subagent_becomes_a_tool_taking_an_instruction():
-    wrapped = as_tool(SUBAGENTS[0], ScriptedModel(script=[AIMessage("read it")]))
+    analyst = next(spec for spec in SUBAGENTS if spec.name == "analyst")
+
+    wrapped = as_tool(analyst, ScriptedModel(script=[AIMessage("read it")]))
 
     assert wrapped.name == "analyst"
+    # render_data as well, because the orchestrator decides whether the rows
+    # a read brings back are meant to be drawn or only reasoned about.
+    assert list(wrapped.args) == ["instruction", "render_data"]
+    assert wrapped.description == analyst.description
+
+
+def test_the_file_manager_is_wrapped_so_it_can_change_the_chosen_spreadsheet():
+    """It is the one subagent whose result updates the orchestrator's state.
+
+    Settling which spreadsheet is in hand is not something a tool can do by
+    answering, so this one is wrapped to return a Command instead.
+    """
+    file_manager = next(spec for spec in SUBAGENTS if spec.name == "file_manager")
+
+    wrapped = as_tool(file_manager, ScriptedModel(script=[AIMessage("found it")]))
+
+    assert wrapped.name == "file_manager"
     assert list(wrapped.args) == ["instruction"]
-    assert wrapped.description == SUBAGENTS[0].description
 
 
 class RecordingModel(ScriptedModel):
