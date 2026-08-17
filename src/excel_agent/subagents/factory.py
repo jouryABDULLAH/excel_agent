@@ -1,6 +1,7 @@
 """Build spreadsheet subagents and expose them to the orchestrator as tools."""
 
 from langchain.agents import AgentState, create_agent
+from langchain.agents.middleware import dynamic_prompt
 from langchain.messages import HumanMessage, ToolMessage
 from langchain.tools import ToolRuntime, tool
 from langgraph.checkpoint.memory import InMemorySaver
@@ -394,6 +395,48 @@ def as_tool(spec, model):
     )
 
 
+def current_spreadsheet(state) -> str | None:
+    """The spreadsheet being worked on, whoever settled it.
+
+    The file manager writes it into the orchestrator's state; the sidebar
+    writes only config.SPREADSHEET. Both have to be able to answer this, or
+    picking a file from the page leaves the planner talking about one
+    spreadsheet while the tools write to another.
+    """
+    return state.get("spreadsheet_name") or config.SPREADSHEET
+
+
+@dynamic_prompt
+def _planner_prompt(request) -> str:
+    """Say which spreadsheet is in hand on every model call.
+
+    A subagent is told this in its instruction, but the planner was told
+    nothing: it had to remember the name from a tool result several turns
+    back, and a few turns in it stopped remembering and asked the user for a
+    file it had already been given. State is not what was lost; nothing was
+    ever putting it in front of the planner.
+    """
+    chosen = current_spreadsheet(request.state)
+
+    if not chosen:
+        return (
+            f"{ORCHESTRATOR_PROMPT}\n"
+            "CURRENT SPREADSHEET\n"
+            "- None has been chosen yet. Delegate the choice to file_manager "
+            "before any work that needs one.\n"
+        )
+
+    return (
+        f"{ORCHESTRATOR_PROMPT}\n"
+        "CURRENT SPREADSHEET\n"
+        f'- "{chosen}" is the spreadsheet being worked on.\n'
+        "- This is current. Do not ask the user which file is meant, and do "
+        "not delegate to file_manager to find it out again.\n"
+        "- Delegate to file_manager only if the user asks for a different "
+        "spreadsheet, or asks what other spreadsheets exist.\n"
+    )
+
+
 def build_orchestrator():
     """Build the persistent planner and all of its specialist tools."""
 
@@ -410,6 +453,9 @@ def build_orchestrator():
         system_prompt=(
             ORCHESTRATOR_PROMPT
         ),
+        middleware=[
+            _planner_prompt
+        ],
         state_schema=(
             OrchestratorState
         ),

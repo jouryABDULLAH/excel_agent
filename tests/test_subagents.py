@@ -10,9 +10,11 @@ from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from scripted import ScriptedModel, calling
 
+from excel_agent import config
 from excel_agent.prompts import CANNOT_DO
 from excel_agent.runner import Answer, Session, ToolCall
 from excel_agent.subagents import SUBAGENTS
+from excel_agent.subagents import factory
 from excel_agent.subagents.factory import OrchestratorState, as_tool
 from excel_agent.subagents.prompts import ORCHESTRATOR_PROMPT
 from excel_agent.tools import TOOLS
@@ -237,3 +239,105 @@ def test_the_orchestrator_answers_through_the_same_events(a_spreadsheet):
     # naming a subagent, then the answer, the same as any other turn.
     assert events[0] == ToolCall("analyst", {"instruction": "how many rows?"})
     assert events[-1] == Answer("There are five rows.")
+
+
+# What the planner itself is told
+
+
+class RecordingPlanner(ScriptedModel):
+    """A scripted model that keeps the system prompt it was handed."""
+
+    prompts: list = []
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        self.prompts.append(str(messages[0].content))
+        return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
+
+
+def planning_over(questions, planner, tools):
+    """Run several turns on one thread, the way a conversation runs."""
+    orchestrator = create_agent(
+        model=planner,
+        tools=tools,
+        system_prompt=ORCHESTRATOR_PROMPT,
+        middleware=[factory._planner_prompt],
+        state_schema=OrchestratorState,
+        checkpointer=InMemorySaver(),
+    )
+
+    for question in questions:
+        orchestrator.invoke(
+            {"messages": [{"role": "user", "content": question}]},
+            config={"configurable": {"thread_id": "one"}},
+        )
+
+    return orchestrator
+
+
+def test_the_planner_is_told_which_spreadsheet_is_in_hand_on_every_turn(a_spreadsheet):
+    """It was told on none of them, which is what it forgot.
+
+    A subagent is handed the spreadsheet in its instruction. The planner was
+    handed nothing, so a few turns after the file manager settled a file, the
+    name had scrolled far enough back that it asked the user for a file it had
+    already been given. The state held it the whole time; nothing put it in
+    front of the planner.
+    """
+    a_spreadsheet()
+    file_manager = next(spec for spec in SUBAGENTS if spec.name == "file_manager")
+    analyst = next(spec for spec in SUBAGENTS if spec.name == "analyst")
+
+    planner = RecordingPlanner(
+        script=[
+            calling("file_manager", "1", instruction="use the sales orders file"),
+            AIMessage("Working on it."),
+            calling("analyst", "2", instruction="show rows"),
+            AIMessage("Here."),
+            calling("analyst", "3", instruction="show them again"),
+            AIMessage("Here again."),
+        ],
+        prompts=[],
+    )
+
+    planning_over(
+        ["use the sales orders file", "show rows", "show them again"],
+        planner,
+        [
+            as_tool(
+                file_manager,
+                ScriptedModel(
+                    script=[
+                        calling(
+                            "resolve_spreadsheet_choice",
+                            "i1",
+                            spreadsheet="TEST - Sales Orders",
+                        ),
+                        AIMessage("Selected it."),
+                    ]
+                ),
+            ),
+            as_tool(
+                analyst,
+                ScriptedModel(script=[AIMessage("read it"), AIMessage("again")]),
+            ),
+        ],
+    )
+
+    # Nothing was chosen when the first call was made, and every call after
+    # the file manager settled one names it, three turns included.
+    assert "None has been chosen yet" in planner.prompts[0]
+    assert all("TEST - Sales Orders" in prompt for prompt in planner.prompts[1:])
+
+
+def test_the_planner_is_told_about_a_spreadsheet_the_sidebar_chose(monkeypatch):
+    """The page writes config.SPREADSHEET and never touches the state.
+
+    Told only what the state holds, the planner would name no spreadsheet
+    while every tool wrote to the one the user picked from the sidebar.
+    """
+    monkeypatch.setattr(config, "SPREADSHEET", "TEST - Sales Orders")
+
+    assert factory.current_spreadsheet({}) == "TEST - Sales Orders"
+    # What the file manager settled wins: it is the more recent of the two,
+    # and the one the subagents were told about.
+    assert factory.current_spreadsheet({"spreadsheet_name": "Another"}) == "Another"
