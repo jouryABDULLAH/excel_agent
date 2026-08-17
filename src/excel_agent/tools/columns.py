@@ -413,26 +413,47 @@ def rename_column(
 
 @tool
 def delete_column(
-    column: str,
+    column: str | None = None,
+    position: int | None = None,
     spreadsheet: str | None = None,
     sheet: str | None = None,
 ) -> dict:
-    """Delete one existing column and every value in it.
+    """Delete one existing physical column and every value in it.
+
+    Identify the target by its header name, physical position, or both.
+    Position counts from 1 at the left edge of the sheet.
+
+    Use position for unnamed columns. If both column and position are given,
+    they must refer to the same physical column.
 
     Args:
-        column: Header name of the column to delete.
+        column: Optional header name of the column to delete.
+        position: Optional physical column position, starting from 1.
         spreadsheet: Spreadsheet name. Omit to use the current spreadsheet.
         sheet: Sheet name. Omit to use the first sheet.
     """
-    if not column or not column.strip():
+    if column is not None:
+        column = column.strip()
+
+        if not column:
+            column = None
+
+    if column is None and position is None:
         return _error(
             "missing_column",
-            "The column to delete must be named.",
+            "Give either a column name or a column position to delete.",
             spreadsheet=spreadsheet,
             sheet=sheet,
         )
 
-    column = column.strip()
+    if position is not None and position < 1:
+        return _error(
+            "invalid_position",
+            "Column position must be at least 1.",
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+            position=position,
+        )
 
     try:
         (
@@ -449,16 +470,76 @@ def delete_column(
 
         sheet_name = properties["title"]
 
-        missing = _require_column(
-            column,
-            headers,
-            spreadsheet=spreadsheet_name,
-            sheet=sheet_name,
-        )
-        if missing:
-            return missing
+        # If a name was supplied, resolve it to the physical column position.
+        named_position = None
 
-        position = headers[column]
+        if column is not None:
+            missing = _require_column(
+                column,
+                headers,
+                spreadsheet=spreadsheet_name,
+                sheet=sheet_name,
+            )
+
+            if missing:
+                return missing
+
+            named_position = headers[column]
+
+        # If both were supplied, they must identify the same physical column.
+        if (
+            named_position is not None
+            and position is not None
+            and named_position != position
+        ):
+            return _error(
+                "column_position_mismatch",
+                (
+                    f'Column "{column}" is at position {named_position}, '
+                    f"not position {position}."
+                ),
+                spreadsheet=spreadsheet_name,
+                sheet=sheet_name,
+                column=column,
+                column_position=named_position,
+                requested_position=position,
+            )
+
+        # Position is the canonical identifier from this point onward.
+        if position is None:
+            position = named_position
+
+        assert position is not None
+
+        # Validate against the actual physical sheet width.
+        column_count = (
+            properties
+            .get("gridProperties", {})
+            .get("columnCount")
+        )
+
+        if (
+            isinstance(column_count, int)
+            and position > column_count
+        ):
+            return _error(
+                "invalid_position",
+                "The requested column position is outside the sheet.",
+                spreadsheet=spreadsheet_name,
+                sheet=sheet_name,
+                position=position,
+                first_position=1,
+                last_position=column_count,
+            )
+
+        # If the target was given only by position, determine whether it has
+        # a header so the result can report it accurately.
+        header_by_position = {
+            header_position: header_name
+            for header_name, header_position in headers.items()
+        }
+
+        deleted_column = header_by_position.get(position)
 
         spreadsheet_service.delete_columns(
             spreadsheet_id=spreadsheet_id,
@@ -471,7 +552,7 @@ def delete_column(
             "operation": "delete_column",
             "spreadsheet": spreadsheet_name,
             "sheet": sheet_name,
-            "deleted_column": column,
+            "deleted_column": deleted_column,
             "deleted_position": position,
             "column_positions_changed": True,
         }
@@ -492,7 +573,7 @@ def delete_column(
             sheet=sheet,
         )
 
-
+    
 @tool
 def move_column(
     column: str,
