@@ -43,15 +43,17 @@ def _subagent_instruction(
     instruction: str,
     runtime: ToolRuntime,
 ) -> str:
-    """Build the context passed from the orchestrator to a specialist."""
+    """Build the context passed from the orchestrator to a specialist.
+
+    The name is given and the id is not, because the name is the only one of
+    the two any tool accepts: every spreadsheet argument is resolved through
+    Drive by title. A specialist told the id would sooner or later pass it,
+    and be answered that there is no spreadsheet called 1szALpie23-...
+    """
     original_request = _original_user_request(runtime)
 
-    spreadsheet_id = runtime.state.get(
-        "spreadsheet_id"
-    )
-
-    spreadsheet_name = runtime.state.get(
-        "spreadsheet_name"
+    spreadsheet_name = current_spreadsheet(
+        runtime.state
     )
 
     return (
@@ -59,8 +61,8 @@ def _subagent_instruction(
         f"{original_request or '(not available)'}\n\n"
         "CURRENT SPREADSHEET:\n"
         f"{spreadsheet_name or 'Not selected'}\n"
-        "CURRENT SPREADSHEET ID:\n"
-        f"{spreadsheet_id or 'Not selected'}\n\n"
+        "Pass this exact name as the spreadsheet argument, or omit the "
+        "argument to work on it.\n\n"
         "TASK:\n"
         f"{instruction}"
     )

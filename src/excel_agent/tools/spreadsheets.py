@@ -20,7 +20,6 @@ from excel_agent.sheets import (
     readable,
     resolve_spreadsheet,
     search,
-    sheets_in,
 )
 
 

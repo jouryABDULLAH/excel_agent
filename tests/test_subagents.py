@@ -5,6 +5,7 @@ routes sensibly: that is what a run by hand is for. What is tested is the
 wiring, which is what would make such a run meaningless if it were wrong.
 """
 
+import pytest
 from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
@@ -188,8 +189,12 @@ def test_a_subagent_is_told_which_spreadsheet_is_in_hand(a_spreadsheet):
     # A subagent holds no tool for choosing a spreadsheet, so what it is
     # working on has to arrive with the instruction.
     assert "TEST - Sales Orders" in inside.seen[0]
-    assert "abc123" in inside.seen[0]
     assert "do the thing" in inside.seen[0]
+
+    # The id is deliberately withheld. No tool takes one: every spreadsheet
+    # argument is resolved through Drive by title, so a subagent that passed
+    # the id would be told there is no spreadsheet called abc123.
+    assert "abc123" not in inside.seen[0]
 
 
 def test_a_subagent_is_told_when_nothing_has_been_chosen(a_spreadsheet):
@@ -341,3 +346,31 @@ def test_the_planner_is_told_about_a_spreadsheet_the_sidebar_chose(monkeypatch):
     # What the file manager settled wins: it is the more recent of the two,
     # and the one the subagents were told about.
     assert factory.current_spreadsheet({"spreadsheet_name": "Another"}) == "Another"
+
+
+def test_a_spreadsheet_argument_is_a_name_and_never_an_id(monkeypatch):
+    """Which is why the instruction names the spreadsheet and withholds its id.
+
+    Drive is searched by title, so an id passed as the spreadsheet argument
+    finds nothing. If a tool ever starts taking an id, this fails, and the
+    instruction may start handing one over again.
+    """
+    from excel_agent import sheets
+
+    monkeypatch.setattr(
+        sheets._drive,
+        "search_spreadsheets",
+        lambda name=None: (
+            [("the-id", "TEST - Sales Orders")]
+            if name in (None, "TEST - Sales Orders")
+            else []
+        ),
+    )
+
+    assert sheets.resolve_spreadsheet("TEST - Sales Orders") == (
+        "the-id",
+        "TEST - Sales Orders",
+    )
+
+    with pytest.raises(ValueError):
+        sheets.resolve_spreadsheet("the-id")
