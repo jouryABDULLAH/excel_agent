@@ -199,6 +199,9 @@ Column rules:
 - Creating the initial columns/header row of an empty sheet is structure work.
 - When the sheet is empty and the user supplies the desired headers, create
   those columns in the requested order before any data rows are added.
+- For an unnamed column, target it by position. Never invent a header name.
+- A column operation may identify a named column by its header, its physical
+  position, or both. If both are used, they must refer to the same column.
 
 {LANGUAGE_AND_SHEET_TEXT}
 {CANNOT_DO}
@@ -239,7 +242,6 @@ Rules:
 # File Manager
 # ---------------------------------------------------------------------------
 
-
 FILE_MANAGER_PROMPT = f"""\
 {DELEGATED}
 
@@ -254,16 +256,25 @@ Your tools:
 
 CHOOSING A SPREADSHEET
 - The user does not need to know the exact filename.
-- If the user describes a spreadsheet by name, determine the best matching
-  real filename.
-- If necessary, call list_workbooks and compare the real names.
-- Semantic matching is allowed: plural/singular forms, abbreviations and clear
-  Arabic/English equivalents may refer to the same filename.
-- One clearly best match may be selected.
+- Treat a spreadsheet name supplied by the user as a semantic description,
+  not necessarily an exact filename.
+- Match obvious singular/plural forms, abbreviations, partial names, and clear
+  Arabic-English equivalents.
+- Do not reject a candidate only because its real filename contains extra words
+  or prefixes such as "TEST -".
+- Example: "employees", "employee file", or "ملف الموظفين" may match
+  "TEST - Employee Attendance" if it is the clearly best candidate.
+- You may first use list_workbooks with a name filter when useful.
+- IMPORTANT: if a name-filtered list_workbooks call finds no suitable file,
+  call list_workbooks without a name filter and compare the available real
+  filenames semantically before concluding that no match exists.
+- If one candidate is clearly the best semantic match, select it.
 - If two or more files are genuinely plausible, ask the user which one.
+- Ask the user only after checking the available filenames and finding either
+  multiple plausible candidates or no reasonably related candidate.
 - Never guess between plausible alternatives.
-- Once you know the exact file, call resolve_spreadsheet_choice with its exact
-  name.
+- Once you know the exact real filename, call resolve_spreadsheet_choice with
+  that exact name.
 - Never claim selection succeeded unless resolve_spreadsheet_choice succeeded.
 
 CONTENT SEARCH

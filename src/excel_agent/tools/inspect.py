@@ -14,6 +14,7 @@ from excel_agent.sheets import (
     cell,
     chart_kind,
     chart_title,
+    column_letter,
     find_header_row,
     header_map,
     last_data_row,
@@ -66,6 +67,9 @@ def inspect_sheet(
     sheet: str | None = None,
 ) -> tuple[str, dict]:
     """Read rows with their real Google Sheets row numbers.
+
+    Also reports the physical column layout, including unnamed columns
+    between named columns.
 
     Args:
         columns: Optional column names to return. Omit for every named column.
@@ -131,6 +135,30 @@ def inspect_sheet(
             header_row=header_row,
         )
 
+    # Physical layout from the first column through the rightmost named
+    # column. Unlike header_map(), this preserves unnamed columns that
+    # appear between named columns.
+    rightmost_column = max(headers.values())
+
+    column_layout = []
+
+    for position in range(1, rightmost_column + 1):
+        header = _as_text(
+            cell(
+                rows,
+                header_row,
+                position,
+            )
+        ).strip()
+
+        column_layout.append(
+            {
+                "position": position,
+                "letter": column_letter(position),
+                "header": header or None,
+            }
+        )
+
     available_columns = list(headers)
 
     if columns:
@@ -158,10 +186,35 @@ def inspect_sheet(
     last_row = last_data_row(rows, header_row)
     total_rows = max(last_row - header_row, 0)
 
+    # Make physical layout model-visible.
+    layout_lines = [
+        "Physical column layout "
+        "(includes unnamed columns):"
+    ]
+
+    for item in column_layout:
+        header = (
+            item["header"]
+            if item["header"] is not None
+            else "[unnamed]"
+        )
+
+        layout_lines.append(
+            f'  {item["letter"]} '
+            f'(position {item["position"]}): '
+            f'{header}'
+        )
+
     if total_rows == 0:
-        content = (
-            f"Sheet: {sheet_name} in {spreadsheet_name}. "
-            "It has column names but no rows of data."
+        content = "\n".join(
+            [
+                (
+                    f"Sheet: {sheet_name} in {spreadsheet_name}. "
+                    "It has column names but no rows of data."
+                ),
+                "",
+                *layout_lines,
+            ]
         )
 
         return content, {
@@ -170,7 +223,8 @@ def inspect_sheet(
             "spreadsheet": spreadsheet_name,
             "sheet": sheet_name,
             "header_row": header_row,
-            "columns": selected_columns,
+            "headers": selected_columns,
+            "column_layout": column_layout,
             "total_rows": 0,
             "rows": [],
             "returned_rows": 0,
@@ -197,6 +251,7 @@ def inspect_sheet(
         )
 
     effective_limit = min(max_rows, ROW_LIMIT)
+
     last = min(
         first + effective_limit - 1,
         last_row,
@@ -231,6 +286,8 @@ def inspect_sheet(
             f"last data row is {last_row})."
         ),
         "",
+        *layout_lines,
+        "",
         "| row | " + " | ".join(selected_columns) + " |",
         "|" + "---|" * (len(selected_columns) + 1),
     ]
@@ -258,6 +315,7 @@ def inspect_sheet(
             spreadsheet_id,
             sheet_name,
         )
+
     except HttpError:
         charts = []
 
@@ -293,8 +351,8 @@ def inspect_sheet(
         "operation": "inspect_sheet",
         "spreadsheet": spreadsheet_name,
         "sheet": sheet_name,
-        "columns": selected_columns,
         "headers": selected_columns,
+        "column_layout": column_layout,
         "rows": result_rows,
         "charts": chart_results,
         "rendered": rendered,
