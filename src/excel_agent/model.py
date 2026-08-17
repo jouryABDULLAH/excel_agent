@@ -8,10 +8,11 @@ from uuid import uuid4
 
 from langchain_groq import ChatGroq
 
-from excel_agent.config import MAX_TURNS, MODEL, require_api_key
+from excel_agent.config import MODEL, require_api_key
 
 
-RECURSION_LIMIT = MAX_TURNS * 2 + 1
+# A step is a model call or a tool call, so this is roughly twenty turns.
+RECURSION_LIMIT = 41
 TEMPERATURE = 0.3
 
 

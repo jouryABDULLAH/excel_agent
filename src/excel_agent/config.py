@@ -30,9 +30,6 @@ SPREADSHEET = os.environ.get("EXCEL_AGENT_SPREADSHEET")
 # Tracing is LangSmith's, switched on by the environment; see .env.example.
 
 
-MAX_TURNS = 20
-
-
 def require_api_key() -> str:
     """Return the API key, or explain how to set it if it is missing."""
     if not GROQ_API_KEY:
