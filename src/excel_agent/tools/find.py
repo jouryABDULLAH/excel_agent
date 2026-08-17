@@ -3,11 +3,13 @@
 from typing import Any
 
 from googleapiclient.errors import HttpError
+from langchain.tools import ToolRuntime
 from langchain_core.tools import tool
 
 from excel_agent.services.google import readable
 from excel_agent.services.spreadsheet import spreadsheet_service
 from excel_agent.sheets import (
+    chosen,
     cell,
     find_header_row,
     header_map,
@@ -76,6 +78,7 @@ def find_data(
     whole_cell: bool = False,
     spreadsheet: str | None = None,
     sheet: str | None = None,
+    runtime: ToolRuntime = None,
 ) -> tuple[str, dict]:
     """Find rows containing some displayed cell text.
 
@@ -91,6 +94,10 @@ def find_data(
     Returns:
         Readable matching rows plus structured match metadata.
     """
+    # Left out, the file is the one the orchestrator handed this
+    # specialist, which lives in its state rather than in a global.
+    spreadsheet = spreadsheet or chosen(runtime)
+
     if is_blank(text):
         return _error(
             "missing_text",

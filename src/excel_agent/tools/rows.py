@@ -3,11 +3,13 @@
 from typing import Any
 
 from googleapiclient.errors import HttpError
+from langchain.tools import ToolRuntime
 from langchain_core.tools import tool
 
 from excel_agent.services.google import readable
 from excel_agent.services.spreadsheet import spreadsheet_service
 from excel_agent.sheets import (
+    chosen,
     a1,
     find_header_row,
     header_map,
@@ -128,6 +130,7 @@ def update_row(
     values: dict[str, CellValue],
     spreadsheet: str | None = None,
     sheet: str | None = None,
+    runtime: ToolRuntime = None,
 ) -> dict:
     """Update selected cells in an existing row.
 
@@ -146,6 +149,10 @@ def update_row(
         sheet: Sheet/tab name, not the spreadsheet name. Omit to use the
             first sheet.
     """
+    # Left out, the file is the one the orchestrator handed this
+    # specialist, which lives in its state rather than in a global.
+    spreadsheet = spreadsheet or chosen(runtime)
+
     try:
         (
             spreadsheet_id,
@@ -232,6 +239,7 @@ def insert_row(
     values: dict[str, CellValue] | None = None,
     spreadsheet: str | None = None,
     sheet: str | None = None,
+    runtime: ToolRuntime = None,
 ) -> dict:
     """Insert a new row at a specific position.
 
@@ -246,6 +254,10 @@ def insert_row(
         sheet: Sheet/tab name, not the spreadsheet name. Omit to use the
             first sheet.
     """
+    # Left out, the file is the one the orchestrator handed this
+    # specialist, which lives in its state rather than in a global.
+    spreadsheet = spreadsheet or chosen(runtime)
+
     try:
         (
             spreadsheet_id,
@@ -347,6 +359,7 @@ def append_row(
     values: dict[str, CellValue],
     spreadsheet: str | None = None,
     sheet: str | None = None,
+    runtime: ToolRuntime = None,
 ) -> dict:
     """Append a new data row after the current table.
 
@@ -360,6 +373,10 @@ def append_row(
         sheet: Sheet/tab name, not the spreadsheet name. Omit to use the
             first sheet.
     """
+    # Left out, the file is the one the orchestrator handed this
+    # specialist, which lives in its state rather than in a global.
+    spreadsheet = spreadsheet or chosen(runtime)
+
     try:
         (
             spreadsheet_id,
@@ -459,6 +476,7 @@ def delete_row(
     row: int,
     spreadsheet: str | None = None,
     sheet: str | None = None,
+    runtime: ToolRuntime = None,
 ) -> dict:
     """Delete one existing data row and everything in it.
 
@@ -471,6 +489,10 @@ def delete_row(
         sheet: Sheet/tab name, not the spreadsheet name. Omit to use the
             first sheet.
     """
+    # Left out, the file is the one the orchestrator handed this
+    # specialist, which lives in its state rather than in a global.
+    spreadsheet = spreadsheet or chosen(runtime)
+
     try:
         (
             spreadsheet_id,
@@ -533,6 +555,7 @@ def move_row(
     to_row: int,
     spreadsheet: str | None = None,
     sheet: str | None = None,
+    runtime: ToolRuntime = None,
 ) -> dict:
     """Move one existing data row to another position.
 
@@ -544,6 +567,10 @@ def move_row(
         sheet: Sheet/tab name, not the spreadsheet name. Omit to use the
             first sheet.
     """
+    # Left out, the file is the one the orchestrator handed this
+    # specialist, which lives in its state rather than in a global.
+    spreadsheet = spreadsheet or chosen(runtime)
+
     try:
         (
             spreadsheet_id,

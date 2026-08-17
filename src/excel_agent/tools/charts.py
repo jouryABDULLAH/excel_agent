@@ -3,11 +3,13 @@
 from typing import Any, Literal
 
 from googleapiclient.errors import HttpError
+from langchain.tools import ToolRuntime
 from langchain_core.tools import tool
 
 from excel_agent.services.google import readable
 from excel_agent.services.spreadsheet import spreadsheet_service
 from excel_agent.sheets import (
+    chosen,
     find_header_row,
     header_map,
     last_data_row,
@@ -207,6 +209,7 @@ def create_chart(
     title: str,
     spreadsheet: str | None = None,
     sheet: str | None = None,
+    runtime: ToolRuntime = None,
 ) -> dict:
     """Create an embedded chart from existing table columns.
 
@@ -220,6 +223,10 @@ def create_chart(
         sheet: Sheet/tab name, not the spreadsheet name. Omit for the
             first sheet.
     """
+    # Left out, the file is the one the orchestrator handed this
+    # specialist, which lives in its state rather than in a global.
+    spreadsheet = spreadsheet or chosen(runtime)
+
     if not title or not title.strip():
         return _error(
             "missing_title",
@@ -392,6 +399,7 @@ def update_chart(
     kind: ChartKind | None = None,
     spreadsheet: str | None = None,
     sheet: str | None = None,
+    runtime: ToolRuntime = None,
 ) -> dict:
     """Update an existing chart's title and/or chart type.
 
@@ -411,6 +419,10 @@ def update_chart(
         sheet: Sheet/tab name, not the spreadsheet name. Omit for the
             first sheet.
     """
+    # Left out, the file is the one the orchestrator handed this
+    # specialist, which lives in its state rather than in a global.
+    spreadsheet = spreadsheet or chosen(runtime)
+
     if title is None and kind is None:
         return _error(
             "no_chart_change",
@@ -555,6 +567,7 @@ def delete_chart(
     chart_id: int,
     spreadsheet: str | None = None,
     sheet: str | None = None,
+    runtime: ToolRuntime = None,
 ) -> dict:
     """Delete one embedded chart by its stable chart ID.
 
@@ -567,6 +580,10 @@ def delete_chart(
         sheet: Sheet/tab name, not the spreadsheet name. Omit for the
             first sheet.
     """
+    # Left out, the file is the one the orchestrator handed this
+    # specialist, which lives in its state rather than in a global.
+    spreadsheet = spreadsheet or chosen(runtime)
+
     try:
         (
             spreadsheet_id,

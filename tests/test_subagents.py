@@ -18,7 +18,7 @@ from excel_agent.subagents import SUBAGENTS
 from excel_agent.subagents import factory
 from excel_agent.subagents.factory import OrchestratorState, as_tool
 from excel_agent.subagents.prompts import ORCHESTRATOR_PROMPT
-from excel_agent.tools import TOOLS
+from excel_agent.tools import TOOLS, inspect
 
 # Choosing which spreadsheet to work on is the orchestrator's own question, so
 # no subagent holds any of these.
@@ -374,3 +374,69 @@ def test_a_spreadsheet_argument_is_a_name_and_never_an_id(monkeypatch):
 
     with pytest.raises(ValueError):
         sheets.resolve_spreadsheet("the-id")
+
+
+def test_a_tool_called_without_a_spreadsheet_uses_the_one_in_the_subagent_state(
+    a_spreadsheet, monkeypatch
+):
+    """The fallback that used to be a process-wide global.
+
+    The model leaves the spreadsheet argument out, and the file it works on is
+    the one the orchestrator put into this specialist's state. Two browser
+    sessions each have their own, which a module global could not give them.
+    """
+    a_spreadsheet()
+
+    asked = []
+    monkeypatch.setattr(
+        inspect,
+        "resolve_spreadsheet",
+        lambda name=None: (asked.append(name), ("an-id", "TEST - Sales Orders"))[1],
+    )
+
+    analyst = next(spec for spec in SUBAGENTS if spec.name == "analyst")
+
+    delegating_to(
+        analyst,
+        ScriptedModel(
+            script=[
+                # No spreadsheet argument: the state is the only source.
+                calling("inspect_sheet", "1"),
+                AIMessage("Read it."),
+            ]
+        ),
+        state={"spreadsheet_name": "TEST - Sales Orders"},
+    )
+
+    assert asked == ["TEST - Sales Orders"]
+
+
+def test_a_spreadsheet_named_by_the_model_still_wins(a_spreadsheet, monkeypatch):
+    """State is the fallback, not an override.
+
+    Asked about another file by name, a specialist has to be able to reach it
+    without the file in hand being substituted underneath it.
+    """
+    a_spreadsheet()
+
+    asked = []
+    monkeypatch.setattr(
+        inspect,
+        "resolve_spreadsheet",
+        lambda name=None: (asked.append(name), ("an-id", "Another"))[1],
+    )
+
+    analyst = next(spec for spec in SUBAGENTS if spec.name == "analyst")
+
+    delegating_to(
+        analyst,
+        ScriptedModel(
+            script=[
+                calling("inspect_sheet", "1", spreadsheet="Another"),
+                AIMessage("Read it."),
+            ]
+        ),
+        state={"spreadsheet_name": "TEST - Sales Orders"},
+    )
+
+    assert asked == ["Another"]

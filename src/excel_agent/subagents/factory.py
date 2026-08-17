@@ -20,6 +20,18 @@ class OrchestratorState(AgentState):
     spreadsheet_name: str | None
 
 
+class SpreadsheetState(AgentState):
+    """What a specialist is given about the file it is working on.
+
+    The name only, because a name is the whole of what a tool accepts. It is
+    here rather than in the instruction alone so that a tool called without a
+    spreadsheet argument has somewhere to read it from that is not a module
+    global shared by every session in the process.
+    """
+
+    spreadsheet_name: str | None
+
+
 def _original_user_request(
     runtime: ToolRuntime,
 ) -> str:
@@ -192,7 +204,14 @@ def _delegate_tool(
                             )
                         ),
                     }
-                ]
+                ],
+                # So a tool called without a spreadsheet argument reads the
+                # file from here rather than from a process-wide global.
+                "spreadsheet_name": (
+                    current_spreadsheet(
+                        runtime.state
+                    )
+                ),
             },
             config={
                 "recursion_limit": (
@@ -268,7 +287,12 @@ def _file_manager_tool(
                             subagent_instruction
                         ),
                     }
-                ]
+                ],
+                "spreadsheet_name": (
+                    current_spreadsheet(
+                        runtime.state
+                    )
+                ),
             },
             config={
                 "recursion_limit": (
@@ -370,6 +394,7 @@ def build_subagent(spec, model):
         model=model,
         tools=spec.tools,
         system_prompt=spec.system_prompt,
+        state_schema=SpreadsheetState,
     )
 
 

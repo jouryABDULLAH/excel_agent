@@ -150,6 +150,24 @@ def number_forms(text: str) -> list[str]:
     return forms
 
 
+def chosen(runtime) -> str | None:
+    """The spreadsheet the subagent running this tool was handed.
+
+    A tool takes a name. When the model leaves the argument out, the name to
+    use is the one the orchestrator put into the subagent's state, and this is
+    where a tool reaches it.
+
+    Untyped on purpose: this module knows nothing about langchain, and what is
+    wanted here is only something with state on it. Invoked outside an agent,
+    as the tests do, there is no runtime and no name, and the caller falls
+    through to whatever it would have done before.
+    """
+    if runtime is None:
+        return None
+
+    return (runtime.state or {}).get("spreadsheet_name")
+
+
 def resolve_spreadsheet(name: str | None = None) -> tuple[str, str]:
     """Turn the name of a spreadsheet into its id, and give back both."""
     wanted = (name or "").strip()

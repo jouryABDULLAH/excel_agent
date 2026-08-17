@@ -4,6 +4,7 @@ from collections import Counter
 from typing import Any
 
 from googleapiclient.errors import HttpError
+from langchain.tools import ToolRuntime
 from langchain_core.tools import tool
 
 from excel_agent.services.google import readable
@@ -12,6 +13,7 @@ from excel_agent.services.spreadsheet import (
     spreadsheet_service,
 )
 from excel_agent.sheets import (
+    chosen,
     cell,
     find_header_row,
     header_map,
@@ -77,6 +79,7 @@ def sheet_stats(
     column: str,
     spreadsheet: str | None = None,
     sheet: str | None = None,
+    runtime: ToolRuntime = None,
 ) -> tuple[str, dict]:
     """Summarise one complete spreadsheet column.
 
@@ -90,6 +93,10 @@ def sheet_stats(
     Returns:
         Readable statistics plus structured numerical/textual metadata.
     """
+    # Left out, the file is the one the orchestrator handed this
+    # specialist, which lives in its state rather than in a global.
+    spreadsheet = spreadsheet or chosen(runtime)
+
     if not column or not column.strip():
         return _error(
             "missing_column",

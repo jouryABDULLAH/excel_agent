@@ -3,11 +3,13 @@
 from typing import Any
 
 from googleapiclient.errors import HttpError
+from langchain.tools import ToolRuntime
 from langchain_core.tools import tool
 
 from excel_agent.services.google import readable
 from excel_agent.services.spreadsheet import spreadsheet_service
 from excel_agent.sheets import (
+    chosen,
     a1,
     cell,
     column_letter,
@@ -293,6 +295,7 @@ def insert_column(
     position: int | None = None,
     spreadsheet: str | None = None,
     sheet: str | None = None,
+    runtime: ToolRuntime = None,
 ) -> dict:
     """Insert a new column.
 
@@ -313,6 +316,10 @@ def insert_column(
         sheet: Sheet/tab name, not the spreadsheet name. Omit to use the
             first sheet.
     """
+    # Left out, the file is the one the orchestrator handed this
+    # specialist, which lives in its state rather than in a global.
+    spreadsheet = spreadsheet or chosen(runtime)
+
     if name is not None:
         name = name.strip()
 
@@ -442,6 +449,7 @@ def rename_column(
     position: int | None = None,
     spreadsheet: str | None = None,
     sheet: str | None = None,
+    runtime: ToolRuntime = None,
 ) -> dict:
     """Set the header of one existing physical column.
 
@@ -464,6 +472,10 @@ def rename_column(
         sheet: Sheet/tab name, not the spreadsheet name. Omit to use the
             first sheet.
     """
+    # Left out, the file is the one the orchestrator handed this
+    # specialist, which lives in its state rather than in a global.
+    spreadsheet = spreadsheet or chosen(runtime)
+
     # Empty string is intentionally allowed so a header can be cleared.
     new_name = new_name.strip()
 
@@ -580,6 +592,7 @@ def delete_column(
     position: int | None = None,
     spreadsheet: str | None = None,
     sheet: str | None = None,
+    runtime: ToolRuntime = None,
 ) -> dict:
     """Delete one existing physical column and every value in it.
 
@@ -598,6 +611,10 @@ def delete_column(
         sheet: Sheet/tab name, not the spreadsheet name. Omit to use the
             first sheet.
     """
+    # Left out, the file is the one the orchestrator handed this
+    # specialist, which lives in its state rather than in a global.
+    spreadsheet = spreadsheet or chosen(runtime)
+
     try:
         (
             spreadsheet_id,
@@ -680,6 +697,7 @@ def move_column(
     position: int | None = None,
     spreadsheet: str | None = None,
     sheet: str | None = None,
+    runtime: ToolRuntime = None,
 ) -> dict:
     """Move one existing physical column to another table position.
 
@@ -699,6 +717,10 @@ def move_column(
         sheet: Sheet/tab name, not the spreadsheet name. Omit to use the
             first sheet.
     """
+    # Left out, the file is the one the orchestrator handed this
+    # specialist, which lives in its state rather than in a global.
+    spreadsheet = spreadsheet or chosen(runtime)
+
     try:
         (
             spreadsheet_id,
@@ -813,6 +835,7 @@ def set_column_formula(
     position: int | None = None,
     spreadsheet: str | None = None,
     sheet: str | None = None,
+    runtime: ToolRuntime = None,
 ) -> dict:
     """Fill an existing physical column with a relative spreadsheet formula.
 
@@ -835,6 +858,10 @@ def set_column_formula(
         sheet: Sheet/tab name, not the spreadsheet name. Omit to use the
             first sheet.
     """
+    # Left out, the file is the one the orchestrator handed this
+    # specialist, which lives in its state rather than in a global.
+    spreadsheet = spreadsheet or chosen(runtime)
+
     if not formula or not formula.strip():
         return _error(
             "missing_formula",

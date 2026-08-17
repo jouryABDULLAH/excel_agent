@@ -2,11 +2,13 @@
 
 from typing import Any, Literal
 from googleapiclient.errors import HttpError
+from langchain.tools import ToolRuntime
 from langchain_core.tools import tool
 
 from excel_agent.services.google import readable
 from excel_agent.services.spreadsheet import spreadsheet_service
 from excel_agent.sheets import (
+    chosen,
     find_header_row,
     header_map,
     last_data_row,
@@ -265,6 +267,7 @@ def format_range(
 
     spreadsheet: str | None = None,
     sheet: str | None = None,
+    runtime: ToolRuntime = None,
 ) -> dict:
     """Change how a range of cells is displayed without changing its values.
 
@@ -300,6 +303,10 @@ def format_range(
         border_style: Apply the same border style to all four sides.
         border_color: Optional border colour. Requires border_style.
     """
+    # Left out, the file is the one the orchestrator handed this
+    # specialist, which lives in its state rather than in a global.
+    spreadsheet = spreadsheet or chosen(runtime)
+
 
     if (
         number_format is None
@@ -725,6 +732,7 @@ def copy_format(
     destination_last_row: int | None = None,
     spreadsheet: str | None = None,
     sheet: str | None = None,
+    runtime: ToolRuntime = None,
 ) -> dict:
     """Copy existing formatting from one range to another.
 
@@ -749,6 +757,10 @@ def copy_format(
         sheet: Sheet/tab name, not the spreadsheet name. Omit for the
             first sheet.
     """
+    # Left out, the file is the one the orchestrator handed this
+    # specialist, which lives in its state rather than in a global.
+    spreadsheet = spreadsheet or chosen(runtime)
+
     try:
         (
             spreadsheet_id,

@@ -3,6 +3,7 @@
 from typing import Any
 
 from googleapiclient.errors import HttpError
+from langchain.tools import ToolRuntime
 from langchain_core.tools import tool
 
 from excel_agent.services.google import readable
@@ -11,6 +12,7 @@ from excel_agent.services.spreadsheet import (
     spreadsheet_service,
 )
 from excel_agent.sheets import (
+    chosen,
     cell,
     chart_kind,
     chart_title,
@@ -83,6 +85,7 @@ def inspect_sheet(
     max_rows: int = 20,
     spreadsheet: str | None = None,
     sheet: str | None = None,
+    runtime: ToolRuntime = None,
 ) -> tuple[str, dict]:
     """Read rows with their real Google Sheets row numbers.
 
@@ -101,6 +104,10 @@ def inspect_sheet(
     Returns:
         Readable table content plus structured metadata describing the page.
     """
+    # Left out, the file is the one the orchestrator handed this
+    # specialist, which lives in its state rather than in a global.
+    spreadsheet = spreadsheet or chosen(runtime)
+
     if max_rows < 1:
         return _error(
             "invalid_max_rows",
