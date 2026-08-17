@@ -14,8 +14,9 @@ from langgraph.checkpoint.memory import InMemorySaver
 from scripted import ScriptedModel, calling
 from streamlit.testing.v1 import AppTest
 
-from excel_agent import browsing, cli, config
+from excel_agent import browsing, cli, runner
 from excel_agent.runner import Session
+from excel_agent.subagents.factory import OrchestratorState
 from excel_agent.tools import TOOLS
 
 import excel_agent.ui
@@ -35,8 +36,13 @@ FILES = (("one", SPREADSHEET), ("two", OTHER))
 
 @pytest.fixture(autouse=True)
 def a_spreadsheet_in_use(monkeypatch, a_drive):
-    """Every test here draws the page, and the page reads Drive to draw it."""
-    monkeypatch.setattr(config, "SPREADSHEET", SPREADSHEET)
+    """Every test here draws the page, and the page reads Drive to draw it.
+
+    The spreadsheet a conversation opens on is seeded from the environment by
+    Session, which is what stands in here for a user who has already chosen
+    one.
+    """
+    monkeypatch.setattr(runner, "START_SPREADSHEET", SPREADSHEET)
     a_drive(files=FILES)
 
 
@@ -91,6 +97,7 @@ def page_with_a_scripted_agent(says: str, script=None, tools=()) -> AppTest:
             ScriptedModel(script=list(script) if script else [AIMessage(says)]),
             list(tools),
             system_prompt="terse",
+            state_schema=OrchestratorState,
             checkpointer=InMemorySaver(),
         )
     )
@@ -124,7 +131,7 @@ def test_a_turn_that_moves_to_another_spreadsheet_is_still_drawn(
 ):
     # The move has to happen while the turn is running, which is the whole
     # point, so the real tool is what does it.
-    monkeypatch.setattr(config, "SPREADSHEET", OTHER)
+    monkeypatch.setattr(runner, "START_SPREADSHEET", OTHER)
     a_spreadsheet()
 
     # Written out rather than through calling(), whose own first argument is
@@ -146,7 +153,7 @@ def test_a_turn_that_moves_to_another_spreadsheet_is_still_drawn(
 
     page.chat_input[0].set_value("work on the other spreadsheet").run()
 
-    assert config.SPREADSHEET == SPREADSHEET
+    assert page.session_state["session"].in_use() == SPREADSHEET
     # Redrawing must not throw the turn away: what was asked and what came
     # back are both in the transcript, and both are on the page.
     assert [said["text"] for said in page.session_state["transcript"]] == [
@@ -235,17 +242,17 @@ def starting_again(page):
 def test_a_new_conversation_lets_go_of_the_spreadsheet():
     """REGRESSION: the file outlived the conversation that chose it.
 
-    A new conversation is a new thread, so the agent's own record of the
-    spreadsheet goes. config.SPREADSHEET does not, and every tool falls back
-    to it, so the first question of a fresh conversation was answered about a
-    file nobody in it had named.
+    A new conversation is a new thread, and the spreadsheet now lives in that
+    thread's state, so it goes when the thread does. It used to live in a
+    module global that outlived both, and the first question of a fresh
+    conversation was answered about a file nobody in it had named.
     """
     page = page_with_a_scripted_agent("Five rows.").run()
-    assert config.SPREADSHEET == SPREADSHEET
+    assert page.session_state["session"].in_use() == SPREADSHEET
 
     page = starting_again(page)
 
-    assert config.SPREADSHEET is None
+    assert page.session_state["session"].in_use() is None
 
 
 def test_a_new_conversation_empties_the_transcript():

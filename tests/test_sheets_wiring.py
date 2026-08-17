@@ -12,7 +12,7 @@ nine other files. That is checked here too.
 
 import pytest
 
-from excel_agent import config, sheets
+from excel_agent import sheets
 
 from fake_google import Endpoint, FakeGoogle, Request, error
 
@@ -367,26 +367,18 @@ def test_a_spreadsheet_with_no_sheets_at_all_is_refused(fake_google):
 # Which spreadsheet is being worked on
 
 
-def test_naming_nothing_uses_the_spreadsheet_being_worked_on(monkeypatch, fake_google):
+def test_a_name_is_the_only_way_to_say_which_spreadsheet(fake_google):
+    """There is no longer anywhere else for it to come from.
+
+    It used to fall back to a module global that every browser session in the
+    process shared. A tool called without one now reads the name out of its
+    own subagent's state and passes it in here.
+    """
     fake_google(
         files=Endpoint(answers={"list": {"files": [{"id": "an-id", "name": "In Use"}]}})
     )
-    monkeypatch.setattr(config, "SPREADSHEET", "In Use")
 
-    assert sheets.resolve_spreadsheet() == ("an-id", "In Use")
-
-
-def test_the_spreadsheet_in_use_is_read_when_asked_not_when_imported(
-    monkeypatch, fake_google
-):
-    """A spreadsheet chosen while the agent runs has to be the one that answers."""
-    fake_google(
-        files=Endpoint(answers={"list": {"files": [{"id": "later-id", "name": "Chosen Later"}]}})
-    )
-    monkeypatch.setattr(config, "SPREADSHEET", None)
-    monkeypatch.setattr(config, "SPREADSHEET", "Chosen Later")
-
-    assert sheets.resolve_spreadsheet()[0] == "later-id"
+    assert sheets.resolve_spreadsheet("In Use") == ("an-id", "In Use")
 
 
 @pytest.mark.parametrize("nothing", (None, "", "   "))
@@ -394,7 +386,6 @@ def test_naming_nothing_with_nothing_chosen_says_what_to_do(
     nothing, monkeypatch, fake_google
 ):
     fake_google()
-    monkeypatch.setattr(config, "SPREADSHEET", None)
 
     with pytest.raises(ValueError) as refused:
         sheets.resolve_spreadsheet(nothing)

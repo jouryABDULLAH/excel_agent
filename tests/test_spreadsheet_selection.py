@@ -15,7 +15,6 @@ import pytest
 from langchain_core.messages import ToolMessage
 from langgraph.types import Command
 
-from excel_agent import config
 from excel_agent.tools import spreadsheets
 from excel_agent.tools.spreadsheets import use_spreadsheet
 
@@ -45,10 +44,6 @@ def a_resolvable_name(monkeypatch):
     )
 
 
-@pytest.fixture(autouse=True)
-def nothing_in_use(monkeypatch):
-    """No spreadsheet chosen, so a test setting one cannot reach the next."""
-    monkeypatch.setattr(config, "SPREADSHEET", None)
 
 
 # Settling on a file
@@ -88,38 +83,30 @@ def test_the_answer_is_tied_to_the_call_that_asked():
     assert answer.update["messages"][0].tool_call_id == Runtime.tool_call_id
 
 
-def test_choosing_records_the_spreadsheet_being_worked_on():
-    """config.SPREADSHEET is what the subagents' tools fall back to.
+def test_the_choice_is_recorded_in_the_state_and_nowhere_else():
+    """There is one record of which spreadsheet is in hand, and this is it.
 
-    They are handed the chosen name in their instruction, but a tool called
-    without a spreadsheet argument reads this instead. Temporary: it goes when
-    those tools read spreadsheet_id out of the state.
+    It used to be written to a module global as well, which every browser
+    session in the process shared. Where a tool reads it from now is the
+    subagent state seeded from this update, covered in test_subagents.
     """
-    choosing("sales orders")
+    answer = choosing("sales orders")
 
-    assert config.SPREADSHEET == "TEST - Sales Orders"
+    assert answer.update["spreadsheet_name"] == "TEST - Sales Orders"
 
 
-def test_a_tool_called_afterwards_knows_which_file_to_use(monkeypatch):
-    """The consequence of the line above, followed through to where it lands.
+def test_a_tool_with_no_spreadsheet_anywhere_refuses_rather_than_guessing():
+    """Nothing chosen used to mean a process-wide global; now it means nothing.
 
-    A tool called with no spreadsheet argument reaches sheets.resolve_spreadsheet
-    with nothing, which falls back to config.SPREADSHEET. What the Drive service
-    is then asked for is what the fallback was worth.
+    Refusing is the only safe answer: silently picking up a file some other
+    conversation had chosen is how a write lands in the wrong spreadsheet.
     """
     from excel_agent import sheets
 
-    asked: list[str] = []
-    monkeypatch.setattr(
-        sheets._drive,
-        "resolve_spreadsheet",
-        lambda name: asked.append(name) or ("an-id", name),
-    )
+    with pytest.raises(ValueError) as refusal:
+        sheets.resolve_spreadsheet()
 
-    choosing("sales orders")
-    sheets.resolve_spreadsheet()
-
-    assert asked == ["TEST - Sales Orders"]
+    assert "No spreadsheet has been chosen yet" in str(refusal.value)
 
 
 # A name that reaches no single file
@@ -159,7 +146,6 @@ def test_a_miss_settles_nothing(monkeypatch):
 
     assert "spreadsheet_id" not in answer.update
     assert "spreadsheet_name" not in answer.update
-    assert config.SPREADSHEET is None
 
 
 def test_the_miss_says_to_choose_and_call_again(monkeypatch):

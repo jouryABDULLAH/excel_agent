@@ -17,6 +17,7 @@ from langgraph.errors import (
     GraphRecursionError,
 )
 
+from excel_agent.config import START_SPREADSHEET
 from excel_agent.model import (
     GAVE_UP,
     RECURSION_LIMIT,
@@ -303,8 +304,63 @@ class Session:
         )
         self.name = name
 
+        if START_SPREADSHEET:
+            self.use(
+                START_SPREADSHEET
+            )
+
+    @property
+    def _where(self) -> dict:
+        """Which thread this session's state lives under."""
+        return {
+            "configurable": {
+                "thread_id": (
+                    self.thread_id
+                ),
+            },
+        }
+
+    def in_use(self) -> str | None:
+        """The spreadsheet this conversation is working on, if any.
+
+        Kept in the conversation's own state rather than in a module global,
+        so that two browser sessions in one process are working on two
+        spreadsheets rather than fighting over one.
+        """
+        state = self.agent.get_state(
+            self._where
+        )
+
+        return state.values.get(
+            "spreadsheet_name"
+        )
+
+    def use(
+        self,
+        name: str,
+        spreadsheet_id: str | None = None,
+    ) -> None:
+        """Work on this spreadsheet for the rest of the conversation."""
+        self.agent.update_state(
+            self._where,
+            {
+                "spreadsheet_id": (
+                    spreadsheet_id
+                ),
+                "spreadsheet_name": (
+                    name
+                ),
+            },
+        )
+
     def reset(self) -> None:
-        """Start another conversation thread."""
+        """Start another conversation thread, on no spreadsheet.
+
+        A new thread has no state, so the spreadsheet goes with the
+        conversation that chose it rather than outliving it. The one named in
+        the environment is not put back either: it says which file to open on,
+        and that was the conversation being left behind.
+        """
         self.thread_id = (
             new_thread()
         )

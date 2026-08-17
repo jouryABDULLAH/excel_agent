@@ -173,13 +173,11 @@ def resolve_spreadsheet(name: str | None = None) -> tuple[str, str]:
     wanted = (name or "").strip()
 
     if not wanted:
-        if not config.SPREADSHEET:
-            raise ValueError(
-                "No spreadsheet has been chosen yet. Call list_workbooks and "
-                "ask the user which one to work on, then name it in the "
-                "spreadsheet argument."
-            )
-        wanted = config.SPREADSHEET
+        raise ValueError(
+            "No spreadsheet has been chosen yet. Call list_workbooks and "
+            "ask the user which one to work on, then name it in the "
+            "spreadsheet argument."
+        )
 
     return _drive.resolve_spreadsheet(wanted)
 

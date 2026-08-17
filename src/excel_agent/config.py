@@ -22,10 +22,11 @@ GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
 MODEL = os.environ.get("EXCEL_AGENT_MODEL", "openai/gpt-oss-120b")
 
-# The spreadsheet being worked on, by name. Read at the moment a tool asks for
-# it rather than at import, so a spreadsheet chosen part way through a
-# conversation is the one that answers.
-SPREADSHEET = os.environ.get("EXCEL_AGENT_SPREADSHEET")
+# The spreadsheet a conversation opens on, by name, or nothing to start having
+# chosen none. Only ever read: which spreadsheet is being worked on belongs to
+# a Session, because two browser sessions in one process have two answers and
+# a module global has one.
+START_SPREADSHEET = os.environ.get("EXCEL_AGENT_SPREADSHEET")
 
 # Tracing is LangSmith's, switched on by the environment; see .env.example.
 

@@ -5,7 +5,7 @@ names sheets.py would have gone out to fetch are replaced by the a_drive
 fixture.
 """
 
-from excel_agent import browsing, config
+from excel_agent import browsing
 
 
 # What a few rows are worth asking about
@@ -58,11 +58,10 @@ def test_the_spreadsheets_on_drive_are_listed_by_name(a_drive):
     assert browsing.workbooks() == ["TEST - Sales Orders", "TEST - Raw Contacts"]
 
 
-def test_a_spreadsheet_is_read_for_what_it_holds(a_drive, monkeypatch):
-    monkeypatch.setattr(config, "SPREADSHEET", "TEST - Sales Orders")
+def test_a_spreadsheet_is_read_for_what_it_holds(a_drive):
     a_drive()
 
-    asks = browsing.suggestions()
+    asks = browsing.suggestions("TEST - Sales Orders")
 
     assert asks[:2] == browsing.GENERIC
     assert "What is the total Units?" in asks
@@ -79,54 +78,51 @@ def test_an_identifier_is_no_good_as_a_label_either():
     assert "Draw a bar chart of Units by Region" in asks
 
 
-def test_nothing_is_read_before_a_spreadsheet_is_chosen(monkeypatch):
-    monkeypatch.setattr(config, "SPREADSHEET", None)
-
+def test_nothing_is_read_before_a_spreadsheet_is_chosen():
     # Reading would mean asking Drive which file, and there is no answer yet.
-    assert browsing.suggestions() == browsing.GENERIC
-    assert browsing.in_use() is None
-    assert browsing.where() == "[no spreadsheet chosen yet]"
+    assert browsing.suggestions(None) == browsing.GENERIC
+    assert browsing.where(None) == "[no spreadsheet chosen yet]"
 
 
 def test_a_spreadsheet_that_will_not_open_still_offers_something(monkeypatch):
-    monkeypatch.setattr(config, "SPREADSHEET", "TEST - Sales Orders")
-
     def refuse(name=None):
         raise ValueError("There is no spreadsheet called that.")
 
     monkeypatch.setattr("excel_agent.sheets.resolve_spreadsheet", refuse)
 
-    assert browsing.suggestions() == browsing.GENERIC
+    assert browsing.suggestions("TEST - Sales Orders") == browsing.GENERIC
 
 
-def test_where_the_work_goes_names_the_sheet_and_the_file(a_drive, monkeypatch):
-    monkeypatch.setattr(config, "SPREADSHEET", "TEST - Sales Orders")
+def test_where_the_work_goes_names_the_sheet_and_the_file(a_drive):
     a_drive()
 
     # Neither on its own says where a change lands: a spreadsheet holds
     # several sheets, and the one used when none is named is simply the first.
-    assert browsing.where() == "Sales Orders in TEST - Sales Orders"
+    assert browsing.where("TEST - Sales Orders") == (
+        "Sales Orders in TEST - Sales Orders"
+    )
 
 
-def test_the_spreadsheet_can_be_opened_where_it_really_lives(a_drive, monkeypatch):
-    monkeypatch.setattr(config, "SPREADSHEET", "TEST - Sales Orders")
+def test_the_spreadsheet_can_be_opened_where_it_really_lives(a_drive):
     a_drive()
 
     # The page draws no table of its own: the sheet is the view of the sheet,
     # and it is right in a way a copy stops being the moment anything writes.
-    assert browsing.link() == "https://docs.google.com/spreadsheets/d/an-id"
+    assert browsing.link("TEST - Sales Orders") == (
+        "https://docs.google.com/spreadsheets/d/an-id"
+    )
 
 
-def test_there_is_nowhere_to_go_before_a_spreadsheet_is_chosen(monkeypatch):
-    monkeypatch.setattr(config, "SPREADSHEET", None)
-
-    assert browsing.link() is None
+def test_there_is_nowhere_to_go_before_a_spreadsheet_is_chosen():
+    assert browsing.link(None) is None
 
 
-def test_choosing_stores_the_name_drive_really_holds(a_drive, monkeypatch):
-    monkeypatch.setattr(config, "SPREADSHEET", None)
+def test_choosing_gives_back_the_name_drive_really_holds(a_drive):
+    """Resolved rather than trusted, and handed back rather than stored.
+
+    Which spreadsheet is in hand belongs to the Session that asked; this
+    module only turns what a person picked into what Drive calls it.
+    """
     a_drive()
 
-    browsing.choose("sales orders")
-
-    assert config.SPREADSHEET == "TEST - Sales Orders"
+    assert browsing.choose("sales orders") == ("an-id", "TEST - Sales Orders")

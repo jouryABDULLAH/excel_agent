@@ -10,8 +10,6 @@ Streamlit runs its page again on every click. Whoever draws the page is the
 one that has to cache them.
 """
 
-from excel_agent import config
-
 # What the page calls itself and the things it lists.
 TITLE = "Sheets agent"
 NOUN = "Spreadsheets"
@@ -76,34 +74,22 @@ def workbooks() -> list[str]:
     return [title for _, title in search()]
 
 
-def in_use() -> str | None:
-    """The spreadsheet being worked on, or None when none has been chosen."""
-    return config.SPREADSHEET
+def choose(name: str) -> tuple[str, str]:
+    """Resolve a spreadsheet the page offered. Raises ValueError on a bad name.
 
+    Resolved rather than trusted, so the name handed back is the one Drive
+    really holds and a name shared by two files is refused here rather than by
+    every call that came after it.
 
-def choose(name: str) -> None:
-    """Work on this spreadsheet from now on. Raises ValueError on a bad name.
-
-    Resolved rather than trusted, so the name stored is the one Drive really
-    holds and a name shared by two files is refused here rather than by every
-    call that came after it.
+    Nothing is stored: which spreadsheet is in hand belongs to the Session
+    that asked, not to this module.
     """
     from excel_agent.sheets import resolve_spreadsheet
 
-    _, title = resolve_spreadsheet(name)
-    config.SPREADSHEET = title
+    return resolve_spreadsheet(name)
 
 
-def forget() -> None:
-    """Stop working on any spreadsheet.
-
-    The opposite of choose, and nothing is resolved on the way: what is being
-    said is that no file is in hand, which is not a name that could be wrong.
-    """
-    config.SPREADSHEET = None
-
-
-def where() -> str:
+def where(in_use: str | None) -> str:
     """Which sheet of which spreadsheet the work is going to.
 
     Both are named because neither on its own says where a change will land: a
@@ -112,19 +98,19 @@ def where() -> str:
     """
     from excel_agent.sheets import resolve_sheet, resolve_spreadsheet
 
-    if not config.SPREADSHEET:
+    if not in_use:
         return "[no spreadsheet chosen yet]"
 
     try:
-        spreadsheet_id, title = resolve_spreadsheet(None)
+        spreadsheet_id, title = resolve_spreadsheet(in_use)
         properties = resolve_sheet(spreadsheet_id, None)
     except Exception:  # noqa: BLE001 - the page says where, it does not diagnose
-        return str(config.SPREADSHEET)
+        return str(in_use)
 
     return f"{properties['title']} in {title}"
 
 
-def link() -> str | None:
+def link(in_use: str | None) -> str | None:
     """Where the spreadsheet lives, so it can be opened beside the agent.
 
     The sheet itself is the only view of the sheet worth having: it is always
@@ -133,18 +119,18 @@ def link() -> str | None:
     """
     from excel_agent.sheets import resolve_spreadsheet
 
-    if not config.SPREADSHEET:
+    if not in_use:
         return None
 
     try:
-        spreadsheet_id, _ = resolve_spreadsheet(None)
+        spreadsheet_id, _ = resolve_spreadsheet(in_use)
     except Exception:  # noqa: BLE001 - no link is better than a broken one
         return None
 
     return f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}"
 
 
-def suggestions() -> list[str]:
+def suggestions(in_use: str | None) -> list[str]:
     """A few things worth asking about the spreadsheet in hand."""
     from excel_agent.sheets import (
         cell,
@@ -156,11 +142,11 @@ def suggestions() -> list[str]:
         resolve_spreadsheet,
     )
 
-    if not config.SPREADSHEET:
+    if not in_use:
         return list(GENERIC)
 
     try:
-        spreadsheet_id, _ = resolve_spreadsheet(None)
+        spreadsheet_id, _ = resolve_spreadsheet(in_use)
         properties = resolve_sheet(spreadsheet_id, None)
         rows = grid(spreadsheet_id, properties["title"])
     except Exception:  # noqa: BLE001 - a sheet that will not open offers nothing

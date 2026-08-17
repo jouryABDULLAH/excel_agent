@@ -11,7 +11,6 @@ from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from scripted import ScriptedModel, calling
 
-from excel_agent import config
 from excel_agent.prompts import CANNOT_DO
 from excel_agent.runner import Answer, Session, ToolCall
 from excel_agent.subagents import SUBAGENTS
@@ -204,9 +203,9 @@ def test_a_subagent_is_told_when_nothing_has_been_chosen(a_spreadsheet):
 
     delegating_to(analyst, inside)
 
-    # Nothing writes these two yet: use_spreadsheet settles config.SPREADSHEET
-    # and returns a sentence, so the state stays empty and every instruction
-    # says so. The tools still fall back to the file being worked on.
+    # Nothing has been chosen, so the state is empty and the instruction says
+    # so. A tool called in this state refuses rather than reaching for a file
+    # some other conversation had settled.
     assert "Not selected" in inside.seen[0]
 
 
@@ -334,18 +333,19 @@ def test_the_planner_is_told_which_spreadsheet_is_in_hand_on_every_turn(a_spread
     assert all("TEST - Sales Orders" in prompt for prompt in planner.prompts[1:])
 
 
-def test_the_planner_is_told_about_a_spreadsheet_the_sidebar_chose(monkeypatch):
-    """The page writes config.SPREADSHEET and never touches the state.
+def test_the_planner_is_told_about_a_spreadsheet_the_sidebar_chose():
+    """The page and the file manager write to the same one place.
 
-    Told only what the state holds, the planner would name no spreadsheet
-    while every tool wrote to the one the user picked from the sidebar.
+    The sidebar used to write a module global that the state knew nothing
+    about, so the planner could be talking about one spreadsheet while the
+    tools wrote to another. Session.use now writes the state, so there is one
+    answer and both of them give it.
     """
-    monkeypatch.setattr(config, "SPREADSHEET", "TEST - Sales Orders")
-
-    assert factory.current_spreadsheet({}) == "TEST - Sales Orders"
-    # What the file manager settled wins: it is the more recent of the two,
-    # and the one the subagents were told about.
-    assert factory.current_spreadsheet({"spreadsheet_name": "Another"}) == "Another"
+    assert factory.current_spreadsheet({}) is None
+    assert (
+        factory.current_spreadsheet({"spreadsheet_name": "TEST - Sales Orders"})
+        == "TEST - Sales Orders"
+    )
 
 
 def test_a_spreadsheet_argument_is_a_name_and_never_an_id(monkeypatch):

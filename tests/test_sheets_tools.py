@@ -195,8 +195,6 @@ def test_every_spreadsheet_is_listed(monkeypatch):
     monkeypatch.setattr(
         spreadsheets, "search", lambda name=None: [("1", "Sales"), ("2", "Returns")]
     )
-    monkeypatch.setattr(spreadsheets.config, "SPREADSHEET", None)
-
     answer = spreadsheets.list_workbooks.invoke({})
 
     assert "2 spreadsheets:" in answer
@@ -208,13 +206,21 @@ def test_every_spreadsheet_is_listed(monkeypatch):
     assert "call use_spreadsheet" in answer
 
 
+class Working:
+    """A runtime whose subagent was handed one spreadsheet."""
+
+    def __init__(self, name):
+        self.state = {"spreadsheet_name": name}
+
+
 def test_the_one_being_worked_on_is_marked(monkeypatch):
     monkeypatch.setattr(
         spreadsheets, "search", lambda name=None: [("1", "Sales"), ("2", "Returns")]
     )
-    monkeypatch.setattr(spreadsheets.config, "SPREADSHEET", "Returns")
 
-    answer = spreadsheets.list_workbooks.invoke({})
+    # Which file is in hand comes from the subagent's state now, so the tool
+    # is called the way an agent calls it: with a runtime.
+    answer = spreadsheets.list_workbooks.func(None, Working("Returns"))
 
     assert "Returns (the one being worked on)" in answer
     assert "No spreadsheet has been chosen yet" not in answer
@@ -224,8 +230,6 @@ def test_two_files_sharing_a_name_are_flagged_as_unusable(monkeypatch):
     monkeypatch.setattr(
         spreadsheets, "search", lambda name=None: [("1", "Budget"), ("2", "Budget")]
     )
-    monkeypatch.setattr(spreadsheets.config, "SPREADSHEET", None)
-
     answer = spreadsheets.list_workbooks.invoke({})
 
     # Naming either would reach neither, so it is said here rather than left
@@ -325,9 +329,8 @@ def test_a_search_does_not_push_a_change_of_file_when_one_is_in_hand(monkeypatch
     monkeypatch.setattr(
         spreadsheets, "containing", lambda text: [("1", "Sales"), ("2", "Returns")]
     )
-    monkeypatch.setattr(spreadsheets.config, "SPREADSHEET", "Sales")
 
-    answer = spreadsheets.find_spreadsheet.invoke({"text": "quarterly"})
+    answer = spreadsheets.find_spreadsheet.func("quarterly", Working("Sales"))
 
     # Asking which files mention a word is a question, not a request to move
     # off the spreadsheet already being worked on.
@@ -337,8 +340,6 @@ def test_a_search_does_not_push_a_change_of_file_when_one_is_in_hand(monkeypatch
 
 def test_a_search_says_what_to_do_next_when_no_file_is_settled(monkeypatch):
     monkeypatch.setattr(spreadsheets, "containing", lambda text: [("1", "Sales")])
-    monkeypatch.setattr(spreadsheets.config, "SPREADSHEET", None)
-
     answer = spreadsheets.find_spreadsheet.invoke({"text": "quarterly"})
 
     assert "Nothing is being worked on yet" in answer
@@ -496,8 +497,6 @@ def test_a_number_is_looked_for_in_the_ways_a_sheet_might_show_it(monkeypatch):
         return [("1", "Sales")] if text == "12,240.00" else []
 
     monkeypatch.setattr(spreadsheets, "containing", only_the_formatted_one)
-    monkeypatch.setattr(spreadsheets.config, "SPREADSHEET", None)
-
     answer = spreadsheets.find_spreadsheet.invoke({"text": "12240"})
 
     # Drive indexes what a cell shows, so a bare 12240 misses a sheet showing

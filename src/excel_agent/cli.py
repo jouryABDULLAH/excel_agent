@@ -179,9 +179,9 @@ def main() -> None:
         print(e)
         return
 
-    print(f"Working on {browsing.where()} with {MODEL}.")
-
     session = Session(agent)
+
+    print(f"Working on {browsing.where(session.in_use())} with {MODEL}.")
     show_tools = True
 
     while True:

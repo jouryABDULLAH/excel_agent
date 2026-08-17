@@ -131,11 +131,10 @@ def workbooks() -> list[str]:
 def suggestions(reading: str | None) -> list[str]:
     """Return context-aware starter questions for the selected spreadsheet.
 
-    `reading` is intentionally part of the cache key. The function itself does
-    not need the value because browsing.suggestions() already knows which file
-    is selected, but switching spreadsheets must invalidate the cached result.
+    `reading` is both the spreadsheet asked about and the cache key, so
+    switching spreadsheets invalidates the cached result by construction.
     """
-    return browsing.suggestions()
+    return browsing.suggestions(reading)
 
 
 # ---------------------------------------------------------------------------
@@ -155,10 +154,8 @@ def start() -> None:
 def reset_conversation() -> None:
     """Start a fresh conversation, on no spreadsheet.
 
-    A new conversation is a new thread, so the agent's own record of which file
-    was chosen goes with it. config.SPREADSHEET outlives the thread and would
-    not, which would leave the first tool call of the new conversation landing
-    on a file nobody in it had named.
+    A new conversation is a new thread, and the chosen spreadsheet lives in
+    that thread's state, so it goes with it.
 
     The picker is cleared rather than set, so that the value the sidebar draws
     is worked out from what is in use rather than held over from the last
@@ -167,7 +164,6 @@ def reset_conversation() -> None:
     st.session_state.session.reset()
     st.session_state.transcript = []
 
-    browsing.forget()
     st.session_state.pop(WORKBOOK_CHOICE, None)
 
     # The starters belong to the spreadsheet that has just been let go of.
@@ -231,8 +227,10 @@ def draw_header() -> None:
         unsafe_allow_html=True,
     )
 
-    current = browsing.where()
-    link = browsing.link()
+    in_use = st.session_state.session.in_use()
+
+    current = browsing.where(in_use)
+    link = browsing.link(in_use)
 
     if link:
         context = (
@@ -472,7 +470,7 @@ def draw_empty_state() -> str | None:
         key="suggestions",
     ):
         asks = suggestions(
-            browsing.in_use()
+            st.session_state.session.in_use()
         )
 
         for first in range(
@@ -511,7 +509,7 @@ def sidebar() -> None:
         st.subheader("Spreadsheet")
 
         names = workbooks()
-        in_use = browsing.in_use()
+        in_use = st.session_state.session.in_use()
 
         if not names:
             st.info(browsing.EMPTY)
@@ -537,7 +535,7 @@ def sidebar() -> None:
                 and chosen != in_use
             ):
                 try:
-                    browsing.choose(chosen)
+                    _, title = browsing.choose(chosen)
 
                 except ValueError as explanation:
                     st.error(
@@ -545,13 +543,15 @@ def sidebar() -> None:
                     )
 
                 else:
+                    st.session_state.session.use(title)
+
                     # Workbook lists are still valid, but suggestions belong
                     # to the previously selected spreadsheet.
                     suggestions.clear()
 
                     st.rerun()
 
-        link = browsing.link()
+        link = browsing.link(in_use)
 
         if link:
             st.link_button(
@@ -599,7 +599,7 @@ def handle_question(
     with st.chat_message("user"):
         st.markdown(question)
 
-    spreadsheet_before = browsing.in_use()
+    spreadsheet_before = st.session_state.session.in_use()
 
     with st.chat_message("assistant"):
         box = st.container()
@@ -632,7 +632,7 @@ def handle_question(
 
     # A turn can select another spreadsheet. The header/sidebar were rendered
     # before the agent changed it, so rerun once to make the UI truthful.
-    if browsing.in_use() != spreadsheet_before:
+    if st.session_state.session.in_use() != spreadsheet_before:
         # Dropped rather than set to the new name: the picker draws whatever it
         # holds, so leaving the old choice there would show one spreadsheet
         # while the agent worked on another.

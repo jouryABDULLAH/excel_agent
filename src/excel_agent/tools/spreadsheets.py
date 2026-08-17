@@ -13,8 +13,8 @@ from googleapiclient.errors import HttpError
 from langchain.tools import tool, ToolRuntime
 from langchain.messages import ToolMessage
 from langgraph.types import Command
-from excel_agent import config
 from excel_agent.sheets import (
+    chosen,
     containing,
     number_forms,
     readable,
@@ -91,7 +91,10 @@ def resolve_spreadsheet_choice(
     )
 
 @tool
-def list_workbooks(name: str | None = None) -> str:
+def list_workbooks(
+    name: str | None = None,
+    runtime: ToolRuntime = None,
+) -> str:
     """List the Google spreadsheets that can be worked on.
 
     Call this when the user has not said which spreadsheet to work on, or
@@ -121,7 +124,7 @@ def list_workbooks(name: str | None = None) -> str:
             return f'No spreadsheet has "{name}" in its name.'
         return "There are no spreadsheets in this Drive."
 
-    in_use = config.SPREADSHEET
+    in_use = chosen(runtime)
     titles = [title for _, title in found]
 
     lines = [
@@ -206,10 +209,6 @@ def use_spreadsheet(
             "again with its exact name."
         )
 
-    # Temporary. The subagents' tools fall back to this when their spreadsheet
-    # argument is left out; delete once they read spreadsheet_id from state.
-    config.SPREADSHEET = name
-
     return Command(
         update={
             "spreadsheet_id": spreadsheet_id,
@@ -239,7 +238,10 @@ def use_spreadsheet(
 # - A value written a moment ago may not be findable
 
 @tool
-def find_spreadsheet(text: str) -> str:
+def find_spreadsheet(
+    text: str,
+    runtime: ToolRuntime = None,
+) -> str:
     """Find which spreadsheets hold some text anywhere inside them.
 
     Use this when the user talks about data without saying which file it is
@@ -287,7 +289,7 @@ def find_spreadsheet(text: str) -> str:
             "a number has to be written the way the sheet displays it."
         )
 
-    in_use = config.SPREADSHEET
+    in_use = chosen(runtime)
     lines = [f'{len(found)} spreadsheet(s) hold "{text}":']
     for _, title in found:
         mark = " (the one being worked on)" if title == in_use else ""

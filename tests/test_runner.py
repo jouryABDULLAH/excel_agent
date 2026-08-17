@@ -11,6 +11,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from scripted import ScriptedModel, calling
 
 from excel_agent.runner import Answer, Session, Text, ToolCall, rendered
+from excel_agent.subagents.factory import OrchestratorState
 from excel_agent.tools import TOOLS
 
 
@@ -204,3 +205,54 @@ def test_a_row_added_in_one_turn_can_be_removed_in_the_next(a_spreadsheet):
     ).values["messages"]
     assert len(said) == 8
     assert sum(1 for message in said if getattr(message, "tool_calls", None)) == 2
+
+# Two conversations in one process
+
+
+def two_sessions():
+    """Two sessions on one agent, the way Streamlit serves two browser tabs."""
+    agent = create_agent(
+        ScriptedModel(script=[AIMessage("a"), AIMessage("b")]),
+        [],
+        system_prompt="terse",
+        state_schema=OrchestratorState,
+        checkpointer=InMemorySaver(),
+    )
+
+    return Session(agent), Session(agent)
+
+
+def test_two_conversations_work_on_two_spreadsheets():
+    """REGRESSION: they shared one, through a module global.
+
+    Streamlit serves every browser session from one process. The chosen
+    spreadsheet lived in config.SPREADSHEET, so whichever tab picked last
+    picked for both, and a write meant for one file landed in the other.
+    """
+    first, second = two_sessions()
+
+    first.use("TEST - Sales Orders")
+    second.use("TEST - Raw Contacts")
+
+    assert first.in_use() == "TEST - Sales Orders"
+    assert second.in_use() == "TEST - Raw Contacts"
+
+    # And changing one does not reach the other.
+    first.use("TEST - Book Collection")
+
+    assert second.in_use() == "TEST - Raw Contacts"
+
+
+def test_a_conversation_starts_on_nothing_unless_the_environment_names_one():
+    first, _ = two_sessions()
+
+    assert first.in_use() is None
+
+
+def test_a_new_conversation_does_not_inherit_the_last_ones_spreadsheet():
+    first, _ = two_sessions()
+    first.use("TEST - Sales Orders")
+
+    first.reset()
+
+    assert first.in_use() is None

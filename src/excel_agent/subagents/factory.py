@@ -7,7 +7,6 @@ from langchain.tools import ToolRuntime, tool
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
-from excel_agent import config
 from excel_agent.model import RECURSION_LIMIT, build_model
 from excel_agent.subagents.prompts import ORCHESTRATOR_PROMPT
 from excel_agent.subagents.registry import SUBAGENTS
@@ -359,12 +358,6 @@ def _file_manager_tool(
             "spreadsheet_name"
         ]
 
-        # Temporary compatibility until spreadsheet state is
-        # removed from config during service/discovery cleanup.
-        config.SPREADSHEET = (
-            selected_name
-        )
-
         return Command(
             update={
                 "spreadsheet_id": (
@@ -423,14 +416,13 @@ def as_tool(spec, model):
 
 
 def current_spreadsheet(state) -> str | None:
-    """The spreadsheet being worked on, whoever settled it.
+    """The spreadsheet being worked on.
 
-    The file manager writes it into the orchestrator's state; the sidebar
-    writes only config.SPREADSHEET. Both have to be able to answer this, or
-    picking a file from the page leaves the planner talking about one
-    spreadsheet while the tools write to another.
+    One place asks this question, and one place answers it: the conversation's
+    own state. The file manager writes it from inside a turn, and the page
+    writes it through Session.use when someone picks from the sidebar.
     """
-    return state.get("spreadsheet_name") or config.SPREADSHEET
+    return state.get("spreadsheet_name")
 
 
 @dynamic_prompt
