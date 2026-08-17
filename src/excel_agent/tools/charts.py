@@ -215,8 +215,10 @@ def create_chart(
         labels_column: Column supplying category/x-axis labels.
         value_columns: One or more columns containing values to plot.
         title: Chart title.
-        spreadsheet: Spreadsheet name. Omit for the current spreadsheet.
-        sheet: Sheet name. Omit for the first sheet.
+        spreadsheet: Spreadsheet name, not an ID. Omit for the current
+            spreadsheet.
+        sheet: Sheet/tab name, not the spreadsheet name. Omit for the
+            first sheet.
     """
     if not title or not title.strip():
         return _error(
@@ -404,8 +406,10 @@ def update_chart(
         chart_id: Stable ID of the chart to update.
         title: Optional new title.
         kind: Optional new chart type.
-        spreadsheet: Spreadsheet name. Omit for the current spreadsheet.
-        sheet: Sheet name. Omit for the first sheet.
+        spreadsheet: Spreadsheet name, not an ID. Omit for the current
+            spreadsheet.
+        sheet: Sheet/tab name, not the spreadsheet name. Omit for the
+            first sheet.
     """
     if title is None and kind is None:
         return _error(
@@ -558,8 +562,10 @@ def delete_chart(
 
     Args:
         chart_id: Stable Google Sheets chart ID.
-        spreadsheet: Spreadsheet name. Omit for the current spreadsheet.
-        sheet: Sheet name. Omit for the first sheet.
+        spreadsheet: Spreadsheet name, not an ID. Omit for the current
+            spreadsheet.
+        sheet: Sheet/tab name, not the spreadsheet name. Omit for the
+            first sheet.
     """
     try:
         (

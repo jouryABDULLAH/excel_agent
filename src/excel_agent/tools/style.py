@@ -286,8 +286,10 @@ def format_range(
             Cannot be combined with number_format.
         bold: True for bold text or False to remove bold.
         background: Fill colour by common name or "#RRGGBB".
-        spreadsheet: Spreadsheet name. Omit for the current spreadsheet.
-        sheet: Sheet name. Omit for the first sheet.
+        spreadsheet: Spreadsheet name, not an ID. Omit for the current
+            spreadsheet.
+        sheet: Sheet/tab name, not the spreadsheet name. Omit for the
+            first sheet.
         italic: True to italicize text, False to remove italics.
         underline: True to underline text, False to remove underlining.
         strikethrough: True to strike through text, False to remove it.
@@ -742,8 +744,10 @@ def copy_format(
         destination_column: Optional destination column by header name.
         destination_first_row: Optional first destination row.
         destination_last_row: Optional final destination row.
-        spreadsheet: Spreadsheet name. Omit for the current spreadsheet.
-        sheet: Sheet name. Omit for the first sheet.
+        spreadsheet: Spreadsheet name, not an ID. Omit for the current
+            spreadsheet.
+        sheet: Sheet/tab name, not the spreadsheet name. Omit for the
+            first sheet.
     """
     try:
         (

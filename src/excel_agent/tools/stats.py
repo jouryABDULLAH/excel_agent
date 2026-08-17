@@ -81,8 +81,10 @@ def sheet_stats(
 
     Args:
         column: Column name.
-        spreadsheet: Spreadsheet name. Omit for the current spreadsheet.
-        sheet: Sheet name. Omit for the first sheet.
+        spreadsheet: Spreadsheet name, not an ID. Omit for the current
+            spreadsheet.
+        sheet: Sheet/tab name, not the spreadsheet name. Omit for the
+            first sheet.
 
     Returns:
         Readable statistics plus structured numerical/textual metadata.

@@ -141,8 +141,10 @@ def update_row(
     Args:
         row: Existing row number, using the numbers shown in Google Sheets.
         values: Column names mapped to their new values.
-        spreadsheet: Spreadsheet name. Omit to use the current spreadsheet.
-        sheet: Sheet name. Omit to use the first sheet.
+        spreadsheet: Spreadsheet name, not an ID. Omit to use the current
+            spreadsheet.
+        sheet: Sheet/tab name, not the spreadsheet name. Omit to use the
+            first sheet.
     """
     try:
         (
@@ -239,8 +241,10 @@ def insert_row(
     Args:
         row: Position of the new row.
         values: Optional column names mapped to values for the new row.
-        spreadsheet: Spreadsheet name. Omit to use the current spreadsheet.
-        sheet: Sheet name. Omit to use the first sheet.
+        spreadsheet: Spreadsheet name, not an ID. Omit to use the current
+            spreadsheet.
+        sheet: Sheet/tab name, not the spreadsheet name. Omit to use the
+            first sheet.
     """
     try:
         (
@@ -351,8 +355,10 @@ def append_row(
 
     Args:
         values: Column names mapped to values for the new row.
-        spreadsheet: Spreadsheet name. Omit to use the current spreadsheet.
-        sheet: Sheet name. Omit to use the first sheet.
+        spreadsheet: Spreadsheet name, not an ID. Omit to use the current
+            spreadsheet.
+        sheet: Sheet/tab name, not the spreadsheet name. Omit to use the
+            first sheet.
     """
     try:
         (
@@ -460,8 +466,10 @@ def delete_row(
 
     Args:
         row: Existing data row to delete.
-        spreadsheet: Spreadsheet name. Omit to use the current spreadsheet.
-        sheet: Sheet name. Omit to use the first sheet.
+        spreadsheet: Spreadsheet name, not an ID. Omit to use the current
+            spreadsheet.
+        sheet: Sheet/tab name, not the spreadsheet name. Omit to use the
+            first sheet.
     """
     try:
         (
@@ -531,8 +539,10 @@ def move_row(
     Args:
         row: Current row number.
         to_row: Final row number after the move.
-        spreadsheet: Spreadsheet name. Omit to use the current spreadsheet.
-        sheet: Sheet name. Omit to use the first sheet.
+        spreadsheet: Spreadsheet name, not an ID. Omit to use the current
+            spreadsheet.
+        sheet: Sheet/tab name, not the spreadsheet name. Omit to use the
+            first sheet.
     """
     try:
         (

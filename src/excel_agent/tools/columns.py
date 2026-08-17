@@ -9,6 +9,7 @@ from excel_agent.services.google import readable
 from excel_agent.services.spreadsheet import spreadsheet_service
 from excel_agent.sheets import (
     a1,
+    cell,
     column_letter,
     find_header_row,
     header_map,
@@ -16,6 +17,7 @@ from excel_agent.sheets import (
     resolve_spreadsheet,
     to_grid_range,
 )
+from excel_agent.tools.inspect import _as_text
 
 
 def _error(
@@ -98,6 +100,174 @@ def _require_headers(
         header_row=header_row,
     )
 
+def _resolve_column_target(
+    *,
+    column: str | None,
+    position: int | None,
+    rows: list[list[Any]],
+    header_row: int,
+    column_count: int | None,
+    spreadsheet: str,
+    sheet: str,
+) -> tuple[int | None, str | None, dict | None]:
+    """Resolve a physical column by name, position, or both.
+
+    Position is authoritative when supplied. Both are bounded by the width of
+    the sheet rather than the width of the table, so an unnamed column sitting
+    beyond the last header can still be reached.
+
+    Returns:
+        (position, current_header, error)
+    """
+    # gridProperties carries the width; the data extent is only a fallback.
+    width = (
+        column_count
+        if isinstance(column_count, int)
+        else max(
+            (len(row) for row in rows),
+            default=0,
+        )
+    )
+
+    if column is not None:
+        column = column.strip() or None
+
+    if column is None and position is None:
+        return (
+            None,
+            None,
+            _error(
+                "missing_column",
+                "Give either a column name or a column position.",
+                spreadsheet=spreadsheet,
+                sheet=sheet,
+            ),
+        )
+
+    if position is not None:
+        if position < 1 or position > width:
+            return (
+                None,
+                None,
+                _error(
+                    "invalid_position",
+                    "The requested column position is outside the sheet.",
+                    spreadsheet=spreadsheet,
+                    sheet=sheet,
+                    position=position,
+                    first_position=1,
+                    last_position=width,
+                ),
+            )
+
+        actual_header = _as_text(
+            cell(
+                rows,
+                header_row,
+                position,
+            )
+        ).strip()
+
+        if (
+            column is not None
+            and actual_header != column
+        ):
+            return (
+                None,
+                None,
+                _error(
+                    "column_position_mismatch",
+                    (
+                        f'Position {position} has header '
+                        f'"{actual_header}" rather than "{column}".'
+                    ),
+                    spreadsheet=spreadsheet,
+                    sheet=sheet,
+                    column=column,
+                    position=position,
+                    actual_header=actual_header or None,
+                ),
+            )
+
+        return (
+            position,
+            actual_header or None,
+            None,
+        )
+
+    # Name-only lookup: inspect the physical header row so duplicate
+    # names are detected instead of silently choosing one.
+    assert column is not None
+
+    # One walk of the header row gives both the columns that match and the
+    # ones worth naming back when none do.
+    named_positions: list[tuple[int, str]] = []
+
+    for candidate_position in range(
+        1,
+        width + 1,
+    ):
+        candidate_header = _as_text(
+            cell(
+                rows,
+                header_row,
+                candidate_position,
+            )
+        ).strip()
+
+        if candidate_header:
+            named_positions.append(
+                (
+                    candidate_position,
+                    candidate_header,
+                )
+            )
+
+    matching_positions = [
+        candidate_position
+        for candidate_position, candidate_header in named_positions
+        if candidate_header == column
+    ]
+
+    if not matching_positions:
+        return (
+            None,
+            None,
+            _error(
+                "column_not_found",
+                "The requested column does not exist.",
+                spreadsheet=spreadsheet,
+                sheet=sheet,
+                column=column,
+                available_columns=[
+                    candidate_header
+                    for _, candidate_header in named_positions
+                ],
+            ),
+        )
+
+    if len(matching_positions) > 1:
+        return (
+            None,
+            None,
+            _error(
+                "ambiguous_column",
+                (
+                    f'More than one column has the header "{column}". '
+                    "Give its physical position."
+                ),
+                spreadsheet=spreadsheet,
+                sheet=sheet,
+                column=column,
+                matching_positions=matching_positions,
+            ),
+        )
+
+    return (
+        matching_positions[0],
+        column,
+        None,
+    )
 
 def _require_column(
     column: str,
@@ -122,12 +292,14 @@ def _require_column(
 
 @tool
 def insert_column(
-    name: str,
+    name: str | None = None,
     position: int | None = None,
     spreadsheet: str | None = None,
     sheet: str | None = None,
 ) -> dict:
-    """Insert a new empty column.
+    """Insert a new column.
+
+    The new column may be named or unnamed.
 
     By default the column is added immediately after the last named column.
     On an empty sheet with no headers, this creates the first column at
@@ -137,20 +309,27 @@ def insert_column(
     left side of the table.
 
     Args:
-        name: Header for the new column.
+        name: Optional header for the new column. Omit for an unnamed column.
         position: Optional final position of the new column.
-        spreadsheet: Spreadsheet name. Omit to use the current spreadsheet.
-        sheet: Sheet name. Omit to use the first sheet.
+        spreadsheet: Spreadsheet name, not an ID. Omit to use the current
+            spreadsheet.
+        sheet: Sheet/tab name, not the spreadsheet name. Omit to use the
+            first sheet.
     """
-    if not name or not name.strip():
+    if name is not None:
+        name = name.strip()
+
+        if not name:
+            name = None
+
+    if position is not None and position < 1:
         return _error(
-            "missing_name",
-            "The new column needs a name.",
+            "invalid_position",
+            "Column position must be at least 1.",
             spreadsheet=spreadsheet,
             sheet=sheet,
+            position=position,
         )
-
-    name = name.strip()
 
     try:
         (
@@ -167,18 +346,8 @@ def insert_column(
 
         sheet_name = properties["title"]
 
-        if name in headers:
-            return _error(
-                "duplicate_column",
-                "A column with that name already exists.",
-                spreadsheet=spreadsheet_name,
-                sheet=sheet_name,
-                column=name,
-                available_columns=list(headers),
-            )
-
-        # If the sheet has no headers yet, there is no rightmost named
-        # column. Treat that as position 0 so the first valid column is 1.
+        # If the sheet has no named columns yet, position 1 is the
+        # default location for the first table column.
         rightmost = (
             max(headers.values())
             if headers
@@ -216,24 +385,24 @@ def insert_column(
             count=1,
         )
 
-        # Headers are identifiers, not user-entered spreadsheet values.
-        # RAW preserves names such as 007, 1-2 and +Notes exactly as written.
-        spreadsheet_service.update_cells(
-            spreadsheet_id=spreadsheet_id,
-            updates=[
-                {
-                    "range": a1(
-                        sheet_name,
-                        first_row=header_row,
-                        last_row=header_row,
-                        first_column=position,
-                        last_column=position,
-                    ),
-                    "values": [[name]],
-                }
-            ],
-            value_input_option="RAW",
-        )
+        # Only write a header when the caller supplied one.
+        if name is not None:
+            spreadsheet_service.update_cells(
+                spreadsheet_id=spreadsheet_id,
+                updates=[
+                    {
+                        "range": a1(
+                            sheet_name,
+                            first_row=header_row,
+                            last_row=header_row,
+                            first_column=position,
+                            last_column=position,
+                        ),
+                        "values": [[name]],
+                    }
+                ],
+                value_input_option="RAW",
+            )
 
         return {
             "ok": True,
@@ -243,6 +412,7 @@ def insert_column(
             "column": name,
             "position": position,
             "column_letter": column_letter(position),
+            "has_header": name is not None,
             "column_positions_changed": (
                 bool(headers)
                 and position <= rightmost
@@ -266,38 +436,37 @@ def insert_column(
             sheet=sheet,
         )
     
+    
 @tool
 def rename_column(
-    column: str,
     new_name: str,
+    column: str | None = None,
+    position: int | None = None,
     spreadsheet: str | None = None,
     sheet: str | None = None,
 ) -> dict:
-    """Rename one existing column without moving its data.
+    """Set the header of one existing physical column.
+
+    Identify the target by its current header name, physical position,
+    or both. Position counts from 1 at the left edge of the sheet.
+
+    Use position to name an unnamed column or when duplicate header names
+    make a name ambiguous.
+
+    An empty new_name clears the current header. Duplicate header names are
+    allowed. If both column and position are supplied, they must identify the
+    same physical column.
 
     Args:
-        column: Current header name.
-        new_name: New header name.
-        spreadsheet: Spreadsheet name. Omit to use the current spreadsheet.
-        sheet: Sheet name. Omit to use the first sheet.
+        new_name: New header value. Use an empty string to clear the header.
+        column: Optional current header name.
+        position: Optional physical column position, starting from 1.
+        spreadsheet: Spreadsheet name, not an ID. Omit to use the current
+            spreadsheet.
+        sheet: Sheet/tab name, not the spreadsheet name. Omit to use the
+            first sheet.
     """
-    if not column or not column.strip():
-        return _error(
-            "missing_column",
-            "The column to rename must be named.",
-            spreadsheet=spreadsheet,
-            sheet=sheet,
-        )
-
-    if not new_name or not new_name.strip():
-        return _error(
-            "missing_new_name",
-            "The column needs a new name.",
-            spreadsheet=spreadsheet,
-            sheet=sheet,
-        )
-
-    column = column.strip()
+    # Empty string is intentionally allowed so a header can be cleared.
     new_name = new_name.strip()
 
     try:
@@ -306,7 +475,7 @@ def rename_column(
             spreadsheet_name,
             properties,
             header_row,
-            headers,
+            _,
             _,
         ) = _load_table(
             spreadsheet,
@@ -315,53 +484,53 @@ def rename_column(
 
         sheet_name = properties["title"]
 
-        if name in headers:
-            return _error(
-                "duplicate_column",
-                "A column with that name already exists.",
-                spreadsheet=spreadsheet_name,
-                sheet=sheet_name,
-                column=name,
-                available_columns=list(headers),
-            )
-
-        # An empty sheet has no rightmost named column yet.
-        # Treat its right edge as position 0, making position 1 the only
-        # valid place for the first header.
-        rightmost = (
-            max(headers.values())
-            if headers
-            else 0
+        # header_map cannot represent unnamed columns or duplicate header
+        # names, so the physical header cells are needed here.
+        rows = spreadsheet_service.read_sheet(
+            spreadsheet_id,
+            sheet_name,
         )
 
-        if position is None:
-            position = rightmost + 1
+        (
+            target_position,
+            old_name,
+            error,
+        ) = _resolve_column_target(
+            column=column,
+            position=position,
+            rows=rows,
+            header_row=header_row,
+            column_count=(
+                properties
+                .get("gridProperties", {})
+                .get("columnCount")
+            ),
+            spreadsheet=spreadsheet_name,
+            sheet=sheet_name,
+        )
 
-        if (
-            position < 1
-            or position > rightmost + 1
-        ):
-            return _error(
-                "invalid_position",
-                (
-                    "The requested column position is outside the table."
-                    if headers
-                    else "The first column of an empty sheet must be at position 1."
+        if error:
+            return error
+
+        assert target_position is not None
+
+        # An unnamed column reads back as None, which clearing asks for too.
+        if (old_name or "") == new_name:
+            return {
+                "ok": True,
+                "operation": "rename_column",
+                "spreadsheet": spreadsheet_name,
+                "sheet": sheet_name,
+                "old_name": old_name or None,
+                "new_name": new_name or None,
+                "position": target_position,
+                "column_letter": column_letter(
+                    target_position
                 ),
-                spreadsheet=spreadsheet_name,
-                sheet=sheet_name,
-                position=position,
-                first_position=1,
-                last_position=rightmost + 1,
-            )
+                "changed": False,
+            }
 
-        spreadsheet_service.insert_columns(
-            spreadsheet_id=spreadsheet_id,
-            sheet_id=properties["sheetId"],
-            start_column=position,
-            count=1,
-        )
-
+        # Renaming only changes the header cell.
         spreadsheet_service.update_cells(
             spreadsheet_id=spreadsheet_id,
             updates=[
@@ -370,10 +539,10 @@ def rename_column(
                         sheet_name,
                         first_row=header_row,
                         last_row=header_row,
-                        first_column=position,
-                        last_column=position,
+                        first_column=target_position,
+                        last_column=target_position,
                     ),
-                    "values": [[name]],
+                    "values": [[new_name]],
                 }
             ],
             value_input_option="RAW",
@@ -381,17 +550,16 @@ def rename_column(
 
         return {
             "ok": True,
-            "operation": "insert_column",
+            "operation": "rename_column",
             "spreadsheet": spreadsheet_name,
             "sheet": sheet_name,
-            "column": name,
-            "position": position,
-            "column_letter": column_letter(position),
-            "column_positions_changed": (
-                bool(headers)
-                and position <= rightmost
+            "old_name": old_name or None,
+            "new_name": new_name or None,
+            "position": target_position,
+            "column_letter": column_letter(
+                target_position
             ),
-            "created_first_column": not bool(headers),
+            "changed": True,
         }
 
     except ValueError as failure:
@@ -421,46 +589,26 @@ def delete_column(
     """Delete one existing physical column and every value in it.
 
     Identify the target by its header name, physical position, or both.
-    Position counts from 1 at the left edge of the sheet.
+    Position counts from 1 at the left edge of the table.
 
-    Use position for unnamed columns. If both column and position are given,
-    they must refer to the same physical column.
+    Use position for unnamed columns or when duplicate header names are
+    ambiguous. If both column and position are supplied, they must identify
+    the same physical column.
 
     Args:
-        column: Optional header name of the column to delete.
+        column: Optional current header name.
         position: Optional physical column position, starting from 1.
-        spreadsheet: Spreadsheet name. Omit to use the current spreadsheet.
-        sheet: Sheet name. Omit to use the first sheet.
+        spreadsheet: Spreadsheet name, not an ID. Omit to use the current
+            spreadsheet.
+        sheet: Sheet/tab name, not the spreadsheet name. Omit to use the
+            first sheet.
     """
-    if column is not None:
-        column = column.strip()
-
-        if not column:
-            column = None
-
-    if column is None and position is None:
-        return _error(
-            "missing_column",
-            "Give either a column name or a column position to delete.",
-            spreadsheet=spreadsheet,
-            sheet=sheet,
-        )
-
-    if position is not None and position < 1:
-        return _error(
-            "invalid_position",
-            "Column position must be at least 1.",
-            spreadsheet=spreadsheet,
-            sheet=sheet,
-            position=position,
-        )
-
     try:
         (
             spreadsheet_id,
             spreadsheet_name,
             properties,
-            _,
+            header_row,
             headers,
             _,
         ) = _load_table(
@@ -470,81 +618,38 @@ def delete_column(
 
         sheet_name = properties["title"]
 
-        # If a name was supplied, resolve it to the physical column position.
-        named_position = None
-
-        if column is not None:
-            missing = _require_column(
-                column,
-                headers,
-                spreadsheet=spreadsheet_name,
-                sheet=sheet_name,
-            )
-
-            if missing:
-                return missing
-
-            named_position = headers[column]
-
-        # If both were supplied, they must identify the same physical column.
-        if (
-            named_position is not None
-            and position is not None
-            and named_position != position
-        ):
-            return _error(
-                "column_position_mismatch",
-                (
-                    f'Column "{column}" is at position {named_position}, '
-                    f"not position {position}."
-                ),
-                spreadsheet=spreadsheet_name,
-                sheet=sheet_name,
-                column=column,
-                column_position=named_position,
-                requested_position=position,
-            )
-
-        # Position is the canonical identifier from this point onward.
-        if position is None:
-            position = named_position
-
-        assert position is not None
-
-        # Validate against the actual physical sheet width.
-        column_count = (
-            properties
-            .get("gridProperties", {})
-            .get("columnCount")
+        rows = spreadsheet_service.read_sheet(
+            spreadsheet_id,
+            sheet_name,
         )
 
-        if (
-            isinstance(column_count, int)
-            and position > column_count
-        ):
-            return _error(
-                "invalid_position",
-                "The requested column position is outside the sheet.",
-                spreadsheet=spreadsheet_name,
-                sheet=sheet_name,
-                position=position,
-                first_position=1,
-                last_position=column_count,
-            )
+        (
+            target_position,
+            target_header,
+            error,
+        ) = _resolve_column_target(
+            column=column,
+            position=position,
+            rows=rows,
+            header_row=header_row,
+            column_count=(
+                properties
+                .get("gridProperties", {})
+                .get("columnCount")
+            ),
+            spreadsheet=spreadsheet_name,
+            sheet=sheet_name,
+        )
 
-        # If the target was given only by position, determine whether it has
-        # a header so the result can report it accurately.
-        header_by_position = {
-            header_position: header_name
-            for header_name, header_position in headers.items()
-        }
+        if error:
+            return error
 
-        deleted_column = header_by_position.get(position)
+        assert target_position is not None
 
         spreadsheet_service.delete_columns(
             spreadsheet_id=spreadsheet_id,
             sheet_id=properties["sheetId"],
-            start_column=position,
+            start_column=target_position,
         )
 
         return {
@@ -552,8 +657,11 @@ def delete_column(
             "operation": "delete_column",
             "spreadsheet": spreadsheet_name,
             "sheet": sheet_name,
-            "deleted_column": deleted_column,
-            "deleted_position": position,
+            "deleted_column": target_header,
+            "deleted_position": target_position,
+            "column_letter": column_letter(
+                target_position
+            ),
             "column_positions_changed": True,
         }
 
@@ -576,35 +684,36 @@ def delete_column(
     
 @tool
 def move_column(
-    column: str,
     to_position: int,
+    column: str | None = None,
+    position: int | None = None,
     spreadsheet: str | None = None,
     sheet: str | None = None,
 ) -> dict:
-    """Move an existing column to another table position.
+    """Move one existing physical column to another table position.
+
+    Identify the source column by its header name, physical position, or both.
+    Position and to_position count from 1 at the left edge of the table.
+
+    Use position for unnamed columns or when duplicate header names are
+    ambiguous. If both column and position are supplied, they must identify
+    the same physical column.
 
     Args:
-        column: Header name of the column to move.
-        to_position: Final position, counting from 1 at the left.
-        spreadsheet: Spreadsheet name. Omit to use the current spreadsheet.
-        sheet: Sheet name. Omit to use the first sheet.
+        to_position: Final physical position of the column.
+        column: Optional current header name.
+        position: Optional current physical column position.
+        spreadsheet: Spreadsheet name, not an ID. Omit to use the current
+            spreadsheet.
+        sheet: Sheet/tab name, not the spreadsheet name. Omit to use the
+            first sheet.
     """
-    if not column or not column.strip():
-        return _error(
-            "missing_column",
-            "The column to move must be named.",
-            spreadsheet=spreadsheet,
-            sheet=sheet,
-        )
-
-    column = column.strip()
-
     try:
         (
             spreadsheet_id,
             spreadsheet_name,
             properties,
-            _,
+            header_row,
             headers,
             _,
         ) = _load_table(
@@ -614,19 +723,21 @@ def move_column(
 
         sheet_name = properties["title"]
 
-        missing = _require_column(
-            column,
-            headers,
-            spreadsheet=spreadsheet_name,
-            sheet=sheet_name,
+        rows = spreadsheet_service.read_sheet(
+            spreadsheet_id,
+            sheet_name,
         )
-        if missing:
-            return missing
 
-        from_position = headers[column]
-        rightmost = max(headers.values())
+        rightmost = (
+            max(headers.values())
+            if headers
+            else 0
+        )
 
-        if to_position < 1 or to_position > rightmost:
+        if (
+            to_position < 1
+            or to_position > rightmost
+        ):
             return _error(
                 "invalid_position",
                 "The destination position is outside the table.",
@@ -637,13 +748,36 @@ def move_column(
                 last_position=rightmost,
             )
 
+        (
+            from_position,
+            target_header,
+            error,
+        ) = _resolve_column_target(
+            column=column,
+            position=position,
+            rows=rows,
+            header_row=header_row,
+            column_count=(
+                properties
+                .get("gridProperties", {})
+                .get("columnCount")
+            ),
+            spreadsheet=spreadsheet_name,
+            sheet=sheet_name,
+        )
+
+        if error:
+            return error
+
+        assert from_position is not None
+
         if to_position == from_position:
             return {
                 "ok": True,
                 "operation": "move_column",
                 "spreadsheet": spreadsheet_name,
                 "sheet": sheet_name,
-                "column": column,
+                "column": target_header,
                 "from_position": from_position,
                 "to_position": to_position,
                 "changed": False,
@@ -661,7 +795,7 @@ def move_column(
             "operation": "move_column",
             "spreadsheet": spreadsheet_name,
             "sheet": sheet_name,
-            "column": column,
+            "column": target_header,
             "from_position": from_position,
             "to_position": to_position,
             "changed": True,
@@ -687,30 +821,33 @@ def move_column(
 
 @tool
 def set_column_formula(
-    column: str,
     formula: str,
+    column: str | None = None,
+    position: int | None = None,
     spreadsheet: str | None = None,
     sheet: str | None = None,
 ) -> dict:
-    """Fill an existing column with a relative spreadsheet formula.
+    """Fill an existing physical column with a relative spreadsheet formula.
+
+    Identify the destination column by its header name, physical position,
+    or both.
+
+    Use position for unnamed columns or when duplicate header names are
+    ambiguous. If both column and position are supplied, they must identify
+    the same physical column.
 
     The formula is written to the first data row and copied downward so
     relative references change naturally from row to row.
 
     Args:
-        column: Header name of the destination column.
         formula: Formula as typed in Google Sheets, beginning with "=".
-        spreadsheet: Spreadsheet name. Omit to use the current spreadsheet.
-        sheet: Sheet name. Omit to use the first sheet.
+        column: Optional header name of the destination column.
+        position: Optional physical destination column position.
+        spreadsheet: Spreadsheet name, not an ID. Omit to use the current
+            spreadsheet.
+        sheet: Sheet/tab name, not the spreadsheet name. Omit to use the
+            first sheet.
     """
-    if not column or not column.strip():
-        return _error(
-            "missing_column",
-            "The formula destination column must be named.",
-            spreadsheet=spreadsheet,
-            sheet=sheet,
-        )
-
     if not formula or not formula.strip():
         return _error(
             "missing_formula",
@@ -719,7 +856,6 @@ def set_column_formula(
             sheet=sheet,
         )
 
-    column = column.strip()
     formula = formula.strip()
 
     if not formula.startswith("="):
@@ -746,14 +882,33 @@ def set_column_formula(
 
         sheet_name = properties["title"]
 
-        missing = _require_column(
-            column,
-            headers,
+        rows = spreadsheet_service.read_sheet(
+            spreadsheet_id,
+            sheet_name,
+        )
+
+        (
+            target_position,
+            target_header,
+            error,
+        ) = _resolve_column_target(
+            column=column,
+            position=position,
+            rows=rows,
+            header_row=header_row,
+            column_count=(
+                properties
+                .get("gridProperties", {})
+                .get("columnCount")
+            ),
             spreadsheet=spreadsheet_name,
             sheet=sheet_name,
         )
-        if missing:
-            return missing
+
+        if error:
+            return error
+
+        assert target_position is not None
 
         first_data_row = header_row + 1
 
@@ -763,12 +918,11 @@ def set_column_formula(
                 "There are no data rows to fill.",
                 spreadsheet=spreadsheet_name,
                 sheet=sheet_name,
-                column=column,
+                column=target_header,
+                position=target_position,
             )
 
-        position = headers[column]
-
-        # Formula text should be interpreted by Sheets.
+        # Formula text must be interpreted by Google Sheets.
         spreadsheet_service.update_cells(
             spreadsheet_id=spreadsheet_id,
             updates=[
@@ -777,8 +931,8 @@ def set_column_formula(
                         sheet_name,
                         first_row=first_data_row,
                         last_row=first_data_row,
-                        first_column=position,
-                        last_column=position,
+                        first_column=target_position,
+                        last_column=target_position,
                     ),
                     "values": [[formula]],
                 }
@@ -793,27 +947,35 @@ def set_column_formula(
                     properties["sheetId"],
                     first_data_row,
                     first_data_row,
-                    position,
-                    position,
+                    target_position,
+                    target_position,
                 ),
                 destination=to_grid_range(
                     properties["sheetId"],
                     first_data_row + 1,
                     last_row,
-                    position,
-                    position,
+                    target_position,
+                    target_position,
                 ),
                 paste_type="PASTE_FORMULA",
             )
 
-        filled_rows = last_row - first_data_row + 1
+        filled_rows = (
+            last_row
+            - first_data_row
+            + 1
+        )
 
         return {
             "ok": True,
             "operation": "set_column_formula",
             "spreadsheet": spreadsheet_name,
             "sheet": sheet_name,
-            "column": column,
+            "column": target_header,
+            "position": target_position,
+            "column_letter": column_letter(
+                target_position
+            ),
             "formula": formula,
             "first_row": first_data_row,
             "last_row": last_row,

@@ -82,8 +82,10 @@ def find_data(
         text: Text/value to find.
         column: Optional column name to search only there.
         whole_cell: Require an exact whole-cell match when True.
-        spreadsheet: Spreadsheet name. Omit for the current spreadsheet.
-        sheet: Sheet name. Omit for the first sheet.
+        spreadsheet: Spreadsheet name, not an ID. Omit for the current
+            spreadsheet.
+        sheet: Sheet/tab name, not the spreadsheet name. Omit for the
+            first sheet.
 
     Returns:
         Readable matching rows plus structured match metadata.

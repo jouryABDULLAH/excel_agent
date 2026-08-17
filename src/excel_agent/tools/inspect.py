@@ -75,8 +75,10 @@ def inspect_sheet(
         columns: Optional column names to return. Omit for every named column.
         start_row: First spreadsheet row to consider.
         max_rows: Maximum number of data rows to return. Hard-capped at 200.
-        spreadsheet: Spreadsheet name. Omit for the current spreadsheet.
-        sheet: Sheet name. Omit for the first sheet.
+        spreadsheet: Spreadsheet name, not an ID. Omit for the current
+            spreadsheet.
+        sheet: Sheet/tab name, not the spreadsheet name. Omit for the
+            first sheet.
 
     Returns:
         Readable table content plus structured metadata describing the page.

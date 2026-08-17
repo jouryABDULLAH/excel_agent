@@ -30,7 +30,7 @@ SPREADSHEET = os.environ.get("EXCEL_AGENT_SPREADSHEET")
 # Tracing is LangSmith's, switched on by the environment; see .env.example.
 
 
-MAX_TURNS = 10
+MAX_TURNS = 20
 
 
 def require_api_key() -> str:
@@ -52,4 +52,4 @@ def use_utf8_output() -> None:
     """
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
-            stream.reconfigure(encoding="utf-8", errors="replace")
+            stream.reconfigure(encoding="utf-8", errors="replace") # type: ignore
