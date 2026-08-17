@@ -324,3 +324,27 @@ def test_the_rows_a_read_returns_are_drawn_as_a_table(a_spreadsheet, capsys):
     printed = capsys.readouterr().out
     assert "| row | Order ID | Region | Units | Product |" in printed
     assert "| 2 | ORD-1001 | North | 1 | Laptop |" in printed
+
+
+def test_the_actions_behind_a_turn_are_drawn_with_it(a_spreadsheet):
+    """REGRESSION: they arrived a rerun late.
+
+    draw_turn collected the tool calls and returned them, but only
+    draw_transcript drew them, and that runs on the next rerun. The answer
+    appeared and what produced it turned up later, or not until the next
+    question was asked.
+    """
+    a_spreadsheet()
+    page = page_with_a_scripted_agent(
+        "",
+        script=[
+            calling("update_row", "1", row=2, values={"Units": 99}),
+            AIMessage("Set row 2 to 99."),
+        ],
+        tools=TOOLS,
+    ).run()
+
+    page.chat_input[0].set_value("set row 2 units to 99").run()
+
+    # Same run as the answer, not the one after it.
+    assert [one.label for one in page.expander] == ["1 action"]

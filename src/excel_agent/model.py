@@ -20,6 +20,16 @@ GAVE_UP = (
 )
 
 
+# Said when the model stopped mid-answer because it hit its own length limit.
+# Distinct from GAVE_UP, and distinct from having nothing to say: the work may
+# well have been done, and what failed was the writing up.
+CUT_OFF = (
+    "I ran out of room before finishing that answer. Any actions above did "
+    "run. Ask for a smaller piece of it, or start a new conversation to clear "
+    "the history."
+)
+
+
 def build_model():
     """The model, built the one way every agent here uses."""
 

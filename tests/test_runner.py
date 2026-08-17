@@ -10,6 +10,7 @@ from langchain_core.messages import AIMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from scripted import ScriptedModel, calling
 
+from excel_agent.model import CUT_OFF
 from excel_agent.runner import Answer, Session, Text, ToolCall, rendered
 from excel_agent.subagents.factory import OrchestratorState
 from excel_agent.tools import TOOLS
@@ -256,3 +257,50 @@ def test_a_new_conversation_does_not_inherit_the_last_ones_spreadsheet():
     first.reset()
 
     assert first.in_use() is None
+
+
+# Cut off, which is not the same as having nothing to say
+
+
+def turn_ending_with(message):
+    """One turn whose last model message is this one."""
+    agent = create_agent(
+        ScriptedModel(script=[message]),
+        [],
+        system_prompt="terse",
+        state_schema=OrchestratorState,
+        checkpointer=InMemorySaver(),
+    )
+
+    return [one for one in Session(agent).ask("go") if isinstance(one, Answer)]
+
+
+def test_a_reply_cut_off_by_its_length_limit_says_so():
+    """It used to be indistinguishable from the model saying nothing.
+
+    Both arrive as an AIMessage with empty content, so the page told the user
+    the turn "finished without a written response" and sent them to go and
+    check the spreadsheet, when the work may well have been done and only the
+    writing up was lost.
+    """
+    answers = turn_ending_with(
+        AIMessage(content="", response_metadata={"finish_reason": "length"})
+    )
+
+    assert answers == [Answer(CUT_OFF)]
+
+
+def test_saying_nothing_is_still_saying_nothing():
+    answers = turn_ending_with(
+        AIMessage(content="", response_metadata={"finish_reason": "stop"})
+    )
+
+    assert answers == [Answer("")]
+
+
+def test_an_answer_that_arrived_is_not_overridden_by_the_length_limit():
+    answers = turn_ending_with(
+        AIMessage(content="Here it is.", response_metadata={"finish_reason": "length"})
+    )
+
+    assert answers == [Answer("Here it is.")]

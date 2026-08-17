@@ -466,3 +466,167 @@ def test_no_tool_sends_the_model_to_a_tool_its_subagent_does_not_hold():
 
     assert named, "the tool stopped naming a next step; drop this test if so"
     assert named <= held, f"{named - held} is not a tool the file manager holds"
+
+
+# When a specialist falls over
+
+
+class Exploding(ScriptedModel):
+    """A subagent model that fails the way the provider fails."""
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        raise RuntimeError(
+            "Error code: 400 - {'error': {'code': 'tool_use_failed', "
+            "'failed_generation': '{\"name\": \"inspect_sheet\"}'}}"
+        )
+
+
+def test_a_specialist_that_falls_over_leaves_the_conversation_usable(a_spreadsheet):
+    """REGRESSION: one bad call broke every turn after it.
+
+    agent.invoke was not wrapped, so the exception escaped the whole turn. The
+    checkpoint kept an assistant message whose tool call was never answered,
+    and no API accepts a conversation in that shape, so every later turn failed
+    too and the agent looked like it had stopped responding for good.
+    """
+    a_spreadsheet()
+    analyst = next(spec for spec in SUBAGENTS if spec.name == "analyst")
+
+    orchestrator = create_agent(
+        ScriptedModel(
+            script=[
+                calling("analyst", "1", instruction="show rows"),
+                AIMessage("I could not read it."),
+            ]
+        ),
+        [as_tool(analyst, Exploding(script=[]))],
+        system_prompt=ORCHESTRATOR_PROMPT,
+        state_schema=OrchestratorState,
+        checkpointer=InMemorySaver(),
+    )
+    where = {"configurable": {"thread_id": "one"}}
+
+    # The turn finishes rather than raising.
+    out = orchestrator.invoke(
+        {"messages": [{"role": "user", "content": "show rows"}]}, config=where
+    )
+
+    left = orchestrator.get_state(where).values["messages"]
+
+    asked = {
+        call["id"]
+        for message in left
+        for call in (getattr(message, "tool_calls", None) or [])
+    }
+    answered = {
+        message.tool_call_id
+        for message in left
+        if isinstance(message, ToolMessage)
+    }
+
+    # Every tool call has a result, which is what keeps the thread valid.
+    assert asked and asked == answered
+
+    # The orchestrator was told what happened, in a sentence rather than in
+    # the provider's raw JSON.
+    said = next(
+        str(m.content) for m in left if isinstance(m, ToolMessage)
+    )
+    assert "could not finish" in said
+    assert "failed_generation" not in said
+    assert out["messages"][-1].content == "I could not read it."
+
+
+def test_a_file_manager_that_falls_over_settles_no_spreadsheet(a_spreadsheet):
+    """It answers the call and leaves the spreadsheet in hand as it was."""
+    a_spreadsheet()
+    file_manager = next(spec for spec in SUBAGENTS if spec.name == "file_manager")
+
+    orchestrator = create_agent(
+        ScriptedModel(
+            script=[
+                calling("file_manager", "1", instruction="find it"),
+                AIMessage("I could not look."),
+            ]
+        ),
+        [as_tool(file_manager, Exploding(script=[]))],
+        system_prompt=ORCHESTRATOR_PROMPT,
+        state_schema=OrchestratorState,
+        checkpointer=InMemorySaver(),
+    )
+    where = {"configurable": {"thread_id": "one"}}
+
+    out = orchestrator.invoke(
+        {"messages": [{"role": "user", "content": "find it"}]}, config=where
+    )
+
+    assert out.get("spreadsheet_name") is None
+    assert any(isinstance(m, ToolMessage) for m in out["messages"])
+
+
+def test_a_planner_that_will_not_stop_is_ended_without_breaking_the_thread():
+    """The recursion limit ended a runaway turn by raising, mid-tool-call.
+
+    That left an assistant message whose tool call was never answered, which is
+    the same poison as an unhandled subagent failure. The call limit stops the
+    turn between steps instead, so everything asked for has a result.
+    """
+    from langchain_core.language_models.chat_models import BaseChatModel
+    from langchain_core.outputs import ChatGeneration, ChatResult
+    from langchain_core.tools import tool as as_langchain_tool
+
+    from excel_agent.subagents import factory as f
+
+    @as_langchain_tool
+    def noop(instruction: str) -> str:
+        """Do nothing."""
+        return "done"
+
+    class Looping(BaseChatModel):
+        """A planner that never stops delegating."""
+
+        def bind_tools(self, tools, **kwargs):
+            return self
+
+        def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+            return ChatResult(generations=[ChatGeneration(message=AIMessage(
+                content="",
+                tool_calls=[{"name": "noop", "args": {"instruction": "x"}, "id": "1"}],
+            ))])
+
+        @property
+        def _llm_type(self):
+            return "looping"
+
+    orchestrator = create_agent(
+        model=Looping(),
+        tools=[noop],
+        system_prompt="terse",
+        middleware=[
+            factory.ModelCallLimitMiddleware(
+                run_limit=f.MAX_TURNS, exit_behavior="end"
+            )
+        ],
+        state_schema=OrchestratorState,
+        checkpointer=InMemorySaver(),
+    )
+    where = {"configurable": {"thread_id": "one"}}
+
+    # Ends rather than raising GraphRecursionError.
+    out = orchestrator.invoke(
+        {"messages": [{"role": "user", "content": "go"}]}, config=where
+    )
+
+    messages = out["messages"]
+    asked = {
+        call["id"]
+        for message in messages
+        for call in (getattr(message, "tool_calls", None) or [])
+    }
+    answered = {
+        message.tool_call_id
+        for message in messages
+        if isinstance(message, ToolMessage)
+    }
+
+    assert asked - answered == set()

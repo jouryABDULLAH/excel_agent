@@ -19,6 +19,7 @@ from langgraph.errors import (
 
 from excel_agent.config import START_SPREADSHEET
 from excel_agent.model import (
+    CUT_OFF,
     GAVE_UP,
     RECURSION_LIMIT,
     new_thread,
@@ -390,6 +391,7 @@ class Session:
         }
 
         final_answer = ""
+        cut_off = False
         artifacts: list[dict] = []
 
         # The same outer ToolMessage may appear in more than one
@@ -473,18 +475,32 @@ class Session:
                             )
 
                         # Keep model text separate from tool output.
-                        if (
-                            isinstance(
-                                message,
-                                AIMessage,
-                            )
-                            and message.content
+                        if isinstance(
+                            message,
+                            AIMessage,
                         ):
-                            final_answer = (
-                                str(
-                                    message.content
+                            if message.content:
+                                final_answer = (
+                                    str(
+                                        message.content
+                                    )
                                 )
-                            )
+
+                                cut_off = False
+
+                            # Nothing said and the model stopped because it
+                            # hit its length limit is not the same as nothing
+                            # to say, and the two used to look identical.
+                            elif (
+                                (
+                                    message.response_metadata
+                                    or {}
+                                ).get(
+                                    "finish_reason"
+                                )
+                                == "length"
+                            ):
+                                cut_off = True
 
                         if not isinstance(
                             message,
@@ -561,7 +577,10 @@ class Session:
         # Emitted even when empty, so a client always gets one end-of-turn
         # answer and decides for itself what silence should look like.
         yield Answer(
-            final_answer
+            CUT_OFF
+            if cut_off
+            and not final_answer
+            else final_answer
         )
 
         for artifact in artifacts:

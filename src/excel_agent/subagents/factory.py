@@ -1,15 +1,27 @@
 """Build spreadsheet subagents and expose them to the orchestrator as tools."""
 
 from langchain.agents import AgentState, create_agent
-from langchain.agents.middleware import dynamic_prompt
+from langchain.agents.middleware import (
+    ModelCallLimitMiddleware,
+    SummarizationMiddleware,
+    dynamic_prompt,
+)
 from langchain.messages import HumanMessage, ToolMessage
 from langchain.tools import ToolRuntime, tool
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
+from excel_agent.config import MAX_TURNS
 from excel_agent.model import RECURSION_LIMIT, build_model
 from excel_agent.subagents.prompts import ORCHESTRATOR_PROMPT
 from excel_agent.subagents.registry import SUBAGENTS
+
+
+# How full the context is allowed to get before the older half of the
+# conversation is replaced with a summary of it, and how much of the recent
+# conversation is kept verbatim when that happens.
+SUMMARISE_AT = 0.7
+KEEP_MESSAGES = 20
 
 
 class OrchestratorState(AgentState):
@@ -165,6 +177,59 @@ def _selected_spreadsheet(
     return None
 
 
+def _why(failure: Exception) -> str:
+    """One short line about a failure, without the provider's raw payload.
+
+    A provider refusal arrives as a sentence followed by a JSON body carrying
+    the model's own bad output, all on one line. Keeping the sentence and
+    dropping the body from the first brace onwards is what stops that output
+    reaching the user, or going back into the model's context to be copied.
+    The whole of it is in the trace either way.
+    """
+    text = str(failure).strip()
+
+    head = text.split("{", 1)[0].strip(" -:\t")
+
+    return (head or type(failure).__name__)[:160]
+
+
+def _run_subagent(
+    spec,
+    agent,
+    payload: dict,
+) -> tuple[dict | None, str | None]:
+    """Run one specialist, and turn a failure into an answer rather than a raise.
+
+    Left to propagate, an exception escapes the whole turn: the user is shown
+    the provider's raw JSON, and the checkpoint keeps an assistant message
+    whose tool call was never answered. No API accepts a conversation in that
+    shape, so every later turn on the thread fails too and the agent looks like
+    it has stopped responding for good.
+
+    Answering the tool call, even with a failure, is what keeps the
+    conversation valid.
+    """
+    try:
+        result = agent.invoke(
+            payload,
+            config={
+                "recursion_limit": (
+                    RECURSION_LIMIT
+                ),
+                "run_name": spec.name,
+            },
+        )
+
+    except Exception as failure:  # noqa: BLE001 - a turn survives, whatever broke
+        return None, (
+            f"The {spec.name} could not finish: {_why(failure)}. "
+            "Nothing it was asked to do is known to have happened. Tell the "
+            "user that, and do not repeat the same step."
+        )
+
+    return result, None
+
+
 def _delegate_tool(
     spec,
     agent,
@@ -188,7 +253,9 @@ def _delegate_tool(
             )
         )
 
-        result = agent.invoke(
+        result, failure = _run_subagent(
+            spec,
+            agent,
             {
                 "messages": [
                     {
@@ -212,15 +279,24 @@ def _delegate_tool(
                     )
                 ),
             },
-            config={
-                "recursion_limit": (
-                    RECURSION_LIMIT
-                ),
-                "run_name": spec.name,
-            },
         )
 
-        messages = result.get(
+        if failure:
+            return (
+                failure,
+                {
+                    "subagent": spec.name,
+                    "ok": False,
+                    "error": "subagent_failed",
+                    "response": failure,
+                    "tool_calls": [],
+                    "tool_results": [],
+                    "tool_artifacts": [],
+                    "render_data": False,
+                },
+            )
+
+        messages = (result or {}).get(
             "messages",
             [],
         )
@@ -277,7 +353,9 @@ def _file_manager_tool(
             )
         )
 
-        result = agent.invoke(
+        result, failure = _run_subagent(
+            spec,
+            agent,
             {
                 "messages": [
                     {
@@ -293,15 +371,25 @@ def _file_manager_tool(
                     )
                 ),
             },
-            config={
-                "recursion_limit": (
-                    RECURSION_LIMIT
-                ),
-                "run_name": spec.name,
-            },
         )
 
-        messages = result.get(
+        if failure:
+            # Answering the call and settling nothing: the spreadsheet in hand
+            # is left as it was, which is true, and the thread stays valid.
+            return Command(
+                update={
+                    "messages": [
+                        ToolMessage(
+                            content=failure,
+                            tool_call_id=(
+                                runtime.tool_call_id
+                            ),
+                        )
+                    ]
+                }
+            )
+
+        messages = (result or {}).get(
             "messages",
             [],
         )
@@ -473,7 +561,28 @@ def build_orchestrator():
             ORCHESTRATOR_PROMPT
         ),
         middleware=[
-            _planner_prompt
+            _planner_prompt,
+            # A conversation is one thread that never forgets, so a long one
+            # eventually leaves the model no room to answer in: it stops
+            # mid-sentence, which reads as the agent having nothing to say.
+            SummarizationMiddleware(
+                model=model,
+                trigger=(
+                    "fraction",
+                    SUMMARISE_AT,
+                ),
+                keep=(
+                    "messages",
+                    KEEP_MESSAGES,
+                ),
+            ),
+            # A planner that keeps delegating gets stopped here rather than by
+            # the recursion limit, which leaves a tool call unanswered and the
+            # thread invalid for every turn after it.
+            ModelCallLimitMiddleware(
+                run_limit=MAX_TURNS,
+                exit_behavior="end",
+            ),
         ],
         state_schema=(
             OrchestratorState

@@ -405,6 +405,14 @@ def draw_turn(
     if not answer.strip() and not artifacts:
         box.markdown(NO_ANSWER)
 
+    # Drawn here as well as in draw_transcript. Left to the transcript alone,
+    # the actions behind a turn only appeared once something else redrew the
+    # page, so the answer arrived and what produced it turned up later.
+    draw_actions(
+        calls,
+        container=box,
+    )
+
     return {
         "role": "assistant",
         "text": said,
