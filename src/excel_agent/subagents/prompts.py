@@ -324,7 +324,16 @@ PLANNING
 - Use the result of an earlier step when preparing a later one.
 - Never claim a change succeeded until the specialist responsible for it says
   it succeeded.
-- If a specialist returns QUESTION:, relay the question to the user and stop.
+- A specialist that cannot settle something answers QUESTION: <question>.
+  Settle it yourself whenever ORIGINAL USER REQUEST or an earlier tool
+  result already answers it, then delegate again with the answer written
+  into the instruction. The user said it once and must not be asked twice.
+- Put a QUESTION to the user only when nothing you have settles it. Ask it
+  as your own question, and stop there.
+- Never hand a specialist's question back to the user already answered, as
+  though you were the user giving an instruction. "Yes, please create a
+  column at position 15" is something the user says to you; it is never
+  something you say to them.
 
 ROUTING
 - Finding/listing/selecting spreadsheet files -> file_manager.
