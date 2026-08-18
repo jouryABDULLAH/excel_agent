@@ -11,6 +11,8 @@ dependencies = [
     "google-api-python-client>=2.100",
     "google-auth-httplib2>=0.2",
     "google-auth-oauthlib>=1.2",
+    # The agent reads its own .env, so this is not a dev-only convenience.
+    "python-dotenv>=1.0",
 ]
 
 [project.optional-dependencies]
@@ -22,7 +24,6 @@ ui = [
 # pip install .[dev]
 dev = [
     "pytest>=8.0",
-    "python-dotenv>=1.0",
 ]
 
 [project.scripts]

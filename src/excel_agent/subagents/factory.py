@@ -562,9 +562,6 @@ def build_orchestrator():
         ),
         middleware=[
             _planner_prompt,
-            # A conversation is one thread that never forgets, so a long one
-            # eventually leaves the model no room to answer in: it stops
-            # mid-sentence, which reads as the agent having nothing to say.
             SummarizationMiddleware(
                 model=model,
                 trigger=(
@@ -582,7 +579,7 @@ def build_orchestrator():
             ModelCallLimitMiddleware(
                 run_limit=MAX_TURNS,
                 exit_behavior="end",
-            ),
+            ), # type: ignore
         ],
         state_schema=(
             OrchestratorState
@@ -590,4 +587,4 @@ def build_orchestrator():
         checkpointer=(
             InMemorySaver()
         ),
-    )
+    ) # type: ignore

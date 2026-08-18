@@ -55,7 +55,12 @@ def a_sheet(monkeypatch):
             spreadsheet_service, "add_chart", recording("add_chart", {"chartId": 77})
         )
 
-        for name in ("update_chart_spec", "delete_chart", "format_range"):
+        for name in (
+            "update_chart_spec",
+            "delete_chart",
+            "format_range",
+            "copy_paste",
+        ):
             monkeypatch.setattr(spreadsheet_service, name, recording(name))
 
         return sent
@@ -394,3 +399,77 @@ def test_a_column_that_is_not_there_is_refused_before_anything_is_styled(a_sheet
     assert answer["ok"] is False
     assert answer["error"] == "unknown_columns"
     assert sent == []
+
+
+# Copying formatting from one range to another
+
+
+def pasted(sent: list) -> list[dict]:
+    """Every copy the service was asked to paste."""
+    return [one for one in sent if one["call"] == "copy_paste"]
+
+
+def test_a_destination_given_only_a_start_takes_the_shape_of_the_source(a_sheet):
+    """REGRESSION: the most natural way to ask for this was refused.
+
+    "Copy the formatting of rows 2 and 3 to row 5" means rows 5 and 6. It used
+    to mean row 5 alone, which a two-row source could not fit into, so the
+    request came back as incompatible_ranges.
+    """
+    sent = a_sheet(style)
+
+    answer = style.copy_format.invoke(
+        {
+            "source_first_row": 2,
+            "source_last_row": 3,
+            "destination_first_row": 5,
+        }
+    )
+
+    assert answer["ok"] is True
+    assert answer["destination"]["first_row"] == 5
+    assert answer["destination"]["last_row"] == 6
+
+    # Formatting only: the values underneath are not touched.
+    assert pasted(sent)[0]["paste_type"] == "PASTE_FORMAT"
+    assert answer["values_changed"] is False
+    assert answer["formulas_changed"] is False
+
+
+def test_a_destination_that_is_whole_copies_of_the_source_is_accepted(a_sheet):
+    sent = a_sheet(style)
+
+    answer = style.copy_format.invoke(
+        {
+            "source_first_row": 2,
+            "source_last_row": 3,
+            "destination_first_row": 4,
+            "destination_last_row": 7,
+        }
+    )
+
+    # Two rows into four: Google repeats the pattern twice.
+    assert answer["ok"] is True
+    assert pasted(sent) != []
+
+
+def test_a_destination_that_does_not_fit_is_refused_with_both_sizes(a_sheet):
+    sent = a_sheet(style)
+
+    answer = style.copy_format.invoke(
+        {
+            "source_first_row": 2,
+            "source_last_row": 3,
+            "destination_first_row": 4,
+            "destination_last_row": 8,
+        }
+    )
+
+    # Five rows is not a whole number of copies of two, and Google would
+    # spill the last one. Saying only that the sizes disagree leaves the model
+    # guessing, so both are named.
+    assert answer["ok"] is False
+    assert answer["error"] == "incompatible_ranges"
+    assert "2 row(s)" in answer["message"]
+    assert "5 by" in answer["message"]
+    assert pasted(sent) == []

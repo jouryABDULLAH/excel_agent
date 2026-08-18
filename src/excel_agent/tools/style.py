@@ -821,6 +821,21 @@ def copy_format(
             last_row=source_last_row,
         )
 
+        # A destination given only a starting point means "the same shape,
+        # from here". Asked to copy the formatting of rows 2 and 3 to row 5,
+        # a person means rows 5 and 6; taking it as row 5 alone left a
+        # two-row source that could not fit in a one-row destination, and the
+        # most natural way to ask for this was refused.
+        if (
+            destination_first_row is not None
+            and destination_last_row is None
+        ):
+            destination_last_row = (
+                destination_first_row
+                + source_height
+                - 1
+            )
+
         (
             destination_range,
             destination_first,
@@ -849,8 +864,11 @@ def copy_format(
             return _error(
                 "incompatible_ranges",
                 (
-                    "The destination must be the same size as the source "
-                    "or an exact multiple of it."
+                    f"The source is {source_height} row(s) by "
+                    f"{source_width} column(s) and the destination is "
+                    f"{destination_height} by {destination_width}. The "
+                    "destination must be the same size as the source, or a "
+                    "whole number of copies of it."
                 ),
                 spreadsheet=spreadsheet_name,
                 sheet=sheet_name,

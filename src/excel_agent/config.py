@@ -1,22 +1,32 @@
 """Settings for the agent.
 
-The API key is read from the shell environment. The .env version is kept
-below as comments so it can be switched on later without changing anything
-else in the project.
+Read from the environment, and from a .env file beside the project when there
+is one. The shell wins where both name the same thing, so a value set for one
+run is not quietly overruled by a file.
 """
 
 import os
 import sys
 from pathlib import Path
 
-# To read the key from a .env file instead of the shell, install the dev
-# extra in pyproject.toml, and uncomment these two lines.
-# from dotenv import load_dotenv
-# load_dotenv()
-
-
-# Where credentials.json and token.json are looked for.
+# Where credentials.json, token.json and .env are looked for.
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    # Nothing to read a .env with. The shell is then the only source.
+    pass
+else:
+    # Before anything below is read, and named from the project root rather
+    # than from wherever the process was started, so `streamlit run` from any
+    # directory finds the same file.
+    #
+    # This was switched off, and a .env holding the tracing key looked like
+    # configuration while doing nothing: every run was sent to LangSmith
+    # without a key and refused, so the traces someone went looking for after
+    # a bad turn had never been recorded.
+    load_dotenv(PROJECT_ROOT / ".env")
 
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
