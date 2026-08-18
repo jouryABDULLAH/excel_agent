@@ -567,12 +567,15 @@ def test_a_new_row_goes_under_the_last_one(a_writable_sheet):
 
     assert answer["ok"] is True
     assert answer["row"] == 7
-    # append lets Google place the row, so what goes out is the table it is
-    # being added to rather than a cell reference worked out here.
-    appended = next(one for one in sent if one["call"] == "append_rows")
-    assert appended["range_name"].startswith("'Sales Orders'!")
-    assert "Dock" in str(appended["values"])
-    assert "EU" in str(appended["values"])
+
+    # Where the row goes is worked out here, not left to Google. Handed a
+    # range spanning every named column, values.append decided for itself
+    # where the table inside it ended, and on a sheet with a second small
+    # table sharing the header row it decided wrongly.
+    assert written(sent) == {
+        "'Sales Orders'!D7:D7": "Dock",
+        "'Sales Orders'!B7:B7": "EU",
+    }
 
 
 def test_a_row_can_be_put_at_a_chosen_position(a_writable_sheet):
@@ -960,3 +963,65 @@ def test_moving_needs_somewhere_a_column_can_go(a_writable_columns_sheet):
     assert outside["ok"] is False
     assert outside["error"] == "invalid_position"
     assert sent == []
+
+
+def a_sheet_with_a_side_table() -> list:
+    """The shape the real spreadsheet has, which broke appending.
+
+    A second small table sits off to the right, sharing the header row: four
+    table columns, a blank gap, then a heading with nothing under it.
+    """
+    rows = [
+        [
+            fake_sheets.text("Order ID"),
+            fake_sheets.text("Region"),
+            fake_sheets.text("Units"),
+            fake_sheets.text("Product"),
+            fake_sheets.EMPTY,
+            fake_sheets.text("Revenue by Region"),
+        ]
+    ]
+
+    for order, region, units, product in (
+        ("ORD-1001", "North", 1, "Laptop"),
+        ("ORD-1002", "South", 2, "Monitor"),
+    ):
+        rows.append(
+            [
+                fake_sheets.text(order),
+                fake_sheets.text(region),
+                fake_sheets.number(units),
+                fake_sheets.text(product),
+            ]
+        )
+
+    return rows
+
+
+def test_a_row_added_beside_a_second_table_still_lands_in_the_first(
+    a_writable_sheet,
+):
+    """REGRESSION: the row went wherever Google thought the table ended.
+
+    values.append was handed a range spanning every named column, which on
+    this shape covers the gap and the heading to the right as well. Google
+    decides for itself where the table inside that range stops, and its answer
+    was not the table meant: a row landed below the wrong block, or a lone
+    value landed away from its column.
+    """
+    sent = a_writable_sheet(rows=a_sheet_with_a_side_table())
+
+    answer = row_tools.append_row.invoke(
+        {"values": {"Order ID": "ORD-1003", "Units": 7}}
+    )
+
+    # Two data rows, so the new one is row 4, whatever sits to the right.
+    assert answer["ok"] is True
+    assert answer["row"] == 4
+
+    # Only the columns named are written, each in its own place. Nothing is
+    # written into the gap, or under the heading of the other table.
+    assert written(sent) == {
+        "'Sales Orders'!A4:A4": "ORD-1003",
+        "'Sales Orders'!C4:C4": 7,
+    }

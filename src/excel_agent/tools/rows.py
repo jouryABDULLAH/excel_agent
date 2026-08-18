@@ -405,51 +405,60 @@ def append_row(
             invalid["sheet"] = sheet_name
             return invalid
 
-        first_column = min(headers.values())
-        last_column = max(headers.values())
+        # The row after the last one holding data, worked out here rather than
+        # left to Google.
+        #
+        # This used to hand values.append a range spanning every named column,
+        # and Google decided for itself where the table inside it ended. A
+        # sheet with a second small table off to the right shares the header
+        # row, so that range covered both, and the guess did not match the
+        # table meant: rows landed below the wrong block, or a single value
+        # landed away from its column.
+        target_row = last_row + 1
 
-        row_values = [
-            next(
-                (
-                    "" if values[column] is None else values[column]
-                    for column, number in headers.items()
-                    if number == column_number
-                    and column in values
-                ),
-                "",
-            )
-            for column_number in range(
-                first_column,
-                last_column + 1,
-            )
-        ]
-
-        table_range = a1(
-            sheet_name,
-            first_row=header_row,
-            first_column=first_column,
-            last_column=last_column,
+        grid_rows = (
+            properties
+            .get("gridProperties", {})
+            .get("rowCount")
         )
 
-        response = spreadsheet_service.append_rows(
+        # values.append grew the sheet when it ran out of rows, so a grid
+        # already full to its last row needs one made for it.
+        if (
+            grid_rows is not None
+            and target_row > grid_rows
+        ):
+            spreadsheet_service.insert_rows(
+                spreadsheet_id=spreadsheet_id,
+                sheet_id=properties["sheetId"],
+                start_row=target_row,
+                count=1,
+            )
+
+        # One range per named column, so a column with no value given is left
+        # alone rather than written blank, and nothing is written into the
+        # gaps between one table and the next.
+        response = spreadsheet_service.update_cells(
             spreadsheet_id=spreadsheet_id,
-            range_name=table_range,
-            values=[row_values],
+            updates=_cell_updates(
+                sheet_name,
+                target_row,
+                values,
+                headers,
+            ),
             value_input_option="USER_ENTERED",
         )
-
-        updates = response.get("updates", {})
 
         return {
             "ok": True,
             "operation": "append_row",
             "spreadsheet": spreadsheet_name,
             "sheet": sheet_name,
-            "row": last_row + 1,
+            "row": target_row,
             "values": values,
-            "updated_range": updates.get("updatedRange"),
-            "updated_cells": updates.get(
-                "updatedCells",
+            "updated_columns": list(values),
+            "updated_cells": response.get(
+                "totalUpdatedCells",
                 len(values),
             ),
         }
