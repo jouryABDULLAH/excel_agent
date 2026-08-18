@@ -348,3 +348,9 @@ def test_the_actions_behind_a_turn_are_drawn_with_it(a_spreadsheet):
 
     # Same run as the answer, not the one after it.
     assert [one.label for one in page.expander] == ["1 action"]
+
+    # And exactly one collapsible bar. The status that reported progress while
+    # the turn ran is cleared once it finishes: left behind, it sits above the
+    # actions as a second grey bar saying "Done", which reads as the block
+    # having been drawn twice.
+    assert page.get("status") == []

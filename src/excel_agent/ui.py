@@ -391,6 +391,14 @@ def draw_turn(
             expanded=False,
         )
 
+    # The status says what is happening while it happens; the actions expander
+    # below is the record of what happened. Left in place, both are drawn as
+    # collapsed grey bars and read as the same thing twice, so the placeholder
+    # the status was drawn in is emptied and the record takes its place. That
+    # also leaves the turn looking the same before and after a rerun, which
+    # redraws it from the transcript with no status in it.
+    status_placeholder.empty()
+
     said = answer.strip() or NO_ANSWER
 
     if answer.strip():
