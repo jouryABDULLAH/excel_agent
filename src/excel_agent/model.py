@@ -12,7 +12,7 @@ from excel_agent.config import MAX_TURNS, MODEL, require_api_key
 
 
 RECURSION_LIMIT = MAX_TURNS * 2 + 1
-TEMPERATURE = 0.3
+TEMPERATURE = 0
 
 
 GAVE_UP = (
