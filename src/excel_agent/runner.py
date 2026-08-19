@@ -554,6 +554,20 @@ class Session:
             )
         )
 
+        # The checkpoint is the source of truth; the stream is only the
+        # transport. A turn has reached the user empty while its trace showed
+        # a written answer sitting in state, so when the stream hands over
+        # nothing, the state is read directly before giving up.
+        if not final_answer and not cut_off:
+            final_answer = str(
+                self.agent.get_state(
+                    self._where
+                ).values.get(
+                    "final_answer"
+                )
+                or ""
+            )
+
         # Emitted even when empty, so a client always gets one end-of-turn
         # answer and decides for itself what silence should look like.
         yield Answer(

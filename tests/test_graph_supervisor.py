@@ -52,6 +52,20 @@ def test_delegating_clears_any_answer_left_from_before():
     assert written["final_answer"] is None
 
 
+def test_the_delivery_note_never_reaches_the_user():
+    from excel_agent.graph.state import DELIVERED
+
+    written = deciding(
+        [AIMessage(f"هذه أول خمسة صفوف:\n{DELIVERED}")],
+        worker_results=[f"[analyst] هذه أول خمسة صفوف:\n{DELIVERED}"],
+    )
+
+    # The note tells the supervisor the table was drawn; a model composing
+    # from the report sometimes copies it out.
+    assert DELIVERED not in written["final_answer"]
+    assert written["final_answer"] == "هذه أول خمسة صفوف:"
+
+
 def test_finishing_carries_the_answer_and_ends():
     written = deciding(
         [AIMessage("There are 51 rows.")],

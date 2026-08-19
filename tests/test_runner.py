@@ -340,3 +340,31 @@ def test_an_approval_names_the_tool_it_is_waiting_on():
     waiting = Approval(tool="delete_row", arguments={"row": 5}, id="a-call")
 
     assert (waiting.tool, waiting.arguments["row"]) == ("delete_row", 5)
+
+
+def test_an_answer_the_stream_lost_is_recovered_from_state():
+    """REGRESSION: a turn reached the user empty while its trace showed a
+    written answer sitting in state. The checkpoint is the source of truth;
+    when the stream hands over nothing, the runner reads it directly."""
+
+    class Quiet:
+        """An agent whose stream says nothing, though its state answered."""
+
+        def stream(self, payload, config=None, **settings):
+            return iter(())
+
+        def get_state(self, where):
+            class Snapshot:
+                values = {"final_answer": "هذه أول خمسة صفوف."}
+
+            return Snapshot()
+
+        def update_state(self, where, values):
+            pass
+
+    answers = [
+        one for one in Session(Quiet()).ask("اظهر اول خمسة صفوف")
+        if isinstance(one, Answer)
+    ]
+
+    assert [one.text for one in answers] == ["هذه أول خمسة صفوف."]

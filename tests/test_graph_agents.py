@@ -117,6 +117,23 @@ def test_a_drawn_table_is_cut_from_the_report(a_sheet):
     assert "|" not in reported
 
 
+def test_a_stripped_report_says_the_data_was_delivered(a_sheet):
+    """REGRESSION: the stripped report read as a worker that returned nothing.
+
+    The supervisor cannot see the drawn table, so "here are the rows:" with
+    nothing after it looked like a failure and the same task went out again
+    -- live, half the time.
+    """
+    from excel_agent.graph.state import DELIVERED
+
+    written = working(
+        [calling("inspect_sheet", "1", max_rows=5, render_data=True),
+         TABLE_IN_PROSE]
+    )
+
+    assert DELIVERED in written["worker_results"][-1]
+
+
 def test_a_report_that_was_only_a_table_still_says_something(a_sheet):
     written = working(
         [calling("inspect_sheet", "1", max_rows=5, render_data=True),
@@ -127,7 +144,7 @@ def test_a_report_that_was_only_a_table_still_says_something(a_sheet):
 
     # Stripped to nothing, the supervisor would compose an answer from an
     # empty report.
-    assert reported == "[analyst] The requested rows are shown in the table."
+    assert "The requested rows are shown in the table." in reported
 
 
 def test_a_table_the_model_wrote_itself_is_kept(a_sheet):

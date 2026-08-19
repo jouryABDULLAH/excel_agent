@@ -7,7 +7,7 @@ and what they hand back, is here.
 from langchain.agents import AgentState
 from langchain_core.messages import HumanMessage, ToolMessage
 
-from excel_agent.graph.state import State
+from excel_agent.graph.state import DELIVERED, State
 
 
 DELEGATED = """\
@@ -130,10 +130,13 @@ def without_table_lines(said: str) -> str:
         if not line.lstrip().startswith("|")
     ]
 
+    # The supervisor reads this and cannot see the drawn table. Without the
+    # note, an intro like "here are the rows:" followed by nothing reads as a
+    # worker that returned nothing, and the supervisor sends it out again.
     return (
         "\n".join(kept).strip()
         or "The requested rows are shown in the table."
-    )
+    ) + f"\n{DELIVERED}"
 
 
 def reported(name: str, said: str, state: State) -> list[str]:

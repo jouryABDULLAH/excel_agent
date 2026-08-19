@@ -12,7 +12,7 @@ from langchain.agents.middleware import (
 from langchain_core.messages import AIMessage
 from langchain_core.tools import tool
 
-from excel_agent.graph.state import DELEGATE, Delegate, State
+from excel_agent.graph.state import DELEGATE, DELIVERED, Delegate, State
 from excel_agent.prompts import CANNOT_DO
 
 
@@ -305,6 +305,10 @@ def _decide(supervisor, state: State) -> dict:
     # tool call is dropped rather than followed, so the message written is a
     # clean one.
     answer = "" if calls else str(said.content or "")
+
+    # The delivery note on a stripped report is for the supervisor; a model
+    # composing from the report sometimes copies it out.
+    answer = answer.replace(DELIVERED, "").strip()
 
     if not answer and delegated >= MAX_DELEGATIONS:
         answer = _spent(state)
