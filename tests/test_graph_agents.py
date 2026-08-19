@@ -10,7 +10,7 @@ import pytest
 from langchain_core.messages import AIMessage
 from scripted import ScriptedModel, calling
 
-from excel_agent.agents import analyst
+from excel_agent.agents import analyst, file_manager
 from excel_agent.services.spreadsheet import spreadsheet_service
 from excel_agent.tools import inspect as inspect_tool
 
@@ -118,3 +118,70 @@ def test_a_failure_does_not_repeat_the_provider_back_at_the_model(a_sheet):
     # to the supervisor it is noise, and the model may copy it.
     assert "Error code: 400" in reported
     assert "failed_generation" not in reported
+
+
+# The file manager, which is the one that changes what everything else works on
+
+
+@pytest.fixture
+def a_drive(monkeypatch):
+    """Drive answers with one file, whatever it is asked for."""
+    from excel_agent.tools import spreadsheets
+
+    monkeypatch.setattr(
+        spreadsheets,
+        "resolve_spreadsheet",
+        lambda name=None: ("bk-id", "TEST - Book Collection"),
+    )
+
+
+CHOOSES = [
+    calling("resolve_spreadsheet_choice", "1", spreadsheet="TEST - Book Collection"),
+    AIMessage('Selected "TEST - Book Collection".'),
+]
+
+
+def choosing(script, **state) -> dict:
+    node = file_manager.build(ScriptedModel(script=script))
+
+    return node(
+        {
+            "task": "work on the books file",
+            "spreadsheet_name": None,
+            "worker_results": [],
+            **state,
+        }
+    )
+
+
+def test_the_file_manager_writes_the_choice_it_settled(a_drive):
+    written = choosing(CHOOSES)
+
+    assert written["spreadsheet_id"] == "bk-id"
+    assert written["spreadsheet_name"] == "TEST - Book Collection"
+
+
+def test_the_file_manager_reports_back_like_any_other_worker(a_drive):
+    written = choosing(CHOOSES)
+
+    assert written["worker_results"] == [
+        '[file_manager] Selected "TEST - Book Collection".'
+    ]
+
+
+def test_settling_nothing_leaves_the_file_in_hand_alone(a_drive):
+    written = choosing(
+        [AIMessage("I could not find it.")],
+        spreadsheet_name="TEST - Sales Orders",
+    )
+
+    # Writing None here would drop the file the user was already working on.
+    assert "spreadsheet_name" not in written
+    assert "spreadsheet_id" not in written
+
+
+def test_a_file_manager_that_falls_over_changes_no_spreadsheet(a_drive):
+    written = choosing([], spreadsheet_name="TEST - Sales Orders")
+
+    assert "spreadsheet_name" not in written
+    assert written["worker_results"][-1].startswith("[file_manager] could not finish")

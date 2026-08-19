@@ -12,6 +12,9 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
 from excel_agent.config import MAX_TURNS
+from excel_agent.agents.file_manager import (
+    selected_spreadsheet as _selected_spreadsheet,
+)
 from excel_agent.model import RECURSION_LIMIT, build_model
 from excel_agent.subagents.prompts import ORCHESTRATOR_PROMPT
 from excel_agent.subagents.registry import SUBAGENTS
@@ -146,35 +149,6 @@ def _collect_inner_results(
         tool_artifacts,
         tool_calls,
     )
-
-
-def _selected_spreadsheet(
-    messages: list,
-) -> dict | None:
-    """Find a successful spreadsheet selection made by the file manager."""
-    for message in reversed(messages):
-        if not isinstance(
-            message,
-            ToolMessage,
-        ):
-            continue
-
-        artifact = message.artifact
-
-        if not isinstance(
-            artifact,
-            dict,
-        ):
-            continue
-
-        if (
-            artifact.get("operation")
-            == "resolve_spreadsheet_choice"
-            and artifact.get("ok") is True
-        ):
-            return artifact
-
-    return None
 
 
 def _why(failure: Exception) -> str:
