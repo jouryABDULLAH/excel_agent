@@ -83,6 +83,7 @@ def inspect_sheet(
     columns: list[str] | None = None,
     start_row: int = 1,
     max_rows: int = 20,
+    render_data: bool = False,
     spreadsheet: str | None = None,
     sheet: str | None = None,
     runtime: ToolRuntime = None,
@@ -96,6 +97,9 @@ def inspect_sheet(
         columns: Optional column names to return. Omit for every named column.
         start_row: First spreadsheet row to consider.
         max_rows: Maximum number of data rows to return. Hard-capped at 200.
+        render_data: True when the user asked to see the rows themselves, so
+            the application draws them as a table. False for a read that only
+            informs your answer or a later step.
         spreadsheet: Spreadsheet name, not an ID. Omit for the current
             spreadsheet.
         sheet: Sheet/tab name, not the spreadsheet name. Omit for the
@@ -258,6 +262,7 @@ def inspect_sheet(
             "has_more": False,
             "next_start_row": None,
             "rendered": content,
+            "render_data": render_data,
         }
 
     first_data_row = header_row + 1
@@ -383,6 +388,7 @@ def inspect_sheet(
         "rows": result_rows,
         "charts": chart_results,
         "rendered": rendered,
+        "render_data": render_data,
         "total_data_rows": total_rows,
         "header_row": header_row,
         "first_returned_row": first,

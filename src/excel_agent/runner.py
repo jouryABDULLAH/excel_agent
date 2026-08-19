@@ -84,39 +84,26 @@ Event = (
 )
 
 
-def _render_artifacts(
+def _for_display(
     artifact: object,
-) -> list[dict]:
-    """Return inner artifacts only when their subagent marked them for display."""
-    if not isinstance(
-        artifact,
-        dict,
-    ):
-        return []
+) -> bool:
+    """Whether a tool's artifact is one the user asked to see drawn.
 
-    if not artifact.get(
-        "render_data"
-    ):
-        return []
-
-    tool_artifacts = artifact.get(
-        "tool_artifacts"
-    )
-
-    if not isinstance(
-        tool_artifacts,
-        list,
-    ):
-        return []
-
-    return [
-        item
-        for item in tool_artifacts
-        if isinstance(
-            item,
+    The tool that read the data decides, because it is the one that was told
+    what the user wanted. A read taken only to inform an answer or a later
+    step sets render_data False and is not drawn.
+    """
+    return (
+        isinstance(
+            artifact,
             dict,
         )
-    ]
+        and bool(
+            artifact.get(
+                "render_data"
+            )
+        )
+    )
 
 
 def _merge_inspect_artifacts(
@@ -526,20 +513,11 @@ class Session:
                         ):
                             continue
 
-                        outer_artifact = (
+                        if _for_display(
                             message.artifact
-                        )
-
-                        if outer_artifact is None:
-                            continue
-
-                        for artifact in (
-                            _render_artifacts(
-                                outer_artifact
-                            )
                         ):
                             artifacts.append(
-                                artifact
+                                message.artifact
                             )
 
         except GraphRecursionError:

@@ -10,7 +10,7 @@ from langchain_core.messages import AIMessage
 from scripted import ScriptedModel, calling
 
 from excel_agent.graph.graph import build_graph, route_worker
-from excel_agent.runner import Session, ToolCall
+from excel_agent.runner import Artifact, Session, ToolCall
 from excel_agent.services.spreadsheet import spreadsheet_service
 from excel_agent.tools import inspect as inspect_tool
 
@@ -106,6 +106,46 @@ def test_delegating_is_never_shown_to_the_user_as_work(a_sheet):
     ]
 
     assert work == ["inspect_sheet"]
+
+
+def a_read(render_data: bool) -> list:
+    """One turn whose analyst reads the sheet, asked to draw it or not."""
+    session = Session(
+        build_graph(
+            ScriptedModel(
+                script=[
+                    calling("delegate", "1", next="analyst", task="show 5 rows"),
+                    calling("inspect_sheet", "a", max_rows=5, render_data=render_data),
+                    AIMessage("Here are the rows."),
+                    AIMessage("Here are the first 5 rows."),
+                ]
+            )
+        )
+    )
+    session.use("TEST - Sales Orders")
+
+    return [
+        one for one in session.ask("show me 5 rows") if isinstance(one, Artifact)
+    ]
+
+
+def test_rows_the_user_asked_to_see_are_drawn(a_sheet):
+    """REGRESSION: nothing was drawn at all on this path.
+
+    The runner used to unwrap artifacts from the old delegate tool's own
+    artifact. A worker's tool reports its artifact directly, so every table
+    was silently dropped -- and no test noticed, because they all drove the
+    orchestrator.
+    """
+    drawn = a_read(render_data=True)
+
+    assert [one.data["operation"] for one in drawn] == ["inspect_sheet"]
+    assert len(drawn[0].data["rows"]) == 5
+
+
+def test_a_read_taken_only_to_answer_is_not_drawn(a_sheet):
+    # Counting rows to answer "how many?" should not dump the table underneath.
+    assert a_read(render_data=False) == []
 
 
 def test_a_turn_with_no_route_is_a_broken_supervisor_not_a_finished_turn():

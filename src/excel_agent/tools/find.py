@@ -76,6 +76,7 @@ def find_data(
     text: str,
     column: str | None = None,
     whole_cell: bool = False,
+    render_data: bool = False,
     spreadsheet: str | None = None,
     sheet: str | None = None,
     runtime: ToolRuntime = None,
@@ -86,6 +87,9 @@ def find_data(
         text: Text/value to find.
         column: Optional column name to search only there.
         whole_cell: Require an exact whole-cell match when True.
+        render_data: True when the user asked to see the matching rows
+            themselves, so the application draws them as a table. False for a
+            search that only informs your answer or a later step.
         spreadsheet: Spreadsheet name, not an ID. Omit for the current
             spreadsheet.
         sheet: Sheet/tab name, not the spreadsheet name. Omit for the
@@ -236,6 +240,7 @@ def find_data(
             "matches": [],
             "truncated": False,
             "rendered": content,
+            "render_data": render_data,
         }
 
     shown_hits = hits[:MATCH_LIMIT]
@@ -300,4 +305,5 @@ def find_data(
         "returned_matches": len(shown_hits),
         "truncated": truncated,
         "rendered": rendered,
+        "render_data": render_data,
     }

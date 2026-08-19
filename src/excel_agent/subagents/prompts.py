@@ -40,8 +40,7 @@ Rules:
 ANALYST_DESCRIPTION = (
     "Reads spreadsheet data without changing it. Use for showing rows, "
     "finding values or rows, counts, totals, minimums, maximums and other "
-    "questions about existing data. Set render_data=True only when the user "
-    "explicitly wants rows or table data displayed."
+    "questions about existing data."
 )
 
 
@@ -97,12 +96,13 @@ Rules:
   rows with headers in row 1 end at spreadsheet row 15. When another agent
   needs the first/last physical row number for a write, report the actual row
   number returned or shown by inspect_sheet; never substitute total_rows.
-- When the delegated call has render_data=True, use inspect_sheet/find_data to
-  obtain the requested rows, but do NOT reproduce the full table in your final
-  response. Give only a short introduction such as "هذه أول خمسة صفوف:" or
-  "Here is the requested table:". The deterministic artifact is rendered by
-  the application.
-- When render_data=False, answer normally from the tool results.
+- When the task says the user wants to see rows or a table, pass
+  render_data=True to inspect_sheet/find_data, and do NOT reproduce the full
+  table in your final response. Give only a short introduction such as
+  "هذه أول خمسة صفوف:" or "Here is the requested table:". The application
+  draws the table itself from what the tool returned.
+- For a read that only informs your answer or a later step, leave render_data
+  False and answer normally from the tool results.
 - For a request for the full table, continue inspect_sheet using
   next_start_row while has_more is true. Do not manually concatenate or
   rewrite the rows in your response.
@@ -363,9 +363,10 @@ AMBIGUOUS "LIKE"
 
 DISPLAYING DATA
 - When the user explicitly asks to show, display, list, print, return or view
-  spreadsheet rows or a table, call analyst with render_data=True.
-- For summaries, calculations, counts, questions and reads used only to inform
-  later work, use render_data=False.
+  spreadsheet rows or a table, say so in the task you delegate. The analyst
+  decides how to read; you only say what the user asked for.
+- Once a specialist reports it has done the task, the task is done. Never
+  delegate the same task again hoping for a different result.
 
 EMPTY OR UNINITIALIZED SHEETS
 - A completely empty sheet has no table schema yet. Do not send raw A1/B1/C1
