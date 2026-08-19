@@ -1,0 +1,7 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "excel_agent": "./src/excel_agent/subagents/factory.py:build_orchestrator"
+  },
+  "env": ".env"
+}

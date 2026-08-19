@@ -13,6 +13,7 @@ from langchain_core.messages import (
     AIMessage,
     ToolMessage,
 )
+from langgraph.types import Command
 from langgraph.errors import (
     GraphRecursionError,
 )
@@ -55,6 +56,31 @@ class Answer:
     """The final user-facing natural-language answer."""
 
     text: str
+
+
+@dataclass
+class Approval:
+    """A tool waiting to be allowed to run.
+
+    Nothing emits one yet. It is part of the contract now so that a paused turn
+    has a shape the front ends already understand, rather than runner, ui and
+    cli all being reopened the day approval is switched on.
+    """
+
+    tool: str
+    arguments: dict = field(
+        default_factory=dict
+    )
+    id: str = ""
+
+
+Event = (
+    ToolCall
+    | Text
+    | Artifact
+    | Answer
+    | Approval
+)
 
 
 def _render_artifacts(
@@ -369,13 +395,41 @@ class Session:
     def ask(
         self,
         question: str,
-    ) -> Iterator[
-        ToolCall
-        | Text
-        | Artifact
-        | Answer
-    ]:
+    ) -> Iterator[Event]:
         """Run one turn and emit application-level events."""
+        yield from self._run(
+            {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": question,
+                    }
+                ]
+            }
+        )
+
+    def resume(
+        self,
+        decisions: dict | None = None,
+    ) -> Iterator[Event]:
+        """Carry on a turn that stopped to ask permission.
+
+        Nothing pauses a turn yet, because no tool is wired to interrupt, so
+        this continues a graph that was not waiting for anything. It exists now
+        so the shape of a paused turn is settled while the contract is being
+        frozen. Filled in when HumanInTheLoopMiddleware lands.
+        """
+        yield from self._run(
+            Command(
+                resume=decisions or {}
+            )
+        )
+
+    def _run(
+        self,
+        payload,
+    ) -> Iterator[Event]:
+        """Stream one graph run, and turn what it emits into events."""
         config = {
             "configurable": {
                 "thread_id": (
@@ -404,16 +458,7 @@ class Session:
         try:
             for mode, payload in (
                 self.agent.stream(
-                    {
-                        "messages": [
-                            {
-                                "role": "user",
-                                "content": (
-                                    question
-                                ),
-                            }
-                        ]
-                    },
+                    payload,
                     config=config,
                     stream_mode=[
                         "updates",

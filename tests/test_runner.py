@@ -11,7 +11,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from scripted import ScriptedModel, calling
 
 from excel_agent.model import CUT_OFF
-from excel_agent.runner import Answer, Session, Text, ToolCall, rendered
+from excel_agent.runner import Answer, Approval, Session, Text, ToolCall, rendered
 from excel_agent.subagents.factory import OrchestratorState
 from excel_agent.tools import TOOLS
 
@@ -304,3 +304,39 @@ def test_an_answer_that_arrived_is_not_overridden_by_the_length_limit():
     )
 
     assert answers == [Answer("Here it is.")]
+
+
+# The contract a paused turn will use, frozen before anything pauses
+
+
+def test_resume_carries_on_without_breaking_a_turn():
+    """Nothing interrupts yet, so this only has to be harmless.
+
+    Approval and Session.resume are part of the contract now so that a paused
+    turn has a shape the front ends already understand. Wiring it later then
+    costs one middleware line rather than reopening runner, ui and cli after
+    they have been declared stable.
+    """
+    agent = create_agent(
+        ScriptedModel(script=[AIMessage("first"), AIMessage("second")]),
+        [],
+        system_prompt="terse",
+        state_schema=OrchestratorState,
+        checkpointer=InMemorySaver(),
+    )
+    session = Session(agent)
+
+    assert [one for one in session.ask("hello") if isinstance(one, Answer)] == [
+        Answer("first")
+    ]
+
+    # A thread that was not waiting for anything carries on and says nothing.
+    carried_on = [one for one in session.resume() if isinstance(one, Answer)]
+
+    assert carried_on == [Answer("")]
+
+
+def test_an_approval_names_the_tool_it_is_waiting_on():
+    waiting = Approval(tool="delete_row", arguments={"row": 5}, id="a-call")
+
+    assert (waiting.tool, waiting.arguments["row"]) == ("delete_row", 5)
