@@ -56,3 +56,7 @@ class Finish(BaseModel):
 
 
 Decision = Delegate | Finish
+
+# How the supervisor answers, not work done on a spreadsheet. The runner skips
+# these so they do not show up as actions the user was told about.
+DECISION_NAMES = frozenset({Delegate.__name__, Finish.__name__})

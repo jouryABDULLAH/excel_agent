@@ -19,6 +19,7 @@ from langgraph.errors import (
 )
 
 from excel_agent.config import START_SPREADSHEET
+from excel_agent.graph.state import DECISION_NAMES
 from excel_agent.model import (
     CUT_OFF,
     GAVE_UP,
@@ -456,7 +457,7 @@ class Session:
         )
 
         try:
-            for mode, payload in (
+            for _, mode, payload in (
                 self.agent.stream(
                     payload,
                     config=config,
@@ -464,6 +465,7 @@ class Session:
                         "updates",
                         "messages",
                     ],
+                    subgraphs=True,
                 )
             ):
                 if mode == "messages":
@@ -490,6 +492,14 @@ class Session:
                     ):
                         continue
 
+                    written = update.get(
+                        "final_answer"
+                    )
+
+                    if written:
+                        final_answer = str(written)
+                        cut_off = False
+
                     messages = (
                         update.get(
                             "messages"
@@ -507,6 +517,9 @@ class Session:
                             )
                             or []
                         ):
+                            if call["name"] in DECISION_NAMES:
+                                continue
+
                             yield ToolCall(
                                 name=call[
                                     "name"
