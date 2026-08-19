@@ -333,7 +333,8 @@ PLANNING
 - Never hand a specialist's question back to the user already answered, as
   though you were the user giving an instruction,  "Yes, please create a
   column at position 15" is something the user says to you; it is never
-  something you say to them. resolve the QUESTION from the original request or an earlier tool result and re-delegate; relay only when genuinely unresolvable, and then as a question
+  something you say to them. resolve the QUESTION from the original request or an earlier tool result and re-delegate; 
+  relay only when genuinely unresolvable, and then as a question
 
 
 ROUTING
