@@ -35,6 +35,10 @@ class State(AgentState):
     # Turn-scoped, cleared by the supervisor when it finishes.
     worker_results: list[str]
 
+    # How many times the supervisor has delegated this turn. Also
+    # turn-scoped: past MAX_DELEGATIONS it must answer with what it has.
+    delegations: int
+
 
 class Delegate(BaseModel):
     """Hand the next step to a specialist."""

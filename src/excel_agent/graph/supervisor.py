@@ -7,7 +7,9 @@ from langchain.agents.middleware import (
     SummarizationMiddleware,
     after_model,
     dynamic_prompt,
+    wrap_model_call,
 )
+from langchain_core.messages import AIMessage
 from langchain_core.tools import tool
 
 from excel_agent.graph.state import DELEGATE, Delegate, State
@@ -114,12 +116,25 @@ FINAL ANSWER
 SUMMARISE_AT = 0.7
 KEEP_MESSAGES = 20
 
+# One request gets this many delegations at most. A turn that legitimately
+# needs more than this is not a turn; it is a loop, and every extra pass by a
+# writing specialist lands another copy of the same change on the sheet.
+MAX_DELEGATIONS = 8
+
 DECIDING = """\
 
 HOW TO REPLY
 - To hand the next step to a specialist, call the delegate tool.
 - To answer the user, write the answer as your reply and call nothing.
 - Do one or the other, never both.
+"""
+
+OUT_OF_STEPS = """\
+
+OUT OF STEPS
+You have used every delegation this request is allowed. Do not delegate
+again. Answer the user now from WORK SO FAR THIS TURN, saying plainly what
+was done and what was not.
 """
 
 
@@ -133,6 +148,7 @@ class SupervisorState(AgentState):
     spreadsheet_id: str | None
     spreadsheet_name: str | None
     worker_results: list[str]
+    delegations: int
 
 
 @tool(DELEGATE, args_schema=Delegate)
@@ -155,6 +171,7 @@ def stop_at_delegation(state, runtime) -> dict | None:
 def supervisor_instructions(
     spreadsheet_name: str | None,
     worker_results: list[str],
+    out_of_steps: bool = False,
 ) -> str:
     """The prompt, named the file and the work so far."""
     return (
@@ -167,6 +184,7 @@ def supervisor_instructions(
             or "- Nothing yet."
         )
         + DECIDING
+        + (OUT_OF_STEPS if out_of_steps else "")
     )
 
 
@@ -176,7 +194,23 @@ def supervisor_prompt(request) -> str:
     return supervisor_instructions(
         request.state.get("spreadsheet_name"),
         request.state.get("worker_results") or [],
+        out_of_steps=(
+            (request.state.get("delegations") or 0) >= MAX_DELEGATIONS
+        ),
     )
+
+
+@wrap_model_call
+def no_more_delegating(request, handler):
+    """Take the delegate tool away once the turn's budget is spent.
+
+    The prompt says to answer; this makes delegating impossible as well, so a
+    model that ignores the prompt still cannot loop.
+    """
+    if (request.state.get("delegations") or 0) >= MAX_DELEGATIONS:
+        request = request.override(tools=[])
+
+    return handler(request)
 
 
 def build_supervisor(model):
@@ -193,6 +227,7 @@ def build_supervisor(model):
         state_schema=SupervisorState,
         middleware=[
             supervisor_prompt,
+            no_more_delegating,
             stop_at_delegation,
             # The model produces a malformed tool call often enough to matter,
             # and it is usually transient. on_failure must be "error": the
@@ -215,37 +250,72 @@ def _why(failure: Exception) -> str:
     return (head or type(failure).__name__)[:160]
 
 
+def _spent(state: State) -> str:
+    """The answer of last resort, once the budget is gone and the model
+    still did not write one."""
+    done = "\n".join(
+        f"- {one}" for one in state.get("worker_results") or []
+    )
+
+    if not done:
+        return (
+            "I used every step this request is allowed without getting "
+            "anywhere. Please try again, or ask for something smaller."
+        )
+
+    return (
+        "I used every step this request is allowed before finishing. "
+        f"What was done:\n{done}"
+    )
+
+
 def _decide(supervisor, state: State) -> dict:
     """Ask the planner what happens next, and turn it into state."""
+    delegated = state.get("delegations") or 0
+
     said = supervisor.invoke(
         {
             "messages": state["messages"],
             "spreadsheet_id": state.get("spreadsheet_id"),
             "spreadsheet_name": state.get("spreadsheet_name"),
             "worker_results": state.get("worker_results") or [],
+            "delegations": delegated,
         }
     )["messages"][-1]
 
     calls = getattr(said, "tool_calls", None) or []
 
-    if calls:
+    if calls and delegated < MAX_DELEGATIONS:
         asked = Delegate(**calls[0]["args"])
 
+        # The call goes into the thread so the next visit can see it already
+        # delegated this. Its worker answers it with a ToolMessage; an
+        # unanswered tool call in the thread is invalid to the provider.
         return {
             "route": asked.next,
             "task": asked.task,
             "final_answer": None,
+            "messages": [said],
+            "delegations": delegated + 1,
         }
 
     # Nothing delegated, so this is the reply. It goes into messages as well,
     # for the next turn's supervisor: without it the thread holds the user's
-    # questions and none of its own answers.
+    # questions and none of its own answers. Past the budget a straggling
+    # tool call is dropped rather than followed, so the message written is a
+    # clean one.
+    answer = "" if calls else str(said.content or "")
+
+    if not answer and delegated >= MAX_DELEGATIONS:
+        answer = _spent(state)
+
     return {
         "route": "end",
         "task": None,
-        "final_answer": str(said.content or ""),
-        "messages": [said],
+        "final_answer": answer,
+        "messages": [said if not calls else AIMessage(answer)],
         "worker_results": [],
+        "delegations": 0,
     }
 
 
@@ -267,6 +337,7 @@ def supervisor_node(supervisor):
                     f"{_why(failure)}. Please try again."
                 ),
                 "worker_results": [],
+                "delegations": 0,
             }
 
     return decide

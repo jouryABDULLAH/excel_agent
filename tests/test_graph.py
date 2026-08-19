@@ -89,6 +89,85 @@ def test_the_spreadsheet_in_hand_survives_the_turn(a_sheet):
     assert ended["spreadsheet_name"] == "TEST - Sales Orders"
 
 
+def test_the_thread_records_the_delegation_and_its_answer(a_sheet):
+    """REGRESSION: the supervisor could not see it had already delegated.
+
+    Its second visit was handed only the user's question, so it handed out
+    the same task again -- against a real model, up to six times for a read
+    and 19 duplicate rows for a write. The delegation and the report now
+    live in the thread as an ordinary tool-call pair.
+    """
+    ended = a_turn(DELEGATES_THEN_ANSWERS)
+
+    shapes = [
+        (
+            type(one).__name__,
+            [call["name"] for call in getattr(one, "tool_calls", None) or []],
+        )
+        for one in ended["messages"]
+    ]
+
+    assert shapes == [
+        ("HumanMessage", []),
+        ("AIMessage", ["delegate"]),
+        ("ToolMessage", []),
+        ("AIMessage", []),
+    ]
+
+
+def test_every_delegation_in_the_thread_is_answered(a_sheet):
+    # An assistant tool call with no tool result after it makes the whole
+    # thread invalid to the provider, and it poisons every later turn.
+    ended = a_turn(DELEGATES_THEN_ANSWERS)
+
+    unanswered: set[str] = set()
+
+    for message in ended["messages"]:
+        for call in getattr(message, "tool_calls", None) or []:
+            unanswered.add(call["id"])
+
+        if type(message).__name__ == "ToolMessage":
+            unanswered.discard(message.tool_call_id)
+
+    assert unanswered == set()
+
+
+def test_a_supervisor_that_will_not_stop_is_stopped(a_sheet):
+    """REGRESSION: nothing bounded the loop but the recursion limit.
+
+    A supervisor stuck re-delegating burned every step and the user got
+    "I ran out of steps" -- after the worker had already written its change
+    to the sheet once per pass.
+    """
+    from excel_agent.graph.supervisor import MAX_DELEGATIONS
+
+    forever = [
+        one
+        for _ in range(MAX_DELEGATIONS)
+        for one in (
+            calling("delegate", "1", next="analyst", task="count the rows"),
+            calling("inspect_sheet", "2", max_rows=5),
+            AIMessage("There are 5 rows."),
+        )
+    ] + [calling("delegate", "1", next="analyst", task="count the rows")]
+
+    ended = a_turn(forever)
+
+    # The turn ended with an answer, not GraphRecursionError, and the
+    # counter is ready for the next turn.
+    assert ended["route"] == "end"
+    assert ended["final_answer"]
+    assert ended["delegations"] == 0
+
+    # The worker really was capped: one report per allowed delegation.
+    reports = [
+        one
+        for one in ended["messages"]
+        if type(one).__name__ == "ToolMessage"
+    ]
+    assert len(reports) == MAX_DELEGATIONS
+
+
 def test_delegating_is_never_shown_to_the_user_as_work(a_sheet):
     """The delegate call is how the supervisor speaks, not work on a sheet.
 

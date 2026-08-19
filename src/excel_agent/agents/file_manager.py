@@ -7,7 +7,13 @@ chooses is what every step after it operates on.
 from langchain.agents import create_agent
 from langchain_core.messages import ToolMessage
 
-from excel_agent.agents._shared import DELEGATED, WorkerState, reported, run_worker
+from excel_agent.agents._shared import (
+    DELEGATED,
+    WorkerState,
+    answered,
+    reported,
+    run_worker,
+)
 from excel_agent.graph.state import State
 from excel_agent.prompts import CANNOT_DO, LANGUAGE_AND_SHEET_TEXT
 from excel_agent.tools import (
@@ -115,7 +121,10 @@ def build(model):
     def choose(state: State) -> dict:
         said, result = run_worker(NAME, agent, state)
 
-        written = {"worker_results": reported(NAME, said, state)}
+        written = {
+            "worker_results": reported(NAME, said, state),
+            "messages": answered(NAME, said, state),
+        }
 
         selected = (
             selected_spreadsheet(result["messages"])

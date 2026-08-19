@@ -57,9 +57,9 @@ READS = [
 
 
 def test_a_worker_reports_what_it_found(a_sheet):
-    assert working(READS) == {
-        "worker_results": ["[analyst] There are 5 rows."]
-    }
+    written = working(READS)
+
+    assert written["worker_results"] == ["[analyst] There are 5 rows."]
 
 
 def test_a_worker_adds_to_the_work_already_done(a_sheet):
@@ -78,7 +78,9 @@ def test_a_worker_writes_nothing_the_supervisor_owns(a_sheet):
 
     # route, task and final_answer are the supervisor's. A worker that set one
     # would be deciding where to go next, or answering the user itself.
-    assert set(written) == {"worker_results"}
+    # messages is here because the report answers the supervisor's delegate
+    # call in the thread.
+    assert set(written) == {"worker_results", "messages"}
 
 
 def test_a_worker_that_falls_over_does_not_take_the_turn_with_it(a_sheet):

@@ -5,7 +5,7 @@ and what they hand back, is here.
 """
 
 from langchain.agents import AgentState
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, ToolMessage
 
 from excel_agent.graph.state import State
 
@@ -112,13 +112,37 @@ def reported(name: str, said: str, state: State) -> list[str]:
     ]
 
 
+def answered(name: str, said: str, state: State) -> list[ToolMessage]:
+    """The report, as the answer to the supervisor's delegate call.
+
+    In the thread it is what shows the supervisor its delegation happened, so
+    it does not hand out the same task again. A tool call left unanswered
+    would also make the whole thread invalid to the provider.
+    """
+    last = (state.get("messages") or [None])[-1]
+    calls = getattr(last, "tool_calls", None) or []
+
+    if not calls:
+        return []
+
+    return [
+        ToolMessage(
+            content=f"[{name}] {said}",
+            tool_call_id=calls[0]["id"],
+        )
+    ]
+
+
 def worker_node(name: str, agent):
     """A specialist that only reports back."""
 
     def work(state: State) -> dict:
         said, _ = run_worker(name, agent, state)
 
-        return {"worker_results": reported(name, said, state)}
+        return {
+            "worker_results": reported(name, said, state),
+            "messages": answered(name, said, state),
+        }
 
     return work
 
