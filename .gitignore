@@ -16,3 +16,5 @@ token.json
 traces/
 sheet_quickstart.py
 /data
+/.agents
+18-aug-additions.md
