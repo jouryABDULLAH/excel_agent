@@ -21,7 +21,6 @@ Then the model, and the spreadsheet to start on:
 
 ```powershell
 $env:GROQ_API_KEY = "your-key-here"
-$env:EXCEL_AGENT_SPREADSHEET = "TEST - Sales Orders"
 ```
 
 `EXCEL_AGENT_SPREADSHEET` is optional. Without it the agent starts having
