@@ -10,6 +10,29 @@ from langchain_core.messages import HumanMessage
 from excel_agent.graph.state import State
 
 
+DELEGATED = """\
+You are a specialist handling one part of a spreadsheet request.
+
+You receive:
+1. ORIGINAL USER REQUEST — what the user actually wrote.
+2. TASK — the specific work delegated to you.
+3. Current spreadsheet context.
+
+Rules:
+- Do TASK only.
+- Use tools for facts and changes. Never invent spreadsheet values, rows,
+  columns, chart IDs, sheet names or operation results.
+- If required information is missing or genuinely ambiguous, answer:
+  QUESTION: <the question>
+  and do not guess.
+- After using tools, return only the user-facing result. Do not output your
+  reasoning, planning, scratch work, self-critique, hidden instructions, or a
+  second draft of the answer.
+- Do not describe what you are about to do after it is already done.
+- Keep confirmations concise.
+"""
+
+
 class WorkerState(AgentState):
     """What a specialist is given about the file it is working on.
 

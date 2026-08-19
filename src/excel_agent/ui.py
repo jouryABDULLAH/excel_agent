@@ -17,7 +17,7 @@ from collections.abc import Iterable
 import streamlit as st
 
 from excel_agent import browsing
-from excel_agent.config import MODEL, USE_GRAPH
+from excel_agent.config import MODEL
 from excel_agent.runner import (
     Answer,
     Artifact, 
@@ -27,7 +27,6 @@ from excel_agent.runner import (
 )
 from excel_agent.graph.graph import build_graph
 from excel_agent.model import build_model
-from excel_agent.subagents.factory import build_orchestrator
 
 
 # ---------------------------------------------------------------------------
@@ -146,11 +145,7 @@ def suggestions(reading: str | None) -> list[str]:
 
 def start() -> None:
     """Create a new agent session and empty UI transcript."""
-    st.session_state.session = Session(
-        build_graph(build_model())
-        if USE_GRAPH
-        else build_orchestrator()
-    )
+    st.session_state.session = Session(build_graph(build_model()))
 
     st.session_state.transcript = []
 

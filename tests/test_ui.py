@@ -16,7 +16,7 @@ from streamlit.testing.v1 import AppTest
 
 from excel_agent import browsing, cli, runner
 from excel_agent.runner import Session
-from excel_agent.subagents.factory import OrchestratorState
+from excel_agent.graph.state import State
 from excel_agent.tools import TOOLS
 
 import excel_agent.ui
@@ -97,7 +97,7 @@ def page_with_a_scripted_agent(says: str, script=None, tools=()) -> AppTest:
             ScriptedModel(script=list(script) if script else [AIMessage(says)]),
             list(tools),
             system_prompt="terse",
-            state_schema=OrchestratorState,
+            state_schema=State,
             checkpointer=InMemorySaver(),
         )
     )

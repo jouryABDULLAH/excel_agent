@@ -12,7 +12,7 @@ from scripted import ScriptedModel, calling
 
 from excel_agent.model import CUT_OFF
 from excel_agent.runner import Answer, Approval, Session, Text, ToolCall, rendered
-from excel_agent.subagents.factory import OrchestratorState
+from excel_agent.graph.state import State
 from excel_agent.tools import TOOLS
 
 
@@ -216,7 +216,7 @@ def two_sessions():
         ScriptedModel(script=[AIMessage("a"), AIMessage("b")]),
         [],
         system_prompt="terse",
-        state_schema=OrchestratorState,
+        state_schema=State,
         checkpointer=InMemorySaver(),
     )
 
@@ -268,7 +268,7 @@ def turn_ending_with(message):
         ScriptedModel(script=[message]),
         [],
         system_prompt="terse",
-        state_schema=OrchestratorState,
+        state_schema=State,
         checkpointer=InMemorySaver(),
     )
 
@@ -321,7 +321,7 @@ def test_resume_carries_on_without_breaking_a_turn():
         ScriptedModel(script=[AIMessage("first"), AIMessage("second")]),
         [],
         system_prompt="terse",
-        state_schema=OrchestratorState,
+        state_schema=State,
         checkpointer=InMemorySaver(),
     )
     session = Session(agent)

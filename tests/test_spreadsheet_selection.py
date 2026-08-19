@@ -88,7 +88,7 @@ def test_the_choice_is_recorded_in_the_state_and_nowhere_else():
 
     It used to be written to a module global as well, which every browser
     session in the process shared. Where a tool reads it from now is the
-    subagent state seeded from this update, covered in test_subagents.
+    worker state seeded from this update, covered in test_graph.
     """
     answer = choosing("sales orders")
 

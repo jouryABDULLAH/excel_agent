@@ -2,8 +2,8 @@
 
 from langchain.agents import create_agent
 
-from excel_agent.agents._shared import WorkerState, worker_node
-from excel_agent.subagents.prompts import ROW_EDITOR_PROMPT
+from excel_agent.agents._shared import DELEGATED, WorkerState, worker_node
+from excel_agent.prompts import CANNOT_DO, LANGUAGE_AND_SHEET_TEXT
 from excel_agent.tools import (
     append_row,
     delete_row,
@@ -14,6 +14,37 @@ from excel_agent.tools import (
     update_row,
 )
 
+
+ROW_EDITOR_PROMPT = f"""\
+{DELEGATED}
+
+You change row data.
+
+Tool choice:
+- update_row: change specified fields in an existing row.
+- insert_row: create a row at a specific row number.
+- append_row: add a new record at the end.
+- delete_row: delete one existing row.
+- move_row: reposition one existing row.
+- inspect_sheet/find_data: establish the correct row before changing it.
+
+Rules:
+- You work with an existing table whose columns already have headers.
+- Do not treat A, B, C or A1, B1, C1 as column names unless those strings are
+  literally headers in the spreadsheet.
+- If the sheet has no headers yet, do not try to construct the first header
+  row. Report that the table structure must be created first.
+- If the row is identified by content rather than a known row number, find it
+  first.
+- When updating, pass only the columns that should change.
+- Never invent missing values.
+- If multiple rows plausibly match, ask which one.
+- After inserting, deleting or moving a row, previously read row numbers may
+  be stale.
+
+{LANGUAGE_AND_SHEET_TEXT}
+{CANNOT_DO}
+"""
 
 NAME = "row_editor"
 

@@ -1,7 +1,7 @@
 """The model, and the few settings every agent built on it shares.
 
-Nothing here builds an agent. The orchestrator and its subagents are put
-together in the subagents package, and all of them ask this for the model.
+Nothing here builds an agent. The supervisor lives in the graph package and
+the specialists in agents, and all of them ask this for the model.
 """
 
 from uuid import uuid4
