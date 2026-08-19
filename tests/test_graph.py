@@ -10,6 +10,7 @@ from langchain_core.messages import AIMessage
 from scripted import ScriptedModel, calling
 
 from excel_agent.graph.graph import build_graph, route_worker
+from excel_agent.runner import Session, ToolCall
 from excel_agent.services.spreadsheet import spreadsheet_service
 from excel_agent.tools import inspect as inspect_tool
 
@@ -86,6 +87,25 @@ def test_the_spreadsheet_in_hand_survives_the_turn(a_sheet):
     # Workers write only worker_results, so what the file manager settled has
     # to still be there afterwards.
     assert ended["spreadsheet_name"] == "TEST - Sales Orders"
+
+
+def test_delegating_is_never_shown_to_the_user_as_work(a_sheet):
+    """The delegate call is how the supervisor speaks, not work on a sheet.
+
+    Only runner.DECISION_NAMES keeps it out of the action list, and it holds
+    the tool's name as a string: rename one without the other and the user is
+    told about a delegation on every turn.
+    """
+    session = Session(build_graph(ScriptedModel(script=DELEGATES_THEN_ANSWERS)))
+    session.use("TEST - Sales Orders")
+
+    work = [
+        one.name
+        for one in session.ask("how many rows?")
+        if isinstance(one, ToolCall)
+    ]
+
+    assert work == ["inspect_sheet"]
 
 
 def test_a_turn_with_no_route_is_a_broken_supervisor_not_a_finished_turn():
