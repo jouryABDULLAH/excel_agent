@@ -43,6 +43,14 @@ START_SPREADSHEET = os.environ.get("EXCEL_AGENT_SPREADSHEET")
 
 MAX_TURNS = 20
 
+# Run the turn through the StateGraph instead of the older orchestrator.
+# Transitional: goes away once the graph is the only one left.
+USE_GRAPH = os.environ.get("EXCEL_AGENT_GRAPH", "").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
+
 
 def require_api_key() -> str:
     """Return the API key, or explain how to set it if it is missing."""

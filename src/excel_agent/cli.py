@@ -7,8 +7,10 @@ answer, and repeats.
 import argparse
 
 from excel_agent import browsing
-from excel_agent.config import MODEL, use_utf8_output
+from excel_agent.config import MODEL, USE_GRAPH, use_utf8_output
 from excel_agent.runner import Answer, Session, Text, ToolCall, rendered
+from excel_agent.graph.graph import build_graph
+from excel_agent.model import build_model
 from excel_agent.subagents.factory import build_orchestrator
 from excel_agent.runner import (
     Answer,
@@ -172,7 +174,11 @@ def main() -> None:
     debug = arguments.debug
 
     try:
-        agent = build_orchestrator()
+        agent = (
+            build_graph(build_model())
+            if USE_GRAPH
+            else build_orchestrator()
+        )
     except RuntimeError as e:
         if debug:
             raise

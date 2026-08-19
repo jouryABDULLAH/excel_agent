@@ -119,39 +119,6 @@ def _render_artifacts(
     ]
 
 
-def _nested_tool_calls(
-    artifact: object,
-) -> list[dict]:
-    """Return tool calls made inside a delegated subagent."""
-    if not isinstance(
-        artifact,
-        dict,
-    ):
-        return []
-
-    calls = artifact.get(
-        "tool_calls"
-    )
-
-    if not isinstance(
-        calls,
-        list,
-    ):
-        return []
-
-    return [
-        call
-        for call in calls
-        if (
-            isinstance(call, dict)
-            and isinstance(
-                call.get("name"),
-                str,
-            )
-        )
-    ]
-
-
 def _merge_inspect_artifacts(
     artifacts: list[dict],
 ) -> list[dict]:
@@ -449,13 +416,6 @@ class Session:
         cut_off = False
         artifacts: list[dict] = []
 
-        # The same outer ToolMessage may appear in more than one
-        # graph update, so use its tool-call id to avoid showing
-        # nested actions twice.
-        seen_tool_messages: set[str] = (
-            set()
-        )
-
         try:
             for _, mode, payload in (
                 self.agent.stream(
@@ -572,44 +532,6 @@ class Session:
 
                         if outer_artifact is None:
                             continue
-
-                        tool_message_id = str(
-                            getattr(
-                                message,
-                                "tool_call_id",
-                                "",
-                            )
-                        )
-
-                        # Nested actions are attached to the outer
-                        # delegate ToolMessage. Do not emit them more
-                        # than once if LangGraph surfaces that message
-                        # again in another update.
-                        if (
-                            tool_message_id
-                            not in
-                            seen_tool_messages
-                        ):
-                            for call in (
-                                _nested_tool_calls(
-                                    outer_artifact
-                                )
-                            ):
-                                yield ToolCall(
-                                    name=call[
-                                        "name"
-                                    ],
-                                    arguments=dict(
-                                        call.get(
-                                            "arguments"
-                                        )
-                                        or {}
-                                    ),
-                                )
-
-                            seen_tool_messages.add(
-                                tool_message_id
-                            )
 
                         for artifact in (
                             _render_artifacts(
