@@ -47,5 +47,6 @@ $env:LANGSMITH_PROJECT = "excel-agent"
 
 A turn arrives as a tree: the question at the root, named for whichever agent
 answered it, each model call under that with the prompt it saw and what it
-cost, and each tool call with its arguments and what it returned. A subagent's
-whole conversation sits inside the tool call that handed it the work.
+cost, and each tool call with its arguments and what it returned. A
+specialist's whole conversation sits under its own node, named for the
+specialist that ran it.

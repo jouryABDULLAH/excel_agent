@@ -6,6 +6,7 @@ from langgraph.graph import END, START, StateGraph
 from excel_agent.agents import SPECIALISTS
 from excel_agent.graph.state import State
 from excel_agent.graph.supervisor import build_supervisor, supervisor_node
+from excel_agent.model import build_model
 
 
 def route_worker(state: State) -> str:
@@ -22,8 +23,15 @@ def route_worker(state: State) -> str:
     return route
 
 
-def build_graph(model, checkpointer=None):
-    """Wire the supervisor to its specialists and back."""
+def build_graph(model=None, checkpointer=None):
+    """Wire the supervisor to its specialists and back.
+
+    The model is an argument so a test can pass a scripted one; left out, it
+    is the configured model, which is what langgraph.json needs to build this
+    without arguments.
+    """
+    model = model or build_model()
+
     builder = StateGraph(State)
 
     builder.add_node(
