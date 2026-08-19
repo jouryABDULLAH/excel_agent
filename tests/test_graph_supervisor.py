@@ -123,3 +123,47 @@ def test_the_structured_output_strategy_is_pinned(monkeypatch):
     build_supervisor(ScriptedModel(script=[]))
 
     assert isinstance(asked["response_format"], ToolStrategy)
+
+
+class Refusing(ScriptedModel):
+    """A model that fails the way the provider fails."""
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        raise RuntimeError(
+            "Failed to parse tool call arguments as JSON "
+            "{'failed_generation': '{\"next\": '}"
+        )
+
+
+def test_a_planner_that_falls_over_ends_the_turn_with_a_sentence():
+    """REGRESSION: it escaped the graph and reached the user as a traceback.
+
+    Workers already survive their own failures; the planner did not, so a
+    malformed tool call from the model killed the whole turn.
+    """
+    node = supervisor_node(build_supervisor(Refusing(script=[])))
+
+    written = node(ASKED)
+
+    assert written["route"] == "end"
+    assert "Something went wrong" in written["final_answer"]
+
+    # And not the provider's own JSON, which carries the model's bad output.
+    assert "failed_generation" not in written["final_answer"]
+
+
+def test_the_planner_retries_before_giving_up(monkeypatch):
+    from excel_agent.graph import supervisor as supervisor_module
+
+    asked: dict = {}
+
+    def capture(**arguments):
+        asked.update(arguments)
+        return object()
+
+    monkeypatch.setattr(supervisor_module, "create_agent", capture)
+
+    build_supervisor(ScriptedModel(script=[]))
+
+    kinds = [type(one).__name__ for one in asked["middleware"]]
+    assert "ModelRetryMiddleware" in kinds

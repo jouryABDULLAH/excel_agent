@@ -2,7 +2,11 @@
 answers the user and stops."""
 
 from langchain.agents import AgentState, create_agent
-from langchain.agents.middleware import SummarizationMiddleware, dynamic_prompt
+from langchain.agents.middleware import (
+    ModelRetryMiddleware,
+    SummarizationMiddleware,
+    dynamic_prompt,
+)
 from langchain.agents.structured_output import ToolStrategy
 
 from excel_agent.graph.state import Decision, Delegate, State
@@ -61,9 +65,14 @@ def build_supervisor(model):
         # ToolStrategy explicitly: left to choose, a model with native
         # structured output gets ProviderStrategy, which cannot take a
         # union. As two tools the model picks delegating or finishing.
-        response_format=ToolStrategy(Decision),
+        response_format=ToolStrategy(Decision), # type: ignore
         middleware=[
             supervisor_prompt,
+            # The model produces a malformed tool call often enough to matter,
+            # and it is usually transient. on_failure must be "error": the
+            # default lets the agent carry on and call the failing model again,
+            # which never terminates.
+            ModelRetryMiddleware(max_retries=1, on_failure="error"),
             SummarizationMiddleware(
                 model=model,
                 trigger=("fraction", SUMMARISE_AT),
@@ -73,31 +82,57 @@ def build_supervisor(model):
     ) # type: ignore
 
 
+def _why(failure: Exception) -> str:
+    """One line about a failure, without the provider's JSON body."""
+    head = str(failure).strip().split("{", 1)[0].strip(" -:	")
+
+    return (head or type(failure).__name__)[:160]
+
+
+def _decide(supervisor, state: State) -> dict:
+    """Ask the planner what happens next, and turn it into state."""
+    decision = supervisor.invoke(
+        {
+            "messages": state["messages"],
+            "spreadsheet_id": state.get("spreadsheet_id"),
+            "spreadsheet_name": state.get("spreadsheet_name"),
+            "worker_results": state.get("worker_results") or [],
+        }
+    )["structured_response"]
+
+    if isinstance(decision, Delegate):
+        return {
+            "route": decision.next,
+            "task": decision.task,
+            "final_answer": None,
+        }
+
+    return {
+        "route": "end",
+        "task": None,
+        "final_answer": decision.final_answer,
+        "worker_results": [],
+    }
+
+
 def supervisor_node(supervisor):
     """Route to a worker, or answer and end the turn."""
 
     def decide(state: State) -> dict:
-        decision = supervisor.invoke(
-            {
-                "messages": state["messages"],
-                "spreadsheet_id": state.get("spreadsheet_id"),
-                "spreadsheet_name": state.get("spreadsheet_name"),
-                "worker_results": state.get("worker_results") or [],
-            }
-        )["structured_response"]
+        try:
+            return _decide(supervisor, state)
 
-        if isinstance(decision, Delegate):
+        # Whatever broke, the turn ends with a sentence rather than a
+        # traceback. Workers already do this; the planner did not.
+        except Exception as failure:  # noqa: BLE001
             return {
-                "route": decision.next,
-                "task": decision.task,
-                "final_answer": None,
+                "route": "end",
+                "task": None,
+                "final_answer": (
+                    "Something went wrong working that out: "
+                    f"{_why(failure)}. Please try again."
+                ),
+                "worker_results": [],
             }
-
-        return {
-            "route": "end",
-            "task": None,
-            "final_answer": decision.final_answer,
-            "worker_results": [],
-        }
 
     return decide
