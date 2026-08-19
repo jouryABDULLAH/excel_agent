@@ -5,6 +5,7 @@ and what they hand back, is here.
 """
 
 from langchain.agents import AgentState
+from langchain_core.messages import HumanMessage
 
 from excel_agent.graph.state import State
 
@@ -18,6 +19,29 @@ class WorkerState(AgentState):
     """
 
     spreadsheet_name: str | None
+
+
+def asked_for(state: State) -> str:
+    """What the user actually wrote, which is also what says their language."""
+    for message in reversed(state.get("messages") or []):
+        if isinstance(message, HumanMessage):
+            return str(message.content)
+
+    return ""
+
+
+def instruction(state: State) -> str:
+    """The three things DELEGATED says a specialist receives."""
+    return (
+        "ORIGINAL USER REQUEST:\n"
+        f"{asked_for(state) or '(not available)'}\n\n"
+        "CURRENT SPREADSHEET:\n"
+        f"{state.get('spreadsheet_name') or 'Not selected'}\n"
+        "Pass this exact name as the spreadsheet argument, or omit the "
+        "argument to work on it. It is not a sheet name.\n\n"
+        "TASK:\n"
+        f"{state['task']}"
+    )
 
 
 def run_worker(name: str, agent, state: State) -> tuple[str, dict | None]:
@@ -37,7 +61,7 @@ def run_worker(name: str, agent, state: State) -> tuple[str, dict | None]:
                 "messages": [
                     {
                         "role": "user",
-                        "content": task,
+                        "content": instruction(state),
                     }
                 ],
                 "spreadsheet_name": state.get("spreadsheet_name"),
