@@ -354,3 +354,14 @@ def test_the_actions_behind_a_turn_are_drawn_with_it(a_spreadsheet):
     # actions as a second grey bar saying "Done", which reads as the block
     # having been drawn twice.
     assert page.get("status") == []
+
+
+def test_progress_is_described_by_the_specialist_at_work():
+    from excel_agent.agents import SPECIALISTS
+    from excel_agent.ui import activity_label
+
+    # Every specialist needs its own line; an unnamed one falls back.
+    for one in SPECIALISTS:
+        assert activity_label(one.NAME) != "Working on it...", one.NAME
+
+    assert activity_label(None) == "Working on it..."

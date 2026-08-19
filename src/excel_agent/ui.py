@@ -186,20 +186,22 @@ def ensure_state() -> None:
 # ---------------------------------------------------------------------------
 
 
-def activity_label(tool_name: str) -> str:
-    """Describe an agent action without exposing implementation terminology."""
+def activity_label(worker: str | None) -> str:
+    """Describe what is happening without naming the machinery.
+
+    Keyed on the specialist doing the work. It used to key on a tool named
+    after a subagent; delegating is not a tool call any more.
+    """
     labels = {
+        "file_manager": "Finding the spreadsheet...",
         "analyst": "Reading the spreadsheet...",
         "row_editor": "Updating rows...",
         "structure_editor": "Updating the spreadsheet...",
         "chart_maker": "Working on the chart...",
-        "use_spreadsheet": "Selecting spreadsheet...",
-        "find_spreadsheet": "Finding the spreadsheet...",
-        "list_workbooks": "Looking through spreadsheets...",
     }
 
     return labels.get(
-        tool_name,
+        worker,
         "Working on it...",
     )
 
@@ -375,7 +377,7 @@ def draw_turn(
                 )
 
                 status.update(
-                    label=activity_label(event.name),
+                    label=activity_label(event.worker),
                 )
 
             elif isinstance(event, Answer):

@@ -148,6 +148,24 @@ def test_a_read_taken_only_to_answer_is_not_drawn(a_sheet):
     assert a_read(render_data=False) == []
 
 
+def test_a_tool_call_says_which_specialist_made_it(a_sheet):
+    """The stream namespaces every event by the node that produced it.
+
+    The UI shows progress from this. Delegating stopped being a tool call, so
+    without it every action would read "Working on it...".
+    """
+    session = Session(build_graph(ScriptedModel(script=DELEGATES_THEN_ANSWERS)))
+    session.use("TEST - Sales Orders")
+
+    made = [
+        (one.name, one.worker)
+        for one in session.ask("how many rows?")
+        if isinstance(one, ToolCall)
+    ]
+
+    assert made == [("inspect_sheet", "analyst")]
+
+
 def test_a_turn_with_no_route_is_a_broken_supervisor_not_a_finished_turn():
     with pytest.raises(ValueError, match="no route"):
         route_worker({"route": None})

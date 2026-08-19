@@ -36,6 +36,9 @@ class ToolCall:
     arguments: dict = field(
         default_factory=dict
     )
+    # The specialist whose graph it happened in, or None for the supervisor's
+    # own. The stream namespaces every event by the node that produced it.
+    worker: str | None = None
 
 
 @dataclass
@@ -82,6 +85,22 @@ Event = (
     | Answer
     | Approval
 )
+
+
+def _worker(
+    namespace: tuple,
+) -> str | None:
+    """Which specialist an event came from, read off the stream namespace.
+
+    LangGraph names every subgraph event ("analyst:9b01903a...",); the
+    supervisor's own events carry no namespace at all.
+    """
+    if not namespace:
+        return None
+
+    return str(
+        namespace[0]
+    ).split(":")[0]
 
 
 def _for_display(
@@ -404,7 +423,7 @@ class Session:
         artifacts: list[dict] = []
 
         try:
-            for _, mode, payload in (
+            for namespace, mode, payload in (
                 self.agent.stream(
                     payload,
                     config=config,
@@ -476,6 +495,9 @@ class Session:
                                         "args"
                                     )
                                     or {}
+                                ),
+                                worker=_worker(
+                                    namespace
                                 ),
                             )
 
