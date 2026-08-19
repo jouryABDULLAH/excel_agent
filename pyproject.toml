@@ -31,6 +31,10 @@ excel-agent = "excel_agent.cli:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# The real-model tests cost money and need a key, so they are opt in:
+#   pytest -m real
+markers = ["real: calls the Groq API instead of a scripted model"]
+addopts = "-m 'not real'"
 
 [build-system]
 requires = ["setuptools>=68"]

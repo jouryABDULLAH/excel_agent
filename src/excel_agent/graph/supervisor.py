@@ -5,16 +5,25 @@ from langchain.agents import AgentState, create_agent
 from langchain.agents.middleware import (
     ModelRetryMiddleware,
     SummarizationMiddleware,
+    after_model,
     dynamic_prompt,
 )
-from langchain.agents.structured_output import ToolStrategy
+from langchain_core.tools import tool
 
-from excel_agent.graph.state import Decision, Delegate, State
+from excel_agent.graph.state import DELEGATE, Delegate, State
 from excel_agent.subagents.prompts import ORCHESTRATOR_PROMPT
 
 
 SUMMARISE_AT = 0.7
 KEEP_MESSAGES = 20
+
+DECIDING = """\
+
+HOW TO REPLY
+- To hand the next step to a specialist, call the delegate tool.
+- To answer the user, write the answer as your reply and call nothing.
+- Do one or the other, never both.
+"""
 
 
 class SupervisorState(AgentState):
@@ -27,6 +36,23 @@ class SupervisorState(AgentState):
     spreadsheet_id: str | None
     spreadsheet_name: str | None
     worker_results: list[str]
+
+
+@tool(DELEGATE, args_schema=Delegate)
+def delegate(next: str, task: str) -> str:
+    """Hand the next step to a specialist."""
+    # Never runs. stop_at_delegation ends the agent as soon as the call is
+    # made, because the specialist is a node in the outer graph, not a tool.
+    return ""
+
+
+@after_model
+def stop_at_delegation(state, runtime) -> dict | None:
+    """End the agent on a delegation, instead of running the tool."""
+    if getattr(state["messages"][-1], "tool_calls", None):
+        return {"jump_to": "end"}
+
+    return None
 
 
 def supervisor_instructions(
@@ -43,6 +69,7 @@ def supervisor_instructions(
             "\n".join(f"- {one}" for one in worker_results)
             or "- Nothing yet."
         )
+        + DECIDING
     )
 
 
@@ -56,18 +83,20 @@ def supervisor_prompt(request) -> str:
 
 
 def build_supervisor(model):
-    """The planner. It holds no tools: it routes, it does not act."""
+    """The planner. Its one tool routes; it never touches a spreadsheet.
+
+    Delegating is a tool call and answering is ordinary prose, so the model is
+    free to write the reply as a sentence. Asked for the answer inside a
+    schema, this one returned malformed JSON about half the time.
+    """
     return create_agent(
         model=model,
-        tools=[],
+        tools=[delegate],
         system_prompt=ORCHESTRATOR_PROMPT,
         state_schema=SupervisorState,
-        # ToolStrategy explicitly: left to choose, a model with native
-        # structured output gets ProviderStrategy, which cannot take a
-        # union. As two tools the model picks delegating or finishing.
-        response_format=ToolStrategy(Decision), # type: ignore
         middleware=[
             supervisor_prompt,
+            stop_at_delegation,
             # The model produces a malformed tool call often enough to matter,
             # and it is usually transient. on_failure must be "error": the
             # default lets the agent carry on and call the failing model again,
@@ -79,38 +108,46 @@ def build_supervisor(model):
                 keep=("messages", KEEP_MESSAGES),
             ),
         ],
-    ) # type: ignore
+    )
 
 
 def _why(failure: Exception) -> str:
     """One line about a failure, without the provider's JSON body."""
-    head = str(failure).strip().split("{", 1)[0].strip(" -:	")
+    head = str(failure).strip().split("{", 1)[0].strip(" -:\t")
 
     return (head or type(failure).__name__)[:160]
 
 
 def _decide(supervisor, state: State) -> dict:
     """Ask the planner what happens next, and turn it into state."""
-    decision = supervisor.invoke(
+    said = supervisor.invoke(
         {
             "messages": state["messages"],
             "spreadsheet_id": state.get("spreadsheet_id"),
             "spreadsheet_name": state.get("spreadsheet_name"),
             "worker_results": state.get("worker_results") or [],
         }
-    )["structured_response"]
+    )["messages"][-1]
 
-    if isinstance(decision, Delegate):
+    calls = getattr(said, "tool_calls", None) or []
+
+    if calls:
+        asked = Delegate(**calls[0]["args"])
+
         return {
-            "route": decision.next,
-            "task": decision.task,
+            "route": asked.next,
+            "task": asked.task,
             "final_answer": None,
         }
 
+    # Nothing delegated, so this is the reply. It goes into messages as well,
+    # for the next turn's supervisor: without it the thread holds the user's
+    # questions and none of its own answers.
     return {
         "route": "end",
         "task": None,
-        "final_answer": decision.final_answer,
+        "final_answer": str(said.content or ""),
+        "messages": [said],
         "worker_results": [],
     }
 

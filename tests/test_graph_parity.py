@@ -93,10 +93,10 @@ def the_new_way():
         build_graph(
             ScriptedModel(
                 script=[
-                    calling("Delegate", "1", next="analyst", task="count the rows"),
+                    calling("delegate", "1", next="analyst", task="count the rows"),
                     calling("inspect_sheet", "a", max_rows=5),
                     AIMessage("There are 5 rows."),
-                    calling("Finish", "2", final_answer=ANSWER),
+                    AIMessage(ANSWER),
                 ]
             )
         )

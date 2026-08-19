@@ -47,16 +47,10 @@ class Delegate(BaseModel):
     )
 
 
-class Finish(BaseModel):
-    """Answer the user and end the turn."""
+# The supervisor delegates by calling this, and finishes by not calling it.
+DELEGATE = "delegate"
 
-    final_answer: str = Field(
-        description="The reply to the user, in the language they asked in."
-    )
-
-
-Decision = Delegate | Finish
-
-# How the supervisor answers, not work done on a spreadsheet. The runner skips
-# these so they do not show up as actions the user was told about.
-DECISION_NAMES = frozenset({Delegate.__name__, Finish.__name__})
+# Delegating is how the supervisor answers, not work done on a spreadsheet.
+# The runner skips it so it does not show up as an action the user was told
+# about.
+DECISION_NAMES = frozenset({DELEGATE})

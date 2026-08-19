@@ -5,6 +5,7 @@ routes sensibly. What is tested is that its two decisions become the right
 state, and that the prompt it reads is built from the state it was handed.
 """
 
+from langchain_core.messages import AIMessage
 from scripted import ScriptedModel, calling
 
 from excel_agent.graph.supervisor import (
@@ -34,7 +35,7 @@ def deciding(script, **state) -> dict:
 
 def test_delegating_names_the_worker_and_what_it_should_do():
     written = deciding(
-        [calling("Delegate", "1", next="analyst", task="count the rows")]
+        [calling("delegate", "1", next="analyst", task="count the rows")]
     )
 
     assert written["route"] == "analyst"
@@ -43,7 +44,7 @@ def test_delegating_names_the_worker_and_what_it_should_do():
 
 def test_delegating_clears_any_answer_left_from_before():
     written = deciding(
-        [calling("Delegate", "1", next="analyst", task="count the rows")],
+        [calling("delegate", "1", next="analyst", task="count the rows")],
         final_answer="an answer from the last turn",
     )
 
@@ -53,7 +54,7 @@ def test_delegating_clears_any_answer_left_from_before():
 
 def test_finishing_carries_the_answer_and_ends():
     written = deciding(
-        [calling("Finish", "1", final_answer="There are 51 rows.")],
+        [AIMessage("There are 51 rows.")],
         worker_results=["[analyst] 51 rows"],
     )
 
@@ -63,7 +64,7 @@ def test_finishing_carries_the_answer_and_ends():
 
 def test_finishing_forgets_the_work_it_was_based_on():
     written = deciding(
-        [calling("Finish", "1", final_answer="There are 51 rows.")],
+        [AIMessage("There are 51 rows.")],
         worker_results=["[analyst] 51 rows"],
     )
 
@@ -100,17 +101,16 @@ def test_the_prompt_lists_what_the_workers_have_reported():
     assert "[row_editor] Deleted row 51" in prompt
 
 
-def test_the_structured_output_strategy_is_pinned(monkeypatch):
-    """REGRESSION: auto-detection broke against the real model only.
+def test_the_supervisor_is_free_to_answer_without_calling_anything(monkeypatch):
+    """REGRESSION: with a response_format the supervisor cannot answer at all.
 
-    Handed a bare schema, create_agent picks a strategy from the model's name.
-    A model with native structured output gets ProviderStrategy, which refuses
-    a union. ScriptedModel has no name, so it always took the other branch and
-    every test passed while Streamlit raised.
+    ToolStrategy binds the model with tool_choice="any", so every call has to
+    be a tool call. Asked for the answer inside a schema, the real model
+    returned malformed JSON about half the time; free to write a sentence, it
+    does not. A response_format here brings that back.
     """
-    from langchain.agents.structured_output import ToolStrategy
-
     from excel_agent.graph import supervisor as supervisor_module
+    from excel_agent.graph.state import DELEGATE
 
     asked: dict = {}
 
@@ -122,7 +122,8 @@ def test_the_structured_output_strategy_is_pinned(monkeypatch):
 
     build_supervisor(ScriptedModel(script=[]))
 
-    assert isinstance(asked["response_format"], ToolStrategy)
+    assert asked.get("response_format") is None
+    assert [one.name for one in asked["tools"]] == [DELEGATE]
 
 
 class Refusing(ScriptedModel):

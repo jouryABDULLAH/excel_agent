@@ -50,10 +50,10 @@ def a_turn(script, **state) -> dict:
 
 
 DELEGATES_THEN_ANSWERS = [
-    calling("Delegate", "1", next="analyst", task="count the rows"),
+    calling("delegate", "1", next="analyst", task="count the rows"),
     calling("inspect_sheet", "2", max_rows=5),
     AIMessage("There are 5 rows."),
-    calling("Finish", "3", final_answer="The sheet has 5 rows."),
+    AIMessage("The sheet has 5 rows."),
 ]
 
 
@@ -73,7 +73,7 @@ def test_the_work_is_forgotten_once_the_answer_is_written(a_sheet):
 
 def test_a_supervisor_that_answers_at_once_never_reaches_a_worker(a_sheet):
     ended = a_turn(
-        [calling("Finish", "1", final_answer="Nothing to look up.")]
+        [AIMessage("Nothing to look up.")]
     )
 
     assert ended["final_answer"] == "Nothing to look up."
