@@ -18,6 +18,10 @@ class ScriptedModel(BaseChatModel):
 
     script: list[BaseMessage]
 
+    # Middleware that sizes itself against the context window asks the model
+    # how big that is. A real ChatGroq reports it; this has to say something.
+    profile: dict = {"max_input_tokens": 131072, "max_output_tokens": 65536}
+
     def bind_tools(self, tools, **kwargs):
         """Accept the tools and ignore them.
 
