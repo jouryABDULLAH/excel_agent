@@ -101,7 +101,35 @@ def run_worker(name: str, agent, state: State) -> tuple[str, dict | None]:
             None,
         )
 
-    return str(result["messages"][-1].content or ""), result
+    said = str(result["messages"][-1].content or "")
+
+    # When a read is being drawn by the application, the same table written
+    # out as prose would show the data twice. The prompt says not to; the
+    # model does it anyway, so the table is cut here, where nothing later can
+    # repeat it.
+    if any(
+        isinstance(getattr(message, "artifact", None), dict)
+        and message.artifact.get("render_data")
+        for message in result["messages"]
+    ):
+        said = without_table_lines(said)
+
+    return said, result
+
+
+def without_table_lines(said: str) -> str:
+    """The report with any markdown table removed.
+
+    A table line is one that starts with a pipe; the introduction around it
+    survives.
+    """
+    kept = [
+        line
+        for line in said.splitlines()
+        if not line.lstrip().startswith("|")
+    ]
+
+    return "\n".join(kept).strip()
 
 
 def reported(name: str, said: str, state: State) -> list[str]:

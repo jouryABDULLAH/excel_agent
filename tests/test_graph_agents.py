@@ -93,6 +93,39 @@ def test_a_worker_that_falls_over_does_not_take_the_turn_with_it(a_sheet):
     assert written["worker_results"][0] == "[file_manager] Selected it."
 
 
+TABLE_IN_PROSE = AIMessage(
+    "Here are the rows:\n"
+    "| Order ID | Region |\n"
+    "|---|---|\n"
+    "| ORD-1 | West |\n"
+    "That is all of them."
+)
+
+
+def test_a_drawn_table_is_cut_from_the_report(a_sheet):
+    """The application draws the read; the same table in prose shows the data
+    twice. The prompt forbids it and the model does it anyway."""
+    written = working(
+        [calling("inspect_sheet", "1", max_rows=5, render_data=True),
+         TABLE_IN_PROSE]
+    )
+
+    reported = written["worker_results"][-1]
+
+    assert "Here are the rows:" in reported
+    assert "That is all of them." in reported
+    assert "|" not in reported
+
+
+def test_a_table_the_model_wrote_itself_is_kept(a_sheet):
+    # Nothing is being drawn, so the prose table is the only copy.
+    written = working(
+        [calling("inspect_sheet", "1", max_rows=5), TABLE_IN_PROSE]
+    )
+
+    assert "| ORD-1 | West |" in written["worker_results"][-1]
+
+
 class Refusing(ScriptedModel):
     """A model that fails the way the provider fails."""
 
