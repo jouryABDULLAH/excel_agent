@@ -98,3 +98,28 @@ def test_the_prompt_lists_what_the_workers_have_reported():
     # the last worker said, and forgets the count it asked for first.
     assert "[analyst] 51 rows" in prompt
     assert "[row_editor] Deleted row 51" in prompt
+
+
+def test_the_structured_output_strategy_is_pinned(monkeypatch):
+    """REGRESSION: auto-detection broke against the real model only.
+
+    Handed a bare schema, create_agent picks a strategy from the model's name.
+    A model with native structured output gets ProviderStrategy, which refuses
+    a union. ScriptedModel has no name, so it always took the other branch and
+    every test passed while Streamlit raised.
+    """
+    from langchain.agents.structured_output import ToolStrategy
+
+    from excel_agent.graph import supervisor as supervisor_module
+
+    asked: dict = {}
+
+    def capture(**arguments):
+        asked.update(arguments)
+        return object()
+
+    monkeypatch.setattr(supervisor_module, "create_agent", capture)
+
+    build_supervisor(ScriptedModel(script=[]))
+
+    assert isinstance(asked["response_format"], ToolStrategy)

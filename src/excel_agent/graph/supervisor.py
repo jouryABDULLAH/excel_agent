@@ -3,6 +3,7 @@ answers the user and stops."""
 
 from langchain.agents import AgentState, create_agent
 from langchain.agents.middleware import SummarizationMiddleware, dynamic_prompt
+from langchain.agents.structured_output import ToolStrategy
 
 from excel_agent.graph.state import Decision, Delegate, State
 from excel_agent.subagents.prompts import ORCHESTRATOR_PROMPT
@@ -57,7 +58,10 @@ def build_supervisor(model):
         tools=[],
         system_prompt=ORCHESTRATOR_PROMPT,
         state_schema=SupervisorState,
-        response_format=Decision, # type: ignore
+        # ToolStrategy explicitly: left to choose, a model with native
+        # structured output gets ProviderStrategy, which cannot take a
+        # union. As two tools the model picks delegating or finishing.
+        response_format=ToolStrategy(Decision),
         middleware=[
             supervisor_prompt,
             SummarizationMiddleware(
