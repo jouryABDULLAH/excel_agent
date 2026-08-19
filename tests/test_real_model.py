@@ -116,3 +116,43 @@ def test_the_worker_is_told_which_spreadsheet_and_does_not_confuse_it(a_sheet):
     for call in (one for one in events if isinstance(one, ToolCall)):
         # "TEST - Sales Orders" is a spreadsheet; "Sales Orders" is a sheet.
         assert call.arguments.get("sheet") != SPREADSHEET
+
+
+def test_one_add_writes_one_row(a_sheet, monkeypatch):
+    """REGRESSION: one add-a-row request wrote the row 19 times.
+
+    The supervisor could not see it had already delegated, so the row editor
+    was sent out again and again, and each pass wrote the row again. The
+    write is stubbed here; what is measured is how many times it happens.
+    """
+    from excel_agent.tools import rows as rows_tool
+
+    monkeypatch.setattr(
+        rows_tool,
+        "resolve_spreadsheet",
+        lambda name=None: ("an-id", name or SPREADSHEET),
+    )
+
+    written: list[dict] = []
+
+    monkeypatch.setattr(
+        spreadsheet_service,
+        "update_cells",
+        lambda **sent: written.append(sent) or {"totalUpdatedCells": 4},
+    )
+    monkeypatch.setattr(
+        spreadsheet_service,
+        "insert_rows",
+        lambda **sent: None,
+    )
+
+    session = Session(build_graph(build_model()))
+    session.use(SPREADSHEET)
+
+    list(
+        session.ask(
+            "Add a row: Order ID ORD-1100, Region West, Product Desk, Units 3."
+        )
+    )
+
+    assert len(written) == 1

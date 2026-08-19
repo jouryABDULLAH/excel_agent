@@ -117,6 +117,19 @@ def test_a_drawn_table_is_cut_from_the_report(a_sheet):
     assert "|" not in reported
 
 
+def test_a_report_that_was_only_a_table_still_says_something(a_sheet):
+    written = working(
+        [calling("inspect_sheet", "1", max_rows=5, render_data=True),
+         AIMessage("| Order ID | Region |\n|---|---|\n| ORD-1 | West |")]
+    )
+
+    reported = written["worker_results"][-1]
+
+    # Stripped to nothing, the supervisor would compose an answer from an
+    # empty report.
+    assert reported == "[analyst] The requested rows are shown in the table."
+
+
 def test_a_table_the_model_wrote_itself_is_kept(a_sheet):
     # Nothing is being drawn, so the prose table is the only copy.
     written = working(

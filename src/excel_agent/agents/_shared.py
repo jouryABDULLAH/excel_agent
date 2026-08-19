@@ -121,7 +121,8 @@ def without_table_lines(said: str) -> str:
     """The report with any markdown table removed.
 
     A table line is one that starts with a pipe; the introduction around it
-    survives.
+    survives. A report that was nothing but the table still has to say
+    something, or the supervisor is left composing an answer from nothing.
     """
     kept = [
         line
@@ -129,7 +130,10 @@ def without_table_lines(said: str) -> str:
         if not line.lstrip().startswith("|")
     ]
 
-    return "\n".join(kept).strip()
+    return (
+        "\n".join(kept).strip()
+        or "The requested rows are shown in the table."
+    )
 
 
 def reported(name: str, said: str, state: State) -> list[str]:
