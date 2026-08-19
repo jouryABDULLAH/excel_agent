@@ -57,7 +57,7 @@ def build_supervisor(model):
         tools=[],
         system_prompt=ORCHESTRATOR_PROMPT,
         state_schema=SupervisorState,
-        response_format=Decision,
+        response_format=Decision, # type: ignore
         middleware=[
             supervisor_prompt,
             SummarizationMiddleware(
@@ -66,7 +66,7 @@ def build_supervisor(model):
                 keep=("messages", KEEP_MESSAGES),
             ),
         ],
-    )
+    ) # type: ignore
 
 
 def supervisor_node(supervisor):
