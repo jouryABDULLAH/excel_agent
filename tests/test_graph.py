@@ -91,3 +91,53 @@ def test_the_spreadsheet_in_hand_survives_the_turn(a_sheet):
 def test_a_turn_with_no_route_is_a_broken_supervisor_not_a_finished_turn():
     with pytest.raises(ValueError, match="no route"):
         route_worker({"route": None})
+
+# Who exists, and what they can reach
+
+
+def test_every_worker_the_supervisor_can_name_has_a_node():
+    from excel_agent.agents import SPECIALISTS
+    from excel_agent.graph.state import WORKERS
+
+    # Delegate.next is Literal[WORKERS], so a name here without a node is a
+    # KeyError the moment the supervisor picks it.
+    assert {one.NAME for one in SPECIALISTS} == set(WORKERS)
+
+
+def test_every_tool_reaches_some_worker():
+    from excel_agent.agents import SPECIALISTS
+    from excel_agent.tools import TOOLS
+
+    held = {tool.name for one in SPECIALISTS for tool in one.TOOLS}
+    offered = {tool.name for tool in TOOLS}
+
+    # use_spreadsheet is wired to nobody: the file manager settles a choice
+    # through resolve_spreadsheet_choice instead.
+    assert offered - held == {"use_spreadsheet"}
+
+
+def test_no_worker_holds_a_tool_that_is_not_offered():
+    from excel_agent.agents import SPECIALISTS
+    from excel_agent.tools import TOOLS
+
+    held = {tool.name for one in SPECIALISTS for tool in one.TOOLS}
+
+    assert held <= {tool.name for tool in TOOLS}
+
+
+def test_everyone_who_writes_can_read_first():
+    from excel_agent.agents import SPECIALISTS
+
+    writes = {
+        "update_row", "insert_row", "append_row", "delete_row", "move_row",
+        "insert_column", "delete_column", "move_column", "set_column_formula",
+        "create_chart", "delete_chart",
+    }
+
+    for one in SPECIALISTS:
+        names = {tool.name for tool in one.TOOLS}
+
+        if names & writes:
+            # A row number from another agent is stale before it arrives, so
+            # whoever writes has to be able to look first.
+            assert "inspect_sheet" in names, one.NAME
