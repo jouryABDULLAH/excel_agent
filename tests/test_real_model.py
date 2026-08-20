@@ -160,6 +160,56 @@ def test_one_add_writes_one_row(a_sheet, monkeypatch):
     assert len(written) == 1
 
 
+def test_a_spilling_formula_is_not_filled_down(a_sheet, monkeypatch):
+    """REGRESSION: an ARRAYFORMULA put in every row of a column left every
+    cell reading #REF!, while the tool reported that it had worked.
+
+    Nothing but the tool's own description tells the model to choose spill
+    here, so this measures whether that description is enough.
+    """
+    from excel_agent.tools import columns as columns_tool
+
+    monkeypatch.setattr(
+        columns_tool,
+        "resolve_spreadsheet",
+        lambda name=None: ("an-id", name or SPREADSHEET),
+    )
+    monkeypatch.setattr(
+        spreadsheet_service,
+        "resolve_sheet",
+        lambda id, name=None: {
+            "title": "Sales Orders",
+            "sheetId": 0,
+            "gridProperties": {"columnCount": 26},
+        },
+    )
+
+    written: list[dict] = []
+
+    monkeypatch.setattr(
+        spreadsheet_service,
+        "repeat_cell",
+        lambda **sent: written.append(sent) or {},
+    )
+
+    session = Session(build_graph(build_model()))
+    session.use(SPREADSHEET)
+
+    list(
+        session.ask(
+            "Set the Units column to the formula =ARRAYFORMULA(A2:A & B2:B)."
+        )
+    )
+
+    assert written, "the formula was never written"
+
+    covered = written[0]["grid_range"]
+
+    assert covered["endRowIndex"] - covered["startRowIndex"] == 1, (
+        "a spilling formula was written into more than one row"
+    )
+
+
 # Answer quality, measured rather than asserted
 
 
