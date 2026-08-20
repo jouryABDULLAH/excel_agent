@@ -475,6 +475,32 @@ class SpreadsheetService:
             ],
         )
 
+    def repeat_cell(
+        self,
+        spreadsheet_id: str,
+        grid_range: dict,
+        cell: dict,
+        fields: str,
+    ) -> dict:
+        """Write one cell across a grid range.
+
+        Sheets adjusts a formula's relative references for each cell it lands
+        in, so a formula written this way changes from row to row exactly as
+        it would if someone had filled it down by hand.
+        """
+        return self.batch_update(
+            spreadsheet_id,
+            [
+                {
+                    "repeatCell": {
+                        "range": grid_range,
+                        "cell": cell,
+                        "fields": fields,
+                    }
+                }
+            ],
+        )
+
     # ------------------------------------------------------------------
     # Structural / formatting operations
     # ------------------------------------------------------------------

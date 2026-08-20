@@ -117,6 +117,7 @@ SERVICE_WRITES = (
     "delete_columns",
     "move_column",
     "copy_paste",
+    "repeat_cell",
     "batch_update",
     "format_range",
     "add_chart",

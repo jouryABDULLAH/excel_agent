@@ -52,6 +52,8 @@ Column rules:
 - Existing columns are identified by their exact spreadsheet header.
 - Never guess a header.
 - Structural insert/delete/move operations can invalidate old positions.
+- set_column_formula takes mode="fill_down" for a formula computing one row,
+  and mode="spill" for one that fills the column itself, such as ARRAYFORMULA.
 - Creating the initial columns/header row of an empty sheet is structure work.
 - When the sheet is empty and the user supplies the desired headers, create
   those columns in the requested order before any data rows are added.

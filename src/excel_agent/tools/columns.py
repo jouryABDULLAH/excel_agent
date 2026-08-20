@@ -1,6 +1,6 @@
 """Tools for changing spreadsheet columns."""
 
-from typing import Any
+from typing import Any, Literal
 
 from googleapiclient.errors import HttpError
 from langchain.tools import ToolRuntime
@@ -833,11 +833,12 @@ def set_column_formula(
     formula: str,
     column: str | None = None,
     position: int | None = None,
+    mode: Literal["fill_down", "spill"] = "fill_down",
     spreadsheet: str | None = None,
     sheet: str | None = None,
     runtime: ToolRuntime = None,
 ) -> dict:
-    """Fill an existing physical column with a relative spreadsheet formula.
+    """Put a spreadsheet formula in an existing physical column.
 
     Identify the destination column by its header name, physical position,
     or both.
@@ -846,13 +847,23 @@ def set_column_formula(
     ambiguous. If both column and position are supplied, they must identify
     the same physical column.
 
-    The formula is written to the first data row and copied downward so
-    relative references change naturally from row to row.
+    Choose mode by the kind of formula:
+
+    - "fill_down" for a formula that computes one row, written per row with
+      its references shifted for each: "=F2*H2" becomes "=F3*H3" on the next
+      row, and so on down the column.
+    - "spill" for a formula that produces the whole column by itself, such as
+      anything beginning "=ARRAYFORMULA(". It is written to the first data
+      row only and Sheets fills the rest. Filling one of these down instead
+      puts a competing copy in every row, and Sheets rejects the collision by
+      showing #REF! in all of them.
 
     Args:
         formula: Formula as typed in Google Sheets, beginning with "=".
         column: Optional header name of the destination column.
         position: Optional physical destination column position.
+        mode: "fill_down" to compute each row, "spill" to let one formula
+            produce the column.
         spreadsheet: Spreadsheet name, not an ID. Omit to use the current
             spreadsheet.
         sheet: Sheet/tab name, not the spreadsheet name. Omit to use the
@@ -932,46 +943,35 @@ def set_column_formula(
                 position=target_position,
             )
 
-        # Formula text must be interpreted by Google Sheets.
-        spreadsheet_service.update_cells(
-            spreadsheet_id=spreadsheet_id,
-            updates=[
-                {
-                    "range": a1(
-                        sheet_name,
-                        first_row=first_data_row,
-                        last_row=first_data_row,
-                        first_column=target_position,
-                        last_column=target_position,
-                    ),
-                    "values": [[formula]],
-                }
-            ],
-            value_input_option="USER_ENTERED",
+        # A spilling formula fills the column itself, so a copy in every row
+        # would be overlapping spills, which Sheets blocks with #REF!.
+        written_to_row = (
+            first_data_row
+            if mode == "spill"
+            else last_row
         )
 
-        if last_row > first_data_row:
-            spreadsheet_service.copy_paste(
-                spreadsheet_id=spreadsheet_id,
-                source=to_grid_range(
-                    properties["sheetId"],
-                    first_data_row,
-                    first_data_row,
-                    target_position,
-                    target_position,
-                ),
-                destination=to_grid_range(
-                    properties["sheetId"],
-                    first_data_row + 1,
-                    last_row,
-                    target_position,
-                    target_position,
-                ),
-                paste_type="PASTE_FORMULA",
-            )
+        # Sheets shifts relative references for each cell repeated into, so
+        # "=F2*H2" reads "=F3*H3" a row lower.
+        spreadsheet_service.repeat_cell(
+            spreadsheet_id=spreadsheet_id,
+            grid_range=to_grid_range(
+                properties["sheetId"],
+                first_data_row,
+                written_to_row,
+                target_position,
+                target_position,
+            ),
+            cell={
+                "userEnteredValue": {
+                    "formulaValue": formula,
+                }
+            },
+            fields="userEnteredValue",
+        )
 
         filled_rows = (
-            last_row
+            written_to_row
             - first_data_row
             + 1
         )
@@ -987,8 +987,9 @@ def set_column_formula(
                 target_position
             ),
             "formula": formula,
+            "mode": mode,
             "first_row": first_data_row,
-            "last_row": last_row,
+            "last_row": written_to_row,
             "filled_rows": filled_rows,
         }
 

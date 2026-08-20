@@ -823,6 +823,7 @@ def a_writable_columns_sheet(a_sheet, monkeypatch):
             "move_column",
             "update_cells",
             "copy_paste",
+            "repeat_cell",
         ):
             monkeypatch.setattr(spreadsheet_service, name, recording(name))
 
@@ -933,7 +934,9 @@ def test_moving_a_column_to_where_it_already_is_changes_nothing(
     assert calls(sent, "move_column") == []
 
 
-def test_a_formula_is_copied_down_rather_than_repeated(a_writable_columns_sheet):
+def test_a_row_formula_is_written_over_the_whole_column_at_once(
+    a_writable_columns_sheet,
+):
     sent = a_writable_columns_sheet()
 
     answer = columns.set_column_formula.invoke(
@@ -941,27 +944,52 @@ def test_a_formula_is_copied_down_rather_than_repeated(a_writable_columns_sheet)
     )
 
     assert answer["ok"] is True
+    assert answer["mode"] == "fill_down"
     assert (answer["first_row"], answer["last_row"]) == (2, 6)
     assert answer["filled_rows"] == 5
 
-    # The first row is written, then copied: copying is what shifts =A2&B2
-    # into =A3&B3 as it goes down. Repeating the text would leave every row
-    # reading row 2.
-    assert calls(sent, "update_cells")[0]["updates"][0]["range"] == (
-        "'Sales Orders'!C2:C2"
-    )
-
-    pasted = calls(sent, "copy_paste")[0]
-    assert pasted["paste_type"] == "PASTE_FORMULA"
-    assert pasted["source"] == {
+    # One request covering every data row: Sheets shifts =A2&B2 to =A3&B3 as
+    # it repeats, which is what writing then copying took two calls to do.
+    repeated = calls(sent, "repeat_cell")[0]
+    assert repeated["grid_range"] == {
         "sheetId": 0,
         "startRowIndex": 1,
-        "endRowIndex": 2,
+        "endRowIndex": 6,
         "startColumnIndex": 2,
         "endColumnIndex": 3,
     }
-    assert pasted["destination"]["startRowIndex"] == 2
-    assert pasted["destination"]["endRowIndex"] == 6
+    assert repeated["cell"] == {"userEnteredValue": {"formulaValue": "=A2&B2"}}
+    assert repeated["fields"] == "userEnteredValue"
+
+    assert calls(sent, "copy_paste") == []
+    assert calls(sent, "update_cells") == []
+
+
+def test_a_spilling_formula_goes_in_the_first_data_row_only(
+    a_writable_columns_sheet,
+):
+    sent = a_writable_columns_sheet()
+
+    answer = columns.set_column_formula.invoke(
+        {
+            "column": "Units",
+            "formula": "=ARRAYFORMULA(A2:A - B2:B)",
+            "mode": "spill",
+        }
+    )
+
+    assert answer["ok"] is True
+    assert answer["mode"] == "spill"
+    # One cell, not five: five overlapping spills is the #REF! cascade that
+    # the old copy-down produced while still reporting success.
+    assert (answer["first_row"], answer["last_row"]) == (2, 2)
+    assert answer["filled_rows"] == 1
+
+    repeated = calls(sent, "repeat_cell")[0]
+    assert repeated["grid_range"]["startRowIndex"] == 1
+    assert repeated["grid_range"]["endRowIndex"] == 2
+
+    assert len(calls(sent, "repeat_cell")) == 1
 
 
 def test_something_that_is_not_a_formula_is_refused(a_writable_columns_sheet):

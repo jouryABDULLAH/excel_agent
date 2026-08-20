@@ -226,6 +226,24 @@ def test_a_column_move_that_makes_no_sense_never_reaches_google(arguments):
     assert pretend.spreadsheets_endpoint.calls == []
 
 
+def test_a_repeated_formula_is_sent_as_a_formula_not_as_text():
+    service, pretend = a_service()
+
+    service.repeat_cell(
+        "an-id",
+        grid_range={"sheetId": 0, "startRowIndex": 1, "endRowIndex": 6},
+        cell={"userEnteredValue": {"formulaValue": "=A2&B2"}},
+        fields="userEnteredValue",
+    )
+
+    # formulaValue is what makes Sheets shift =A2&B2 to =A3&B3 for each row it
+    # is repeated into; a stringValue would put the same text in every cell.
+    repeated = only_request(pretend)["repeatCell"]
+    assert repeated["cell"]["userEnteredValue"]["formulaValue"] == "=A2&B2"
+    assert repeated["range"]["endRowIndex"] == 6
+    assert repeated["fields"] == "userEnteredValue"
+
+
 def test_a_formula_is_pasted_as_a_formula_rather_than_as_its_result():
     service, pretend = a_service()
 
