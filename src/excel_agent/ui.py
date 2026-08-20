@@ -400,9 +400,14 @@ def draw_turn(
     # redraws it from the transcript with no status in it.
     status_placeholder.empty()
 
-    said = answer.strip() or NO_ANSWER
+    # What the agent said, and nothing else. NO_ANSWER used to be stored in
+    # its place whenever the answer was empty, including on a turn whose
+    # whole point was the table it drew: the turn looked right, and the next
+    # rerun redrew it from here with "finished without a written response"
+    # sitting above that table.
+    said = answer.strip()
 
-    if answer.strip():
+    if said:
         box.markdown(said)
 
     for artifact in artifacts:
@@ -411,7 +416,7 @@ def draw_turn(
             box,
         )
 
-    if not answer.strip() and not artifacts:
+    if not said and not artifacts:
         box.markdown(NO_ANSWER)
 
     # Drawn here as well as in draw_transcript. Left to the transcript alone,
@@ -452,6 +457,11 @@ def draw_transcript() -> None:
                 )
 
             if role == "assistant":
+                # The same rule draw_turn drew it by, so a turn reads the
+                # same before and after a rerun.
+                if not turn.get("text") and not turn.get("artifacts"):
+                    st.markdown(NO_ANSWER)
+
                 draw_actions(
                     turn.get("calls", [])
                 )

@@ -178,9 +178,16 @@ def test_a_turn_that_says_nothing_says_that(a_spreadsheet):
 
     # An empty bubble reads as the page having lost the answer. It must not
     # claim nothing happened either: the call above it did edit the sheet.
+    assert any(
+        "finished without a written response" in one.value
+        for one in page.markdown
+    )
+    assert any("did run" in one.value for one in page.markdown)
+
+    # Drawn, not stored. Stored, it came back on the next rerun sitting above
+    # the table of a turn whose answer was the table.
     said = page.session_state["transcript"][-1]
-    assert "finished without a written response" in said["text"]
-    assert "did run" in said["text"]
+    assert said["text"] == ""
     assert said["calls"] == ["update_row(row=2, values={'Units': 99})"]
 
 
@@ -365,3 +372,82 @@ def test_progress_is_described_by_the_specialist_at_work():
         assert activity_label(one.NAME) != "Working on it...", one.NAME
 
     assert activity_label(None) == "Working on it..."
+
+
+# What a finished turn keeps, and how it reads the second time
+
+
+class Recording:
+    """A container that remembers what was drawn in it."""
+
+    def __init__(self):
+        self.markdown_calls: list[str] = []
+        self.tables: list = []
+
+    def markdown(self, text, **named):
+        self.markdown_calls.append(text)
+
+    def dataframe(self, table, **named):
+        self.tables.append(table)
+
+    def empty(self):
+        return self
+
+    def container(self, **named):
+        return self
+
+    def status(self, *arguments, **named):
+        return self
+
+    def update(self, **named):
+        pass
+
+    def expander(self, *arguments, **named):
+        return self
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *arguments):
+        return False
+
+
+A_TABLE = {
+    "operation": "inspect_sheet",
+    "headers": ["Title"],
+    "rows": [{"row": 2, "values": {"Title": "Dune"}}],
+}
+
+
+def finished(events) -> dict:
+    """One turn's worth of events, as draw_turn stores it."""
+    return excel_agent.ui.draw_turn(events, Recording())
+
+
+def test_a_turn_that_only_drew_a_table_is_not_stored_as_no_answer():
+    """REGRESSION: NO_ANSWER was stored whenever the answer was empty.
+
+    A turn whose whole point was the table it drew looked right, and the
+    next rerun redrew it from the transcript with "finished without a
+    written response" sitting above that same table.
+    """
+    kept = finished([runner.Answer(""), runner.Artifact(A_TABLE)])
+
+    assert kept["text"] == ""
+    assert kept["artifacts"] == [A_TABLE]
+    assert excel_agent.ui.NO_ANSWER not in kept["text"]
+
+
+def test_a_turn_that_said_nothing_at_all_still_reads_the_same_on_a_rerun():
+    kept = finished([runner.Answer("")])
+
+    # Nothing to say and nothing drawn: the transcript holds no text, so the
+    # redraw has to supply the same line the live turn showed.
+    assert kept["text"] == ""
+    assert kept["artifacts"] == []
+
+
+def test_the_answer_itself_is_what_gets_stored():
+    kept = finished([runner.Answer("There are 51 rows.")])
+
+    assert kept["text"] == "There are 51 rows."
