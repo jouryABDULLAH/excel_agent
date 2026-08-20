@@ -79,8 +79,8 @@ def test_a_worker_writes_nothing_the_supervisor_owns(a_sheet):
     # route, task and final_answer are the supervisor's. A worker that set one
     # would be deciding where to go next, or answering the user itself.
     # messages is here because the report answers the supervisor's delegate
-    # call in the thread, and drawn_columns says what the application drew.
-    assert set(written) == {"worker_results", "messages", "drawn_columns"}
+    # call in the thread, and drawn_tables says what the application drew.
+    assert set(written) == {"worker_results", "messages", "drawn_tables"}
 
 
 def test_a_worker_that_falls_over_does_not_take_the_turn_with_it(a_sheet):
@@ -124,7 +124,7 @@ def test_a_stripped_report_says_the_data_was_delivered(a_sheet):
     nothing after it looked like a failure and the same task went out again
     -- live, half the time.
     """
-    from excel_agent.graph.state import DELIVERED
+    from excel_agent.graph.replies import DELIVERED
 
     written = working(
         [calling("inspect_sheet", "1", max_rows=5, render_data=True),

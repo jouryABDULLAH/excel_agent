@@ -253,6 +253,20 @@ def test_a_turn_with_no_route_is_a_broken_supervisor_not_a_finished_turn():
 # Who exists, and what they can reach
 
 
+def test_the_route_names_cover_the_workers_and_the_way_out():
+    from excel_agent.graph.state import WORKERS, RouteName
+    from typing import get_args
+
+    # A union of two Literals, so the names sit one level down.
+    names = {
+        one for part in get_args(RouteName) for one in get_args(part)
+    }
+
+    # route is what route_worker looks up in the graph's edge map, so the
+    # type has to name every worker plus "end" and nothing else.
+    assert names == {*WORKERS, "end"}
+
+
 def test_every_worker_the_supervisor_can_name_has_a_node():
     from excel_agent.agents import SPECIALISTS
     from excel_agent.graph.state import WORKERS

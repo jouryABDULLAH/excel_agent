@@ -201,9 +201,9 @@ def activity_label(worker: str | None) -> str:
     }
 
     return labels.get(
-        worker,
+        worker, # type: ignore
         "Working on it...",
-    )
+    ) # type: ignore
 
 
 def action_label(count: int) -> str:

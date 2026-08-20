@@ -7,7 +7,8 @@ and what they hand back, is here.
 from langchain.agents import AgentState
 from langchain_core.messages import HumanMessage, ToolMessage
 
-from excel_agent.graph.state import DELIVERED, State, table_free
+from excel_agent.graph.replies import DELIVERED, table_free
+from excel_agent.graph.state import State
 
 
 DELEGATED = """\
@@ -143,13 +144,14 @@ def without_table_lines(said: str) -> str:
     ) + f"\n{DELIVERED}"
 
 
-def drawn_columns(result: dict | None, state: State) -> list[str]:
-    """The columns of every table the application drew, this turn so far.
+def drawn_tables(result: dict | None, state: State) -> list[list[str]]:
+    """The columns of each table the application drew, this turn so far.
 
-    The supervisor uses these to tell the table it must not write out again
-    from one it composed itself.
+    One entry per table, because the supervisor matches a whole heading
+    against a whole table: pooling every column together let two unrelated
+    tables sharing a couple of names pass for each other.
     """
-    seen = list(state.get("drawn_columns") or [])
+    seen = [list(one) for one in state.get("drawn_tables") or []]
 
     for message in (result or {}).get("messages", []) or []:
         artifact = getattr(message, "artifact", None)
@@ -162,11 +164,12 @@ def drawn_columns(result: dict | None, state: State) -> list[str]:
         columns = list(artifact.get("headers") or [])
 
         for match in artifact.get("matches") or []:
-            columns.extend((match.get("values") or {}).keys())
+            for column in (match.get("values") or {}):
+                if column not in columns:
+                    columns.append(column)
 
-        for column in columns:
-            if column not in seen:
-                seen.append(column)
+        if columns and columns not in seen:
+            seen.append(columns)
 
     return seen
 
@@ -209,7 +212,7 @@ def worker_node(name: str, agent):
         return {
             "worker_results": reported(name, said, state),
             "messages": answered(name, said, state),
-            "drawn_columns": drawn_columns(result, state),
+            "drawn_tables": drawn_tables(result, state),
         }
 
     return work

@@ -81,7 +81,7 @@ def test_a_table_the_supervisor_rebuilt_is_cut_when_one_is_drawn():
         [AIMessage(
             "Here they are:\n| Title | Author |\n|---|---|\n| Dune | Herbert |"
         )],
-        drawn_columns=["Title", "Author"],
+        drawn_tables=[["Title", "Author"]],
     )
 
     assert written["final_answer"] == "Here they are:"
@@ -101,7 +101,7 @@ def test_a_table_the_supervisor_wrote_itself_is_kept():
 
     written = deciding(
         [AIMessage(suggestion)],
-        drawn_columns=["Title", "Author", "Rating"],
+        drawn_tables=[["Title", "Author", "Rating"]],
     )
 
     assert written["final_answer"] == suggestion
@@ -142,7 +142,7 @@ def test_an_ordinary_answer_is_untouched():
 
 
 def test_the_delivery_note_never_reaches_the_user():
-    from excel_agent.graph.state import DELIVERED
+    from excel_agent.graph.replies import DELIVERED
 
     written = deciding(
         [AIMessage(f"هذه أول خمسة صفوف:\n{DELIVERED}")],

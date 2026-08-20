@@ -12,14 +12,8 @@ from langchain.agents.middleware import (
 from langchain_core.messages import AIMessage
 from langchain_core.tools import tool
 
-from excel_agent.graph.state import (
-    DELEGATE,
-    DELIVERED,
-    Delegate,
-    State,
-    undoubled,
-    without_drawn_table,
-)
+from excel_agent.graph.replies import DELIVERED, undoubled, without_drawn_table
+from excel_agent.graph.state import DELEGATE, Delegate, State
 from excel_agent.prompts import CANNOT_DO
 
 
@@ -145,7 +139,8 @@ OUT_OF_STEPS = """\
 OUT OF STEPS
 You have used every delegation this request is allowed. Do not delegate
 again. Answer the user now from WORK SO FAR THIS TURN, saying plainly what
-was done and what was not.
+was done and what was not. Never claim a success those reports do not
+establish.
 """
 
 
@@ -375,7 +370,7 @@ def _decide(supervisor, state: State, config=None) -> dict:
     # And sometimes it writes the drawn table out again, which would show the
     # data twice. Only that table goes: one the planner composed itself, such
     # as a table of columns it is suggesting, is its answer.
-    answer = without_drawn_table(answer, state.get("drawn_columns"))
+    answer = without_drawn_table(answer, state.get("drawn_tables"))
 
     # The model sometimes emits its whole answer twice. Only that exact
     # doubling is removed; a clumsy or wrong answer stays as it was written.
@@ -401,7 +396,7 @@ def _decide(supervisor, state: State, config=None) -> dict:
             else AIMessage(answer)
         ],
         "worker_results": [],
-        "drawn_columns": [],
+        "drawn_tables": [],
         "delegations": 0,
     }
 
@@ -424,7 +419,7 @@ def supervisor_node(supervisor):
                     f"{_why(failure)}. Please try again."
                 ),
                 "worker_results": [],
-                "drawn_columns": [],
+                "drawn_tables": [],
                 "delegations": 0,
             }
 
