@@ -45,6 +45,19 @@ $env:LANGSMITH_API_KEY = "your-key-here"
 $env:LANGSMITH_PROJECT = "excel-agent"
 ```
 
+A key belongs to one region. Posting it to another is refused with 403 and
+nothing is recorded at all, which looks like tracing being broken rather than
+aimed at the wrong place, so set the endpoint to match the host in your
+LangSmith URL — `apac.api.smith.langchain.com` for an `apac.` workspace,
+`eu.api.` for an `eu.` one:
+
+```powershell
+$env:LANGSMITH_ENDPOINT = "https://apac.api.smith.langchain.com"
+```
+
+The shell wins over `.env` for any of these, so a stale value exported in the
+terminal you start from is used in preference to the file.
+
 A turn arrives as a tree: the question at the root, named for whichever agent
 answered it, each model call under that with the prompt it saw and what it
 cost, and each tool call with its arguments and what it returned. A
