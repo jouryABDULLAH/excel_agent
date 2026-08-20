@@ -118,8 +118,8 @@ def build(model):
         state_schema=WorkerState,
     )
 
-    def choose(state: State) -> dict:
-        said, result = run_worker(NAME, agent, state)
+    def choose(state: State, config=None) -> dict:
+        said, result = run_worker(NAME, agent, state, config)
 
         written = {
             "worker_results": reported(NAME, said, state),

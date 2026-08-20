@@ -7,6 +7,7 @@ state looks like when it stops, not whether the routing was sensible.
 import fake_sheets
 import pytest
 from langchain_core.messages import AIMessage
+from langchain_core.tracers.base import BaseTracer
 from scripted import ScriptedModel, calling
 
 from excel_agent.graph.graph import build_graph, route_worker
@@ -298,3 +299,84 @@ def test_everyone_who_writes_can_read_first():
             # A row number from another agent is stale before it arrives, so
             # whoever writes has to be able to look first.
             assert "inspect_sheet" in names, one.NAME
+
+
+# Tracing
+
+
+class Recorder(BaseTracer):
+    """Records every run and who its parent was."""
+
+    def __init__(self):
+        super().__init__()
+        self.seen: list[tuple[str, str | None, str]] = []
+
+    def _persist_run(self, run):
+        pass
+
+    def _on_run_create(self, run):
+        self.seen.append(
+            (
+                str(run.id),
+                str(run.parent_run_id) if run.parent_run_id else None,
+                run.name,
+            )
+        )
+
+    def ancestors(self, name: str) -> list[str]:
+        """The names above the first run called `name`, nearest first."""
+        by_id = {one[0]: one for one in self.seen}
+        found = next(one for one in self.seen if one[2] == name)
+
+        names, parent = [], found[1]
+
+        while parent and parent in by_id:
+            names.append(by_id[parent][2])
+            parent = by_id[parent][1]
+
+        return names
+
+
+def traced(script) -> Recorder:
+    """One turn through the graph, with its run tree recorded."""
+    watching = Recorder()
+
+    build_graph(ScriptedModel(script=script)).invoke(
+        {
+            "messages": [{"role": "user", "content": "how many rows?"}],
+            "spreadsheet_name": "TEST - Sales Orders",
+        },
+        config={
+            "configurable": {"thread_id": "traced"},
+            "callbacks": [watching],
+        },
+    )
+
+    return watching
+
+
+def test_a_turn_is_one_run_not_a_pile_of_siblings(a_sheet):
+    """A turn has to reach the trace as one tree.
+
+    Workers and the planner are separate agents invoked from inside a node.
+    Handed no parent context, each would start its own run tree and every
+    model call, middleware step and tool would arrive as a top-level sibling
+    with nothing showing who did what. Today the node's config is passed
+    down; these hold whether that stays true.
+    """
+    watching = traced(DELEGATES_THEN_ANSWERS)
+
+    assert len([one for one in watching.seen if one[1] is None]) == 1
+
+
+def test_a_workers_tools_are_recorded_inside_that_worker(a_sheet):
+    watching = traced(DELEGATES_THEN_ANSWERS)
+
+    # The tool the analyst called has the analyst node above it.
+    assert "analyst" in watching.ancestors("inspect_sheet")
+
+
+def test_the_planners_middleware_is_recorded_inside_the_planner(a_sheet):
+    watching = traced(DELEGATES_THEN_ANSWERS)
+
+    assert "supervisor" in watching.ancestors("stop_at_delegation.after_model")

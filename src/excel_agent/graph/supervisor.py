@@ -275,8 +275,12 @@ def _spent(state: State) -> str:
     )
 
 
-def _one_call(supervisor, state: State, delegated: int):
-    """Ask the planner once."""
+def _one_call(supervisor, state: State, delegated: int, config=None):
+    """Ask the planner once.
+
+    The node's config goes with it, so the planner's model calls and its
+    middleware are recorded inside this node's run rather than beside it.
+    """
     return supervisor.invoke(
         {
             "messages": state["messages"],
@@ -284,7 +288,8 @@ def _one_call(supervisor, state: State, delegated: int):
             "spreadsheet_name": state.get("spreadsheet_name"),
             "worker_results": state.get("worker_results") or [],
             "delegations": delegated,
-        }
+        },
+        config,
     )["messages"][-1]
 
 
@@ -296,19 +301,19 @@ def _decided_something(said) -> bool:
     )
 
 
-def _said(supervisor, state: State, delegated: int):
+def _said(supervisor, state: State, delegated: int, config=None):
     """One supervisor call, retried once if it decides nothing.
 
     The model sometimes returns a message with no tool call and no text --
     neither a delegation nor an answer. Taken at face value that became an
     empty reply, which the front end shows as a turn that said nothing.
     """
-    said = _one_call(supervisor, state, delegated)
+    said = _one_call(supervisor, state, delegated, config)
 
     if _decided_something(said):
         return said
 
-    return _one_call(supervisor, state, delegated)
+    return _one_call(supervisor, state, delegated, config)
 
 
 def _nothing_to_say(state: State) -> str:
@@ -329,11 +334,11 @@ def _nothing_to_say(state: State) -> str:
     )
 
 
-def _decide(supervisor, state: State) -> dict:
+def _decide(supervisor, state: State, config=None) -> dict:
     """Ask the planner what happens next, and turn it into state."""
     delegated = state.get("delegations") or 0
 
-    said = _said(supervisor, state, delegated)
+    said = _said(supervisor, state, delegated, config)
 
     calls = getattr(said, "tool_calls", None) or []
 
@@ -395,9 +400,9 @@ def _decide(supervisor, state: State) -> dict:
 def supervisor_node(supervisor):
     """Route to a worker, or answer and end the turn."""
 
-    def decide(state: State) -> dict:
+    def decide(state: State, config=None) -> dict:
         try:
-            return _decide(supervisor, state)
+            return _decide(supervisor, state, config)
 
         # Whatever broke, the turn ends with a sentence rather than a
         # traceback. Workers already do this; the planner did not.

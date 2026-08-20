@@ -67,11 +67,21 @@ def instruction(state: State) -> str:
     )
 
 
-def run_worker(name: str, agent, state: State) -> tuple[str, dict | None]:
+def run_worker(
+    name: str,
+    agent,
+    state: State,
+    config=None,
+) -> tuple[str, dict | None]:
     """Run one specialist on the task the supervisor set.
 
     Gives back what it said, and its whole result for a node that needs to read
     more than that. The result is None when the run failed.
+
+    The node's config is passed on, so the specialist's own model and tool
+    calls are recorded inside this node's run rather than beside it. Without
+    it every call in the turn arrives in the trace as a top-level sibling and
+    nothing shows who did what.
     """
     try:
         task = state.get("task")
@@ -88,7 +98,8 @@ def run_worker(name: str, agent, state: State) -> tuple[str, dict | None]:
                     }
                 ],
                 "spreadsheet_name": state.get("spreadsheet_name"),
-            }
+            },
+            config,
         )
 
     # A specialist that falls over must not take the turn with it. Left to
@@ -164,8 +175,8 @@ def answered(name: str, said: str, state: State) -> list[ToolMessage]:
 def worker_node(name: str, agent):
     """A specialist that only reports back."""
 
-    def work(state: State) -> dict:
-        said, _ = run_worker(name, agent, state)
+    def work(state: State, config=None) -> dict:
+        said, _ = run_worker(name, agent, state, config)
 
         return {
             "worker_results": reported(name, said, state),
