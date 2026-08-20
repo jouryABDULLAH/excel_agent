@@ -8,6 +8,7 @@ It does not contain spreadsheet or Drive business logic.
 
 
 import random
+import ssl
 import time
 from typing import Any
 
@@ -19,6 +20,12 @@ from excel_agent.scopes import SCOPES
 
 
 RETRY_ON = (429, 500, 502, 503, 504)
+
+# The same transient category at the transport level: a connection Google or
+# the network dropped mid-request. Left out, one blip failed the request
+# instantly while a 503 would have been retried.
+TRANSPORT_ERRORS = (ssl.SSLError, ConnectionError, TimeoutError)
+
 MAX_ATTEMPTS = 5
 MAX_BACKOFF = 32.0
 
@@ -63,6 +70,16 @@ class GoogleAPI:
                 status = getattr(failure.resp, "status", None)
 
                 if status not in RETRY_ON or attempt == MAX_ATTEMPTS - 1:
+                    raise
+
+                waiting = min(
+                    2**attempt + random.random(),
+                    MAX_BACKOFF,
+                )
+                time.sleep(waiting)
+
+            except TRANSPORT_ERRORS:
+                if attempt == MAX_ATTEMPTS - 1:
                     raise
 
                 waiting = min(

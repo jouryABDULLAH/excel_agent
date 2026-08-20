@@ -309,3 +309,37 @@ def test_nothing_a_tool_shows_the_model_is_a_traceback():
         assert "Traceback" not in said
         assert said.strip() == said
         assert len(said.split()) > 3
+
+
+def test_a_dropped_connection_is_retried_like_a_503(no_waiting):
+    """REGRESSION: an SSL EOF failed instantly and took the page with it.
+
+    The network cutting a request mid-flight is the same transient category
+    as the 429/5xx the loop already retries.
+    """
+    import ssl
+
+    request = Request(
+        answer={"ok": True},
+        failures=[
+            ssl.SSLEOFError("EOF occurred in violation of protocol"),
+            ConnectionResetError("connection reset by peer"),
+            TimeoutError("timed out"),
+        ],
+    )
+
+    assert GoogleAPI().execute(request) == {"ok": True}
+    assert request.attempts == 4
+
+
+def test_a_connection_that_never_comes_back_still_raises(no_waiting):
+    import ssl
+
+    request = Request(
+        failures=[ssl.SSLEOFError("EOF")] * MAX_ATTEMPTS
+    )
+
+    with pytest.raises(ssl.SSLEOFError):
+        GoogleAPI().execute(request)
+
+    assert request.attempts == MAX_ATTEMPTS

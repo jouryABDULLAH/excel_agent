@@ -525,10 +525,22 @@ def sidebar() -> None:
     with st.sidebar:
         st.subheader("Spreadsheet")
 
-        names = workbooks()
+        # A dropped connection to Google must not take the page with it: the
+        # chat still works, and the picker comes back on the next rerun.
+        try:
+            names = workbooks()
+        except Exception:  # noqa: BLE001
+            st.warning("Couldn't reach Google Drive — refresh to retry.")
+            names = None
+
         in_use = st.session_state.session.in_use()
 
-        if not names:
+        if names is None:
+            # Unreachable Drive: the warning above already said so.
+            names = []
+
+        elif not names:
+            # An empty Drive, as opposed to an unreachable one.
             st.info(browsing.EMPTY)
 
         else:
@@ -568,7 +580,11 @@ def sidebar() -> None:
 
                     st.rerun()
 
-        link = browsing.link(in_use)
+        # Resolved through Drive, so it fails the same way the listing does.
+        try:
+            link = browsing.link(in_use)
+        except Exception:  # noqa: BLE001
+            link = None
 
         if link:
             st.link_button(
