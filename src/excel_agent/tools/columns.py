@@ -118,6 +118,29 @@ def _named_headers(
     return found
 
 
+def _same_name(header: str, wanted: str) -> bool:
+    """Whether a header is the one asked for, ignoring how it was capitalised."""
+    return header == wanted or header.casefold() == wanted.casefold()
+
+
+def _matching(
+    named: list[tuple[int, str]],
+    column: str,
+) -> list[tuple[int, str]]:
+    """The columns a name reaches, an exact match winning over a casefolded one.
+
+    Capitalisation is how someone writes a header, not what tells two columns
+    apart: "profit margin" means the "Profit Margin" column. Exact wins so a
+    sheet holding both spellings still reaches the one actually named.
+    """
+    exact = [one for one in named if one[1] == column]
+
+    if exact:
+        return exact
+
+    return [one for one in named if _same_name(one[1], column)]
+
+
 def _resolve_column_target(
     *,
     column: str | None,
@@ -186,20 +209,22 @@ def _resolve_column_target(
             )
         ).strip()
 
-        if (
-            column is not None
-            and actual_header != column
+        if column is not None and not _same_name(
+            actual_header,
+            column,
         ):
             # Where the named column really is, so the next call can be
             # right rather than being another guess.
             elsewhere = [
                 found_position
-                for found_position, found_header in _named_headers(
-                    rows,
-                    header_row,
-                    width,
+                for found_position, _ in _matching(
+                    _named_headers(
+                        rows,
+                        header_row,
+                        width,
+                    ),
+                    column,
                 )
-                if found_header == column
             ]
 
             return (
@@ -243,11 +268,8 @@ def _resolve_column_target(
         width,
     )
 
-    matching_positions = [
-        candidate_position
-        for candidate_position, candidate_header in named_positions
-        if candidate_header == column
-    ]
+    matching = _matching(named_positions, column)
+    matching_positions = [one for one, _ in matching]
 
     if not matching_positions:
         return (
@@ -283,9 +305,11 @@ def _resolve_column_target(
             ),
         )
 
+    # The sheet's own spelling, so what comes back names the real column
+    # rather than however it was asked for.
     return (
-        matching_positions[0],
-        column,
+        matching[0][0],
+        matching[0][1],
         None,
     )
 

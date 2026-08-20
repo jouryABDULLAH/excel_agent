@@ -473,3 +473,69 @@ def test_refusing_a_deletion_leaves_the_row_alone(a_deletable_row):
     # The turn still ends with something said, rather than dying unanswered.
     assert a_deletable_row == []
     assert [one for one in events if isinstance(one, Answer)]
+
+
+# What a worker is allowed to write
+
+
+def _specialists():
+    from excel_agent.agents import SPECIALISTS
+
+    return SPECIALISTS
+
+
+
+
+# Shared state a worker may add to. Everything else on State belongs to the
+# supervisor: a worker writing route, task or final_answer would be deciding
+# what happens next or answering the user, which is not its job.
+WORKER_WRITES = {"worker_results", "messages", "drawn_tables"}
+
+# The one exception, and the reason it exists: choosing the file is what the
+# file manager is for, so it alone may say which one is in hand.
+CHOOSING = WORKER_WRITES | {"spreadsheet_id", "spreadsheet_name"}
+
+
+def running(specialist, script):
+    """Run one specialist node and give back what it wrote to shared state."""
+    node = specialist.build(ScriptedModel(script=list(script)))
+
+    return node(
+        {
+            "messages": [
+                {"role": "user", "content": "how many rows?"},
+                calling("delegate", "1", next=specialist.NAME, task="look"),
+            ],
+            "task": "look",
+            "spreadsheet_name": "TEST - Sales Orders",
+            "spreadsheet_id": "an-id",
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    "specialist",
+    [pytest.param(one, id=one.NAME) for one in _specialists()],
+)
+def test_a_worker_writes_only_what_it_is_allowed_to(specialist, a_sheet):
+    written = set(running(specialist, [AIMessage("Nothing to report.")]))
+
+    allowed = (
+        CHOOSING if specialist.NAME == "file_manager" else WORKER_WRITES
+    )
+
+    assert written <= allowed, (
+        f"{specialist.NAME} wrote {sorted(written - allowed)}"
+    )
+
+
+@pytest.mark.parametrize(
+    "specialist",
+    [pytest.param(one, id=one.NAME) for one in _specialists()],
+)
+def test_a_worker_never_decides_what_happens_next(specialist, a_sheet):
+    """Routing and the answer belong to the supervisor. A worker writing
+    either would end the turn or send it somewhere from inside a node."""
+    written = running(specialist, [AIMessage("Nothing to report.")])
+
+    assert not {"route", "task", "final_answer"} & set(written)

@@ -1113,3 +1113,86 @@ def test_a_row_added_beside_a_second_table_still_lands_in_the_first(
         "'Sales Orders'!A4:A4": "ORD-1003",
         "'Sales Orders'!C4:C4": 7,
     }
+
+
+# Reaching a column whose header is capitalised differently
+
+
+def test_a_column_is_found_however_it_was_capitalised(a_writable_columns_sheet):
+    """REGRESSION: "profit margin" missed "Profit Margin", and the worker
+    fell back to column letters and overwrote the wrong column."""
+    sent = a_writable_columns_sheet()
+
+    answer = columns.rename_column.invoke(
+        {"column": "region", "new_name": "Area"}
+    )
+
+    assert answer["ok"] is True
+    # The sheet's own spelling comes back, not the one that was asked for.
+    assert answer["old_name"] == "Region"
+    assert calls(sent, "update_cells")[0]["updates"] == [
+        {"range": "'Sales Orders'!B1:B1", "values": [["Area"]]}
+    ]
+
+
+def test_a_position_matches_a_header_capitalised_differently(
+    a_writable_columns_sheet,
+):
+    sent = a_writable_columns_sheet()
+
+    answer = columns.rename_column.invoke(
+        {"column": "REGION", "position": 2, "new_name": "Area"}
+    )
+
+    # Naming the same column two ways is agreement, not a mismatch.
+    assert answer["ok"] is True
+    assert calls(sent, "update_cells")[0]["updates"][0]["range"] == (
+        "'Sales Orders'!B1:B1"
+    )
+
+
+def both_spellings() -> list[list[fake_sheets.Cell]]:
+    """A sheet whose second and third columns differ only in capitalisation."""
+    return [
+        [
+            fake_sheets.text("Order ID"),
+            fake_sheets.text("Region"),
+            fake_sheets.text("region"),
+            fake_sheets.text("Product"),
+        ],
+        [
+            fake_sheets.text("A-1"),
+            fake_sheets.text("West"),
+            fake_sheets.text("west"),
+            fake_sheets.text("Desk"),
+        ],
+    ]
+
+
+def test_the_exact_spelling_wins_when_a_sheet_holds_both(a_writable_columns_sheet):
+    a_writable_columns_sheet(rows=both_spellings())
+
+    answer = columns.rename_column.invoke(
+        {"column": "region", "new_name": "Area"}
+    )
+
+    # Both match once case is ignored, so the one actually written is taken
+    # rather than the request being refused as ambiguous.
+    assert answer["ok"] is True
+    assert answer["position"] == 3
+    assert answer["old_name"] == "region"
+
+
+def test_two_columns_matching_only_by_case_are_still_ambiguous(
+    a_writable_columns_sheet,
+):
+    sent = a_writable_columns_sheet(rows=both_spellings())
+
+    answer = columns.rename_column.invoke(
+        {"column": "REGION", "new_name": "Area"}
+    )
+
+    # Neither is what was written, so there is nothing to prefer.
+    assert answer["ok"] is False
+    assert answer["error"] == "ambiguous_column"
+    assert sent == []
