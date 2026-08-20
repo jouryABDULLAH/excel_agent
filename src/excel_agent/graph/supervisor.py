@@ -413,9 +413,7 @@ def _decide(supervisor, state: State, config=None) -> dict:
         )
 
     # The rewrite pass changes the answer only. The thread still holds the
-    # original as its last message, so the validator can weigh the two and
-    # settle the message itself; writing one here would destroy the original
-    # before that comparison happens.
+    # original as its last message.
     if correcting:
         return {
             "route": "end",
@@ -423,9 +421,6 @@ def _decide(supervisor, state: State, config=None) -> dict:
             "final_answer": answer,
         }
 
-    # The turn-scoped fields are not cleared here: the validator still needs
-    # the worker reports to check the answer against, and clears them itself
-    # once the turn truly ends.
     return {
         "route": "end",
         "task": None,
