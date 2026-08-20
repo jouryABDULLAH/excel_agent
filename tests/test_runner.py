@@ -342,9 +342,10 @@ def test_an_approval_names_the_tool_it_is_waiting_on():
     assert (waiting.tool, waiting.arguments["row"]) == ("delete_row", 5)
 
 
-def test_every_turn_starts_with_its_delegations_unspent():
-    """Every finish and error path clears the count, but a turn that dies
-    outside them leaves it high and the next turn begins out of steps."""
+def test_every_turn_starts_with_last_turn_forgotten():
+    """Every finish and error path clears these, but a turn dying outside
+    them leaves the next turn out of steps and able to answer from work it
+    never did."""
     asked: list[dict] = []
 
     class Recording:
@@ -366,6 +367,8 @@ def test_every_turn_starts_with_its_delegations_unspent():
     list(Session(Recording()).ask("how many rows?"))
 
     assert asked[0]["delegations"] == 0
+    assert asked[0]["worker_results"] == []
+    assert asked[0]["drawn_tables"] == []
 
 
 def test_an_answer_the_stream_lost_is_recovered_from_state():

@@ -371,8 +371,8 @@ class Session:
         question: str,
     ) -> Iterator[Event]:
         """Run one turn and emit application-level events."""
-        # A turn that died outside the supervisor's own error handling left
-        # the count high, so the next turn started with its budget spent.
+        # All three are turn-scoped. A turn that died outside the supervisor's
+        # own handling left them behind for the next turn to answer from.
         yield from self._run(
             {
                 "messages": [
@@ -382,6 +382,8 @@ class Session:
                     }
                 ],
                 "delegations": 0,
+                "worker_results": [],
+                "drawn_tables": [],
             }
         )
 
