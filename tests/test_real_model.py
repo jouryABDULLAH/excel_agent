@@ -201,6 +201,12 @@ def test_a_spilling_formula_is_not_filled_down(a_sheet, monkeypatch):
         )
     )
 
+    # Writing a column formula now waits to be allowed, so nothing lands
+    # until the turn is resumed.
+    assert written == []
+
+    list(session.resume({"decisions": [{"type": "approve"}]}))
+
     assert written, "the formula was never written"
 
     covered = written[0]["grid_range"]
