@@ -166,8 +166,7 @@ class SupervisorState(AgentState):
 @tool(DELEGATE, args_schema=Delegate)
 def delegate(next: str, task: str) -> str:
     """Hand the next step to a specialist."""
-    # Never runs. stop_at_delegation ends the agent as soon as the call is
-    # made, because the specialist is a node in the outer graph, not a tool.
+
     return ""
 
 
@@ -241,10 +240,8 @@ def build_supervisor(model):
             supervisor_prompt,
             no_more_delegating,
             stop_at_delegation,
-            # The model produces a malformed tool call often enough to matter,
-            # and it is usually transient. on_failure must be "error": the
-            # default lets the agent carry on and call the failing model again,
-            # which never terminates.
+            # The model produces a malformed tool call.
+            # on_failure must be "error": the default lets the agent carry on and call the failing model again. never terminating.
             ModelRetryMiddleware(max_retries=1, on_failure="error"),
             SummarizationMiddleware(
                 model=model,
@@ -351,35 +348,28 @@ def _decide(supervisor, state: State, config=None) -> dict:
     if calls and delegated < MAX_DELEGATIONS:
         asked = Delegate(**calls[0]["args"])
 
-        # The call goes into the thread so the next visit can see it already
-        # delegated this. Its worker answers it with a ToolMessage; an
-        # unanswered tool call in the thread is invalid to the provider.
+        # Only the first call is answered, so a second one checkpointed here
+        # would sit unanswered and make every later turn invalid.
+        kept = (
+            said
+            if len(calls) == 1
+            else said.model_copy(update={"tool_calls": calls[:1]})
+        )
+
         return {
             "route": asked.next,
             "task": asked.task,
             "final_answer": None,
-            "messages": [said],
+            "messages": [kept],
             "delegations": delegated + 1,
         }
-
-    # Nothing delegated, so this is the reply. It goes into messages as well,
-    # for the next turn's supervisor: without it the thread holds the user's
-    # questions and none of its own answers. Past the budget a straggling
-    # tool call is dropped rather than followed, so the message written is a
-    # clean one.
+    
     answer = "" if calls else str(said.content or "")
 
-    # The delivery note on a stripped report is for the supervisor; a model
-    # composing from the report sometimes copies it out.
     answer = answer.replace(DELIVERED, "").strip()
 
-    # And sometimes it writes the drawn table out again, which would show the
-    # data twice. Only that table goes: one the planner composed itself, such
-    # as a table of columns it is suggesting, is its answer.
     answer = without_drawn_table(answer, state.get("drawn_tables"))
 
-    # The model sometimes emits its whole answer twice. Only that exact
-    # doubling is removed; a clumsy or wrong answer stays as it was written.
     answer = undoubled(answer)
 
     if not answer:
@@ -393,9 +383,6 @@ def _decide(supervisor, state: State, config=None) -> dict:
         "route": "end",
         "task": None,
         "final_answer": answer,
-        # The thread keeps the reply the user was actually given. When the
-        # model's own message is not that -- blank, a dropped straggling
-        # call, or a stripped table -- a clean message replaces it.
         "messages": [
             said
             if not calls and str(said.content or "") == answer
@@ -413,9 +400,7 @@ def supervisor_node(supervisor):
     def decide(state: State, config=None) -> dict:
         try:
             return _decide(supervisor, state, config)
-
-        # Whatever broke, the turn ends with a sentence rather than a
-        # traceback. Workers already do this; the planner did not.
+        
         except Exception as failure:  # noqa: BLE001
             return {
                 "route": "end",

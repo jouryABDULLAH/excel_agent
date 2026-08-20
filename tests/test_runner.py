@@ -342,6 +342,32 @@ def test_an_approval_names_the_tool_it_is_waiting_on():
     assert (waiting.tool, waiting.arguments["row"]) == ("delete_row", 5)
 
 
+def test_every_turn_starts_with_its_delegations_unspent():
+    """Every finish and error path clears the count, but a turn that dies
+    outside them leaves it high and the next turn begins out of steps."""
+    asked: list[dict] = []
+
+    class Recording:
+        """An agent that only remembers what it was handed."""
+
+        def stream(self, payload, config=None, **settings):
+            asked.append(payload)
+            return iter(())
+
+        def get_state(self, where):
+            class Snapshot:
+                values: dict = {}
+
+            return Snapshot()
+
+        def update_state(self, where, values):
+            pass
+
+    list(Session(Recording()).ask("how many rows?"))
+
+    assert asked[0]["delegations"] == 0
+
+
 def test_an_answer_the_stream_lost_is_recovered_from_state():
     """REGRESSION: a turn reached the user empty while its trace showed a
     written answer sitting in state. The checkpoint is the source of truth;

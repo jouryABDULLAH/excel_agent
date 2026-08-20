@@ -371,6 +371,8 @@ class Session:
         question: str,
     ) -> Iterator[Event]:
         """Run one turn and emit application-level events."""
+        # A turn that died outside the supervisor's own error handling left
+        # the count high, so the next turn started with its budget spent.
         yield from self._run(
             {
                 "messages": [
@@ -378,7 +380,8 @@ class Session:
                         "role": "user",
                         "content": question,
                     }
-                ]
+                ],
+                "delegations": 0,
             }
         )
 

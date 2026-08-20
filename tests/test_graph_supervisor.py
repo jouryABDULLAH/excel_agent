@@ -42,6 +42,27 @@ def test_delegating_names_the_worker_and_what_it_should_do():
     assert written["task"] == "count the rows"
 
 
+def test_only_the_first_of_two_delegations_is_kept():
+    """A second call would be checkpointed with no result to answer it, which
+    is invalid to the provider and fails every later turn on the thread."""
+    written = deciding(
+        [
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {"name": "delegate", "args": {"next": "analyst", "task": "count"},
+                     "id": "1"},
+                    {"name": "delegate", "args": {"next": "row_editor", "task": "add"},
+                     "id": "2"},
+                ],
+            )
+        ]
+    )
+
+    assert written["route"] == "analyst"
+    assert [one["id"] for one in written["messages"][0].tool_calls] == ["1"]
+
+
 def test_delegating_clears_any_answer_left_from_before():
     written = deciding(
         [calling("delegate", "1", next="analyst", task="count the rows")],
