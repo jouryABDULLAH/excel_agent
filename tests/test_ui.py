@@ -511,3 +511,51 @@ def test_a_turn_that_stops_twice_keeps_asking():
     )
 
     assert whole["waiting"] == still
+
+
+def test_the_permission_card_reads_task_action_rows_spreadsheet():
+    from excel_agent.ui import permission_card
+
+    card = permission_card(
+        {
+            "tool": "delete_row",
+            "task": "Remove the 18 duplicate rows",
+            "arguments": {
+                "rows": [20, 15, 16, 17, 18, 19, 32],
+                "spreadsheet": "TEST - Book Collection",
+            },
+        }
+    )
+
+    # The card answers why, what and where, in that order, with row lists
+    # written the way a person would say them.
+    assert card.splitlines()[0] == "**Task:** Remove the 18 duplicate rows"
+    assert "**Action:** delete_row" in card
+    assert "**Rows:** 15–20, 32" in card
+    assert "**Spreadsheet:** TEST - Book Collection" in card
+    assert card.strip().endswith("There is no undo.")
+
+
+def test_the_permission_card_stands_without_a_task(monkeypatch):
+    import streamlit as st
+    from excel_agent.ui import permission_card
+
+    class Chosen:
+        def in_use(self):
+            return "TEST - Sales Orders"
+
+    class Holding:
+        session = Chosen()
+
+    monkeypatch.setattr(st, "session_state", Holding())
+
+    card = permission_card(
+        {"tool": "update_row", "arguments": {"row": 3}}
+    )
+
+    # No task line rather than an empty one, and the spreadsheet falls back
+    # to the one the conversation is working on.
+    assert "Task" not in card
+    assert card.splitlines()[0] == "**Action:** update_row"
+    assert "**Row:** 3" in card
+    assert "**Spreadsheet:** TEST - Sales Orders" in card
