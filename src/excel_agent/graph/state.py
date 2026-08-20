@@ -58,7 +58,10 @@ DELEGATE = "delegate"
 # the supervisor cannot see the drawing, and an intro pointing at nothing
 # reads as a worker that returned nothing, so it sends the task out again.
 # The supervisor strips it from the final answer; the user never reads it.
-DELIVERED = "(The rows were delivered to the user as a table. Done.)"
+DELIVERED = (
+    "(The rows are shown to the user in a table drawn below your reply. "
+    "Done. If you mention it, say the table below, never above.)"
+)
 
 # Delegating is how the supervisor answers, not work done on a spreadsheet.
 # The runner skips it so it does not show up as an action the user was told

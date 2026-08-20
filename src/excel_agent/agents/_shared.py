@@ -135,7 +135,7 @@ def without_table_lines(said: str) -> str:
     # worker that returned nothing, and the supervisor sends it out again.
     return (
         "\n".join(kept).strip()
-        or "The requested rows are shown in the table."
+        or "The requested rows are shown in the table below."
     ) + f"\n{DELIVERED}"
 
 

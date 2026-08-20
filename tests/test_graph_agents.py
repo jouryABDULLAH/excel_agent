@@ -144,7 +144,7 @@ def test_a_report_that_was_only_a_table_still_says_something(a_sheet):
 
     # Stripped to nothing, the supervisor would compose an answer from an
     # empty report.
-    assert "The requested rows are shown in the table." in reported
+    assert "The requested rows are shown in the table below." in reported
 
 
 def test_a_table_the_model_wrote_itself_is_kept(a_sheet):
