@@ -124,16 +124,38 @@ def test_the_rewrite_is_kept_and_settles_the_thread():
     assert settled.id == state["messages"][-1].id
 
 
-def test_a_rewrite_that_is_worse_ships_the_original():
-    state = finished("There are 5 rows.")
-    state["correction"] = "- Say it better."
+def test_a_false_claim_never_ships_even_when_the_rewrite_fails():
+    """REGRESSION: "All rows have been deleted" was judged false, the rewrite
+    came back empty, and keeping "the original" shipped the very answer the
+    judge had rejected."""
+    state = finished("All rows have been deleted.")
+    state["correction"] = "- No report confirms that deletion."
     state["final_answer"] = ""
 
     written = checked(state)
 
-    # An empty rewrite loses to the answer the model already wrote.
-    assert written["final_answer"] == "There are 5 rows."
-    assert written["correction"] is None
+    # Nothing deterministic is wrong with the original, so it was sent back
+    # for its claims; what ships is what the reports establish instead.
+    assert written["final_answer"] != "All rows have been deleted."
+    assert "could not confirm" in written["final_answer"]
+    assert "[analyst] 5 rows" in written["final_answer"]
+
+
+def test_an_honest_giving_up_beats_a_false_claim():
+    """The supervisor answering with its own fallback is it giving up
+    honestly, which is the right answer when the alternative is a lie."""
+    state = finished("All rows have been deleted.")
+    state["correction"] = "- No report confirms that deletion."
+    state["final_answer"] = (
+        "I could not write up an answer, but this much was done:\n"
+        "- [analyst] 5 rows"
+    )
+
+    written = checked(state)
+
+    assert written["final_answer"] == state["final_answer"]
+    (settled,) = written["messages"]
+    assert "could not write up" in settled.content
 
 
 def test_a_still_broken_rewrite_never_goes_around_again():
@@ -143,8 +165,10 @@ def test_a_still_broken_rewrite_never_goes_around_again():
 
     written = checked(state)
 
-    # Second visit always ends the turn, however the rewrite came out.
+    # Second visit always ends the turn, however the rewrite came out; a
+    # wording fault means the original still beats saying nothing.
     assert written["correction"] is None
+    assert written["final_answer"] == "QUESTION: which one?"
     assert route_correction({**state, **written}) == "end"
 
 
@@ -219,3 +243,50 @@ def test_a_stray_delegation_during_the_rewrite_is_ignored_not_obeyed():
     # The text shipped and the call did not run: a script with no entry for
     # a second analyst visit would have failed loudly here if it had.
     assert answers == ["Which sheet did you mean?"]
+
+
+class Judging(ScriptedModel):
+    """A judge with a verdict per call, standing in for the semantic check."""
+
+    def bind_tools(self, tools, **kwargs):
+        raise AssertionError("the judge never holds tools")
+
+
+def test_the_traced_false_deletion_turn_ends_honestly(monkeypatch):
+    """REGRESSION, replayed from the live trace: the supervisor answered
+    "All rows have been deleted" with no deletion delegated, the judge
+    caught it, the rewrite pass gave up -- and the lie still shipped."""
+    from langchain_core.messages import HumanMessage
+
+    judge = Judging(
+        script=[
+            AIMessage(
+                "FAIL: You claim the rows were deleted, but no specialist "
+                "report confirms that deletion succeeded."
+            ),
+        ]
+    )
+
+    supervisor = ScriptedModel(
+        script=[
+            calling("delegate", "1", next="analyst", task="show the rows"),
+            AIMessage("Here are the rows."),
+            AIMessage("All rows have been deleted."),
+            # The rewrite pass decides nothing, twice, which becomes the
+            # authored fallback -- exactly what the live turn did.
+            AIMessage(""),
+            AIMessage(""),
+        ]
+    )
+
+    session = Session(build_graph(supervisor, judge=judge))
+    session.use("TEST - Sales Orders")
+
+    answers = [
+        one.text for one in session.ask("delete all the rows")
+        if isinstance(one, Answer)
+    ]
+
+    assert len(answers) == 1
+    assert answers[0] != "All rows have been deleted."
+    assert "this much was done" in answers[0] or "could not confirm" in answers[0]

@@ -154,6 +154,29 @@ def acceptable(answer: str, question: str) -> bool:
     )
 
 
+def unverified(state: State) -> str:
+    """The honest reply when an answer claimed work its reports do not show.
+
+    Used when both the answer and its rewrite failed the claims check: the
+    turn has to say something, and the one safe thing is what the reports
+    actually establish.
+    """
+    done = "\n".join(
+        f"- {one}" for one in state.get("worker_results") or []
+    )
+
+    if not done:
+        return (
+            "I could not confirm that as done. No change is known to have "
+            "been made."
+        )
+
+    return (
+        "I could not confirm that as done. What actually happened:\n"
+        f"{done}"
+    )
+
+
 def validator_node(model=None):
     """The node, holding the judge it consults for the semantic checks."""
 
@@ -168,7 +191,26 @@ def validator_node(model=None):
             last = (state.get("messages") or [None])[-1]
             original = str(getattr(last, "content", "") or "")
 
-            kept = answer if acceptable(answer, question) else original
+            if acceptable(answer, question):
+                kept = answer
+
+            # No deterministic fault in the original means the judge sent it
+            # back: it claims work its reports do not show, and a known false
+            # claim must never ship. An authored rewrite is the supervisor
+            # honestly giving up, which is the truthful answer here; failing
+            # that, say only what the reports establish.
+            elif not problems(original, question):
+                kept = (
+                    answer
+                    if authored(answer) and answer.strip()
+                    else unverified(state)
+                )
+
+            # A deterministic fault -- a doubled sentence, the wrong
+            # language -- is a flaw of wording, not of fact, so the original
+            # still beats saying nothing.
+            else:
+                kept = original
 
             return {
                 **DONE,

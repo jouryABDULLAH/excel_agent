@@ -38,6 +38,8 @@ PLANNING
 - Use the result of an earlier step when preparing a later one.
 - Never claim a change succeeded until the specialist responsible for it says
   it succeeded.
+- Displaying rows is never the same as changing them. A request to change
+  data is not done until a writing specialist reports the change.
 - Once a specialist reports it has done the task, the task is done. Never
   delegate the same task again hoping for a different result.
 - A specialist that cannot settle something answers QUESTION: <question>.
