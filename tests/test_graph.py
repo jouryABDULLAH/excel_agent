@@ -11,7 +11,7 @@ from langchain_core.tracers.base import BaseTracer
 from scripted import ScriptedModel, calling
 
 from excel_agent.graph.graph import build_graph, route_worker
-from excel_agent.runner import Artifact, Session, ToolCall
+from excel_agent.runner import Answer, Approval, Artifact, Session, ToolCall
 from excel_agent.services.spreadsheet import spreadsheet_service
 from excel_agent.tools import inspect as inspect_tool
 
@@ -394,3 +394,82 @@ def test_the_planners_middleware_is_recorded_inside_the_planner(a_sheet):
     watching = traced(DELEGATES_THEN_ANSWERS)
 
     assert "supervisor" in watching.ancestors("stop_at_delegation.after_model")
+
+
+# Pausing for approval
+
+
+@pytest.fixture
+def a_deletable_row(a_sheet, monkeypatch):
+    """A row the editor can delete, and a record of whether it did."""
+    from excel_agent.tools import rows as rows_tool
+
+    monkeypatch.setattr(
+        rows_tool,
+        "resolve_spreadsheet",
+        lambda name=None: ("an-id", name or "TEST - Sales Orders"),
+    )
+
+    deleted: list[dict] = []
+
+    monkeypatch.setattr(
+        spreadsheet_service,
+        "delete_rows",
+        lambda **sent: deleted.append(sent) or {},
+    )
+
+    return deleted
+
+
+DELETES_A_ROW = [
+    calling("delegate", "1", next="row_editor", task="delete row 3"),
+    calling("delete_row", "2", row=3),
+    AIMessage("Row 3 is gone."),
+    AIMessage("Deleted row 3."),
+]
+
+
+def asking_to_delete(script):
+    """A session that has asked for a row to be deleted."""
+    session = Session(build_graph(ScriptedModel(script=list(script))))
+    session.use("TEST - Sales Orders")
+
+    return session, list(session.ask("delete row 3"))
+
+
+def test_a_deletion_waits_to_be_allowed(a_deletable_row):
+    """There is no undo, so a delete is shown before it happens."""
+    _, events = asking_to_delete(DELETES_A_ROW)
+
+    waiting = [one for one in events if isinstance(one, Approval)]
+
+    assert [(one.tool, one.arguments) for one in waiting] == [
+        ("delete_row", {"row": 3})
+    ]
+    # Asked once, not once per namespace the pause is streamed under.
+    assert len(waiting) == 1
+
+    # Nothing is written, and the turn does not pretend to be finished.
+    assert a_deletable_row == []
+    assert [one for one in events if isinstance(one, Answer)] == []
+
+
+def test_allowing_a_deletion_carries_the_turn_on(a_deletable_row):
+    session, _ = asking_to_delete(DELETES_A_ROW)
+
+    events = list(session.resume({"decisions": [{"type": "approve"}]}))
+
+    assert [one["start_row"] for one in a_deletable_row] == [3]
+    assert [one.text for one in events if isinstance(one, Answer)] == [
+        "Deleted row 3."
+    ]
+
+
+def test_refusing_a_deletion_leaves_the_row_alone(a_deletable_row):
+    session, _ = asking_to_delete(DELETES_A_ROW)
+
+    events = list(session.resume({"decisions": [{"type": "reject"}]}))
+
+    # The turn still ends with something said, rather than dying unanswered.
+    assert a_deletable_row == []
+    assert [one for one in events if isinstance(one, Answer)]

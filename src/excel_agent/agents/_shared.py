@@ -6,9 +6,15 @@ and what they hand back, is here.
 
 from langchain.agents import AgentState
 from langchain_core.messages import HumanMessage, ToolMessage
+from langgraph.errors import GraphInterrupt
 
 from excel_agent.graph.replies import DELIVERED, table_free
 from excel_agent.graph.state import State
+
+
+# What a gated tool offers: run it or do not. Editing the arguments is a way
+# of writing a spreadsheet change by hand, which is what the agent is for.
+CONFIRMED = {"allowed_decisions": ["approve", "reject"]}
 
 
 DELEGATED = """\
@@ -102,6 +108,11 @@ def run_worker(
             },
             config,
         )
+
+    # A pause for approval is not a failure: it has to reach the graph so the
+    # turn can be resumed rather than reported as broken.
+    except GraphInterrupt:
+        raise
 
     # A specialist that falls over must not take the turn with it. Left to
     # propagate, the exception escapes the graph and the user is shown the

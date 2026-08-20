@@ -1,8 +1,14 @@
 """Changes row data: updates, inserts, appends, deletes and moves."""
 
 from langchain.agents import create_agent
+from langchain.agents.middleware import HumanInTheLoopMiddleware
 
-from excel_agent.agents._shared import DELEGATED, WorkerState, worker_node
+from excel_agent.agents._shared import (
+    CONFIRMED,
+    DELEGATED,
+    WorkerState,
+    worker_node,
+)
 from excel_agent.prompts import CANNOT_DO, LANGUAGE_AND_SHEET_TEXT
 from excel_agent.tools import (
     append_row,
@@ -71,5 +77,16 @@ def build(model):
             tools=list(TOOLS),
             system_prompt=ROW_EDITOR_PROMPT,
             state_schema=WorkerState,
+            middleware=[
+                # The two that destroy data. There is no undo, so these are
+                # the ones a wrong row number cannot be taken back from.
+                HumanInTheLoopMiddleware(
+                    interrupt_on={
+                        "delete_row": CONFIRMED,
+                        "update_row": CONFIRMED,
+                    },
+                    description_prefix="This changes the spreadsheet",
+                ),
+            ],
         ),
     )

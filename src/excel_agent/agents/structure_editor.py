@@ -1,8 +1,14 @@
 """Changes columns and how cells look."""
 
 from langchain.agents import create_agent
+from langchain.agents.middleware import HumanInTheLoopMiddleware
 
-from excel_agent.agents._shared import DELEGATED, WorkerState, worker_node
+from excel_agent.agents._shared import (
+    CONFIRMED,
+    DELEGATED,
+    WorkerState,
+    worker_node,
+)
 from excel_agent.prompts import CANNOT_DO, LANGUAGE_AND_SHEET_TEXT
 from excel_agent.tools import (
     copy_format,
@@ -88,5 +94,16 @@ def build(model):
             tools=list(TOOLS),
             system_prompt=STRUCTURE_PROMPT,
             state_schema=WorkerState,
+            middleware=[
+                # A deleted column takes its data with it, and a column
+                # formula overwrites whatever the column held before.
+                HumanInTheLoopMiddleware(
+                    interrupt_on={
+                        "delete_column": CONFIRMED,
+                        "set_column_formula": CONFIRMED,
+                    },
+                    description_prefix="This changes the spreadsheet",
+                ),
+            ],
         ),
     )

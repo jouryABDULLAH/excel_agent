@@ -66,9 +66,8 @@ class Answer:
 class Approval:
     """A tool waiting to be allowed to run.
 
-    Nothing emits one yet. It is part of the contract now so that a paused turn
-    has a shape the front ends already understand, rather than runner, ui and
-    cli all being reopened the day approval is switched on.
+    Emitted instead of an Answer when a turn pauses. The id names the pause,
+    and goes back with the decision through Session.resume.
     """
 
     tool: str
@@ -393,10 +392,9 @@ class Session:
     ) -> Iterator[Event]:
         """Carry on a turn that stopped to ask permission.
 
-        Nothing pauses a turn yet, because no tool is wired to interrupt, so
-        this continues a graph that was not waiting for anything. It exists now
-        so the shape of a paused turn is settled while the contract is being
-        frozen. Filled in when HumanInTheLoopMiddleware lands.
+        Takes what the person decided, in the shape the middleware expects:
+        {"decisions": [{"type": "approve"}]}, or "reject" with an optional
+        message saying why.
         """
         yield from self._run(
             Command(
@@ -426,6 +424,7 @@ class Session:
         final_answer = ""
         cut_off = False
         artifacts: list[dict] = []
+        waiting: list[Approval] = []
 
         try:
             for namespace, mode, payload in (
@@ -453,6 +452,48 @@ class Session:
                         )
 
                     continue
+
+                # A tool that needs permission stops the graph here. The turn
+                # is not over, so nothing is answered until it resumes.
+                for paused in (
+                    payload.get(
+                        "__interrupt__"
+                    )
+                    or ()
+                ):
+                    # The same pause arrives twice, once under the
+                    # specialist's namespace and once under the graph's.
+                    if paused.id in [
+                        one.id
+                        for one in waiting
+                    ]:
+                        continue
+
+                    for request in (
+                        (paused.value or {}).get(
+                            "action_requests"
+                        )
+                        or []
+                    ):
+                        waiting.append(
+                            Approval(
+                                tool=str(
+                                    request.get(
+                                        "name"
+                                    )
+                                    or ""
+                                ),
+                                arguments=dict(
+                                    request.get(
+                                        "args"
+                                    )
+                                    or {}
+                                ),
+                                id=str(
+                                    paused.id
+                                ),
+                            )
+                        )
 
                 for update in (
                     payload.values()
@@ -551,6 +592,14 @@ class Session:
             yield Answer(
                 GAVE_UP
             )
+            return
+
+        # A paused turn has not finished, so it gets no answer: the client
+        # shows what is waiting and calls resume with the decision.
+        if waiting:
+            for one in waiting:
+                yield one
+
             return
 
         artifacts = (

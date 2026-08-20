@@ -24,12 +24,7 @@ def route_worker(state: State) -> str:
 
 
 def build_graph(model=None, checkpointer=None):
-    """Wire the supervisor to its specialists and back.
-
-    The model is an argument so a test can pass a scripted one; left out, it
-    is the configured model, which is what langgraph.json needs to build this
-    without arguments.
-    """
+    """Wire the supervisor to its specialists and back."""
     model = model or build_model()
 
     builder = StateGraph(State)
@@ -56,8 +51,7 @@ def build_graph(model=None, checkpointer=None):
         },
     )
 
-    # Every worker reports back rather than answering the user or handing on to
-    # another worker, so one place decides what happens next.
+    # Every worker reports back to the supervisor.
     for specialist in SPECIALISTS:
         builder.add_edge(specialist.NAME, "supervisor")
 

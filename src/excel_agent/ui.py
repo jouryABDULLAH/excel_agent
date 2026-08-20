@@ -20,7 +20,8 @@ from excel_agent import browsing
 from excel_agent.config import MODEL, build
 from excel_agent.runner import (
     Answer,
-    Artifact, 
+    Approval,
+    Artifact,
     Session,
     ToolCall,
     rendered,
@@ -363,6 +364,7 @@ def draw_turn(
     calls: list[str] = []
     answer = ""
     artifacts: list[dict] = []
+    waiting: list[dict] = []
 
     status_placeholder = box.empty()
 
@@ -385,6 +387,15 @@ def draw_turn(
 
             elif isinstance(event, Artifact):
                 artifacts.append(event.data)
+
+            elif isinstance(event, Approval):
+                waiting.append(
+                    {
+                        "tool": event.tool,
+                        "arguments": event.arguments,
+                        "id": event.id,
+                    }
+                )
 
         status.update(
             label="Done",
@@ -416,7 +427,7 @@ def draw_turn(
             box,
         )
 
-    if not said and not artifacts:
+    if not said and not artifacts and not waiting:
         box.markdown(NO_ANSWER)
 
     # Drawn here as well as in draw_transcript. Left to the transcript alone,
@@ -432,7 +443,69 @@ def draw_turn(
         "text": said,
         "calls": calls,
         "artifacts": artifacts,
+        "waiting": waiting,
     }
+
+
+def asking_permission() -> dict | None:
+    """The change waiting to be allowed, if the last turn stopped to ask."""
+    if not st.session_state.transcript:
+        return None
+
+    last = st.session_state.transcript[-1]
+
+    if last.get("role") == "assistant" and last.get("waiting"):
+        return last
+
+    return None
+
+
+def decide(decision: dict) -> None:
+    """Answer the question the turn stopped on, and let it finish."""
+    st.session_state.transcript[-1]["waiting"] = []
+
+    with st.chat_message("assistant"):
+        said = draw_turn(
+            st.session_state.session.resume(
+                {"decisions": [decision]}
+            ),
+            st.container(),
+        )
+
+    st.session_state.transcript.append(said)
+    st.rerun()
+
+
+def draw_permission(turn: dict) -> None:
+    """Show what is about to change, and offer to allow or refuse it.
+
+    Drawn from the transcript rather than inside the turn that asked, so the
+    question is still there after a rerun rather than only in the run that
+    produced it.
+    """
+    with st.chat_message("assistant"):
+        for one in turn["waiting"]:
+            st.warning(
+                f"This will change the spreadsheet: "
+                f"**{rendered(ToolCall(one['tool'], one['arguments']))}**. "
+                "There is no undo."
+            )
+
+        allow, refuse = st.columns(2)
+
+        if allow.button("Allow", type="primary", width="stretch"):
+            decide({"type": "approve"})
+
+        if refuse.button("Cancel", width="stretch"):
+            decide(
+                {
+                    "type": "reject",
+                    "message": (
+                        "The user did not allow this change. Do not try it "
+                        "again unless they ask."
+                    ),
+                }
+            )
 
 
 def draw_transcript() -> None:
@@ -459,7 +532,11 @@ def draw_transcript() -> None:
             if role == "assistant":
                 # The same rule draw_turn drew it by, so a turn reads the
                 # same before and after a rerun.
-                if not turn.get("text") and not turn.get("artifacts"):
+                if (
+                    not turn.get("text")
+                    and not turn.get("artifacts")
+                    and not turn.get("waiting")
+                ):
                     st.markdown(NO_ANSWER)
 
                 draw_actions(
@@ -716,6 +793,12 @@ def main() -> None:
     sidebar()
     draw_header()
     draw_transcript()
+
+    pending = asking_permission()
+
+    if pending:
+        draw_permission(pending)
+        return
 
     picked = draw_empty_state()
 
