@@ -13,9 +13,6 @@ from excel_agent.graph.replies import arabic, asked_for, repeated_sentence
 from excel_agent.graph.state import WORKERS, State
 
 
-# The openings of every answer this codebase writes itself: the budget-spent
-# and nothing-to-say fallbacks, and the failure report. Judging our own
-# sentences wastes a pass, and a rewrite could only make them worse.
 AUTHORED = (
     "I used every step this request is allowed",
     "I could not produce an answer for that.",
@@ -24,9 +21,7 @@ AUTHORED = (
 )
 
 
-# Names of the machinery, which no user-facing answer has any business
-# saying. The specialists' underscored names cannot appear in ordinary prose,
-# so matching them raises no false alarms.
+# Internal names cannot appear in ordinary prose.
 INTERNAL = (*WORKERS, "delegate tool", "specialist")
 
 
@@ -65,16 +60,14 @@ FAIL: <one sentence saying what is wrong, addressed to the writer>
 
 
 def authored(answer: str) -> bool:
-    """Whether the answer is one of our own sentences, not the model's."""
+    """Whether the answer is one of the fixed fallback sentences, not the model's."""
     return answer.startswith(AUTHORED)
 
 
 def judged(model, answer: str, question: str, reports: list[str]) -> str | None:
     """What the judge finds wrong, or None.
 
-    Prose in, one line out. Asked for the verdict inside a schema, this model
-    returned malformed JSON about half the time; asked for a line starting
-    PASS or FAIL it was measured at 12 of 12. Anything else it says is
+    Prose in, one line out. Asked for the verdict inside a schema. Anything else it says is
     treated as a pass, because an unreadable verdict must never block a good
     answer.
     """
@@ -97,8 +90,7 @@ def judged(model, answer: str, question: str, reports: list[str]) -> str | None:
             ]
         )
 
-    # The judge is a guard, not a dependency: a judge that cannot be
-    # reached must never take the answer down with it.
+    # A judge that cannot be reached must never take the answer down with it.
     except Exception:  # noqa: BLE001
         return None
 
@@ -170,11 +162,8 @@ def validator_node(model=None):
         answer = str(state.get("final_answer") or "")
         question = asked_for(state)
 
-        # Second visit: the supervisor already rewrote once, so whatever the
-        # rewrite looks like, the loop ends here. The original is still the
-        # last message -- the correction pass wrote no message -- so the
-        # better of the two is kept, and the thread is settled to match what
-        # the user sees.
+        # The supervisor already rewrote once, so the loop ends here: the
+        # better of the two answers is kept, and the thread settled to match.
         if state.get("correction") is not None:
             last = (state.get("messages") or [None])[-1]
             original = str(getattr(last, "content", "") or "")
@@ -192,9 +181,7 @@ def validator_node(model=None):
 
         found = problems(answer, question)
 
-        # The judge runs only when the cheap checks found nothing: an answer
-        # already going back for a deterministic reason does not need a
-        # second opinion on the same trip.
+        # The judge runs only when the cheap checks found nothing.
         if not found:
             semantic = judged(
                 model,
@@ -207,8 +194,7 @@ def validator_node(model=None):
                 found = [semantic]
 
         if found:
-            # No cleanup: the supervisor needs the turn's evidence to
-            # rewrite.
+            # No cleanup: the supervisor needs the evidence to rewrite.
             return {
                 "correction": "\n".join(f"- {one}" for one in found)
             }
