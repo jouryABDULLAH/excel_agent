@@ -17,7 +17,7 @@ from collections.abc import Iterable
 import streamlit as st
 
 from excel_agent import browsing
-from excel_agent.config import MODEL
+from excel_agent.config import MODEL, build
 from excel_agent.runner import (
     Answer,
     Artifact, 
@@ -611,6 +611,13 @@ def sidebar() -> None:
             MODEL,
             language=None,
         )
+
+        running = build()
+
+        if running:
+            # A page open across a code change looks the same as one that is
+            # not, so a fix that is not running reads as a fix that failed.
+            st.caption(f"Build {running}")
 
 
 # ---------------------------------------------------------------------------

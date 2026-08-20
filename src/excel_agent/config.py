@@ -44,6 +44,28 @@ START_SPREADSHEET = os.environ.get("EXCEL_AGENT_SPREADSHEET")
 MAX_TURNS = 20
 
 
+def build() -> str:
+    """The commit this process is running, short, or empty if unknown.
+
+    Read from .git directly rather than by running git, so it costs nothing
+    and works where git is not on the path. A page that has been open across
+    a code change otherwise looks identical to one that has not, and a fix
+    that is not running is indistinguishable from a fix that did not work.
+    """
+    try:
+        head = (PROJECT_ROOT / ".git" / "HEAD").read_text().strip()
+
+        if head.startswith("ref: "):
+            head = (
+                (PROJECT_ROOT / ".git" / head[5:]).read_text().strip()
+            )
+
+        return head[:7]
+
+    except OSError:
+        return ""
+
+
 def require_api_key() -> str:
     """Return the API key, or explain how to set it if it is missing."""
     if not GROQ_API_KEY:
