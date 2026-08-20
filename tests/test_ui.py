@@ -451,3 +451,63 @@ def test_the_answer_itself_is_what_gets_stored():
     kept = finished([runner.Answer("There are 51 rows.")])
 
     assert kept["text"] == "There are 51 rows."
+
+
+def test_a_turn_that_stopped_to_ask_is_one_turn_again_afterwards():
+    """REGRESSION: the half before the question was left as its own turn, so
+    deciding replaced the buttons with "finished without a written response"
+    and the real answer arrived underneath it."""
+    from excel_agent.ui import joined
+
+    paused = {
+        "role": "assistant",
+        "text": "",
+        "calls": ["delete_row(row=3)"],
+        "artifacts": [],
+        "waiting": [{"tool": "delete_row", "arguments": {"row": 3}, "id": "a"}],
+    }
+
+    whole = joined(
+        paused,
+        {
+            "role": "assistant",
+            "text": "Deleted row 3.",
+            "calls": ["inspect_sheet()"],
+            "artifacts": [{"operation": "inspect_sheet"}],
+            "waiting": [],
+        },
+    )
+
+    assert whole["text"] == "Deleted row 3."
+    assert whole["calls"] == ["delete_row(row=3)", "inspect_sheet()"]
+    assert whole["artifacts"] == [{"operation": "inspect_sheet"}]
+
+    # Nothing is left waiting, and the turn is no longer the empty-looking
+    # one that drew NO_ANSWER.
+    assert whole["waiting"] == []
+    assert whole["text"] or whole["artifacts"]
+
+
+def test_a_turn_that_stops_twice_keeps_asking():
+    from excel_agent.ui import joined
+
+    still = [{"tool": "delete_row", "arguments": {"row": 9}, "id": "b"}]
+
+    whole = joined(
+        {
+            "role": "assistant",
+            "text": "",
+            "calls": [],
+            "artifacts": [],
+            "waiting": [{"tool": "delete_row", "arguments": {"row": 3}, "id": "a"}],
+        },
+        {
+            "role": "assistant",
+            "text": "",
+            "calls": ["delete_row(row=3)"],
+            "artifacts": [],
+            "waiting": still,
+        },
+    )
+
+    assert whole["waiting"] == still

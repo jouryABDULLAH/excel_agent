@@ -539,3 +539,53 @@ def test_a_worker_never_decides_what_happens_next(specialist, a_sheet):
     written = running(specialist, [AIMessage("Nothing to report.")])
 
     assert not {"route", "task", "final_answer"} & set(written)
+
+
+def test_every_change_in_one_pause_gets_its_own_decision(a_deletable_row):
+    """REGRESSION: one decision was sent however many changes were waiting,
+    so asking to change several rows answered only the first and the rest
+    were quietly dropped."""
+    from excel_agent.ui import _decisions
+
+    asking = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": "delete_row",
+                "args": {"row": 3},
+                "id": "a",
+                "type": "tool_call",
+            },
+            {
+                "name": "delete_row",
+                "args": {"row": 4},
+                "id": "b",
+                "type": "tool_call",
+            },
+        ],
+    )
+
+    session, events = asking_to_delete(
+        [
+            calling("delegate", "1", next="row_editor", task="delete two rows"),
+            asking,
+            AIMessage("Both are gone."),
+            AIMessage("Deleted rows 3 and 4."),
+        ]
+    )
+
+    waiting = [
+        {"tool": one.tool, "arguments": one.arguments, "id": one.id}
+        for one in events
+        if isinstance(one, Approval)
+    ]
+
+    assert len(waiting) == 2
+
+    list(
+        session.resume(
+            _decisions(waiting, {"type": "approve"})
+        )
+    )
+
+    assert [one["start_row"] for one in a_deletable_row] == [3, 4]

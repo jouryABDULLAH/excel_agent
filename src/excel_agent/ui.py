@@ -460,19 +460,68 @@ def asking_permission() -> dict | None:
     return None
 
 
+def _decisions(waiting: list[dict], decision: dict) -> dict:
+    """The same answer given to every change the turn stopped on.
+
+    One decision per change, grouped under the pause it belongs to: a model
+    that asks for three rows at once is three changes, and a single decision
+    would leave two of them unanswered.
+    """
+    pauses: dict[str, list[dict]] = {}
+
+    for one in waiting:
+        pauses.setdefault(one["id"], []).append(one)
+
+    return {
+        pause: {
+            "decisions": [
+                dict(decision) for _ in asked
+            ]
+        }
+        for pause, asked in pauses.items()
+    }
+
+
+def joined(paused: dict, said: dict) -> dict:
+    """One turn again, after stopping to ask split it in two.
+
+    The half before the question holds the actions but no answer, so left as
+    a turn of its own it is drawn as one that finished without saying
+    anything.
+    """
+    return {
+        **paused,
+        "text": "\n\n".join(
+            one
+            for one in (paused["text"], said["text"])
+            if one
+        ),
+        "calls": paused["calls"] + said["calls"],
+        "artifacts": (
+            paused["artifacts"] + said["artifacts"]
+        ),
+        # A turn can stop twice, when it has more than one change to make.
+        "waiting": said["waiting"],
+    }
+
+
 def decide(decision: dict) -> None:
     """Answer the question the turn stopped on, and let it finish."""
-    st.session_state.transcript[-1]["waiting"] = []
+    paused = st.session_state.transcript[-1]
+    waiting = paused.get("waiting") or []
+
+    paused["waiting"] = []
 
     with st.chat_message("assistant"):
         said = draw_turn(
             st.session_state.session.resume(
-                {"decisions": [decision]}
+                _decisions(waiting, decision)
             ),
             st.container(),
         )
 
-    st.session_state.transcript.append(said)
+    st.session_state.transcript[-1] = joined(paused, said)
+
     st.rerun()
 
 
@@ -756,6 +805,12 @@ def handle_question(
     st.session_state.transcript.append(
         said
     )
+
+    # main() looks for a waiting change before it runs the question, so a turn
+    # that stops has to redraw to ask; otherwise the question sits unshown
+    # until something else reruns the page.
+    if said.get("waiting"):
+        st.rerun()
 
     # A turn can select another spreadsheet. The header/sidebar were rendered
     # before the agent changed it, so rerun once to make the UI truthful.
