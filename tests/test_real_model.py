@@ -328,3 +328,51 @@ def test_deleting_several_rows_asks_for_permission_once(a_sheet, monkeypatch):
     list(session.resume({"decisions": [{"type": "approve"}]}))
 
     assert [one["ranges"] for one in deleted] == [[(3, 5)]]
+
+
+def test_a_refused_deletion_ends_with_a_graceful_answer(a_sheet, monkeypatch):
+    """REGRESSION: told "rejected, do not retry" as middleware feedback, the
+    model retried the deletion, paused the turn a second time and the user
+    was shown a turn that finished without a written response.
+
+    Refusal is now the tool call's own result, in the ok:false shape every
+    tool failure takes, which this model reads as final.
+    """
+    from excel_agent.runner import Approval
+    from excel_agent.tools import rows as rows_tool
+    from excel_agent.ui import REFUSED
+
+    monkeypatch.setattr(
+        rows_tool,
+        "resolve_spreadsheet",
+        lambda name=None: ("an-id", name or SPREADSHEET),
+    )
+
+    deleted: list[dict] = []
+
+    monkeypatch.setattr(
+        spreadsheet_service,
+        "delete_rows",
+        lambda **sent: deleted.append(sent) or {},
+    )
+
+    session = Session(build_graph(build_model()))
+    session.use(SPREADSHEET)
+
+    list(session.ask("delete rows 3 and 4"))
+
+    events = list(
+        session.resume(
+            {"decisions": [{"type": "respond", "message": REFUSED}]}
+        )
+    )
+
+    answer = next(
+        (one.text for one in events if isinstance(one, Answer)), ""
+    )
+
+    assert deleted == []
+    assert not [one for one in events if isinstance(one, Approval)], (
+        "the refused deletion was asked for again"
+    )
+    assert answer.strip(), "the refusal ended without a written answer"

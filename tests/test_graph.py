@@ -467,13 +467,24 @@ def test_allowing_a_deletion_carries_the_turn_on(a_deletable_row):
 
 
 def test_refusing_a_deletion_leaves_the_row_alone(a_deletable_row):
+    """Refusal is answered as a structured tool failure, not as feedback:
+    told "rejected, do not retry" this model retried; handed a failed tool
+    result it reports the outcome and stops."""
+    from excel_agent.ui import REFUSED
+
     session, _ = asking_to_delete(DELETES_A_ROW)
 
-    events = list(session.resume({"decisions": [{"type": "reject"}]}))
+    events = list(
+        session.resume(
+            {"decisions": [{"type": "respond", "message": REFUSED}]}
+        )
+    )
 
     # The turn still ends with something said, rather than dying unanswered.
     assert a_deletable_row == []
     assert [one for one in events if isinstance(one, Answer)]
+    # And it truly ended: nothing is waiting for another decision.
+    assert not [one for one in events if isinstance(one, Approval)]
 
 
 # What a worker is allowed to write

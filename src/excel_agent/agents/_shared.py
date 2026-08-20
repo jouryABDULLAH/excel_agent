@@ -12,9 +12,10 @@ from excel_agent.graph.replies import DELIVERED, asked_for, table_free
 from excel_agent.graph.state import State
 
 
-# What a gated tool offers: run it or do not. Editing the arguments is a way
-# of writing a spreadsheet change by hand, which is what the agent is for.
-CONFIRMED = {"allowed_decisions": ["approve", "reject"]}
+# What a gated tool offers: run it, or answer the call with a refusal the
+# model reads as a tool result. Editing the arguments is excluded: that is
+# writing a spreadsheet change by hand, which is what the agent is for.
+CONFIRMED = {"allowed_decisions": ["approve", "respond"]}
 
 
 DELEGATED = """\

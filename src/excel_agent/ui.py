@@ -527,6 +527,18 @@ def decide(decision: dict) -> None:
     st.rerun()
 
 
+# What a cancelled change answers its tool call with. Shaped like every other
+# tool failure, because that is the one refusal this model reliably reads as
+# final: told "rejected, do not retry" as feedback, it retried; handed this as
+# the call's result, it reported the outcome and stopped. Measured, not
+# assumed.
+REFUSED = (
+    '{"ok": false, "error": "rejected_by_user", "message": '
+    '"The user declined this change. Nothing was changed. '
+    'Report this outcome; never retry the call."}'
+)
+
+
 def _shown(name: str, value) -> str:
     """One argument as a card line, row lists written as ranges."""
     if name == "rows" and isinstance(value, list):
@@ -580,15 +592,7 @@ def draw_permission(turn: dict) -> None:
             decide({"type": "approve"})
 
         if refuse.button("Cancel", width="stretch"):
-            decide(
-                {
-                    "type": "reject",
-                    "message": (
-                        "The user did not allow this change. Do not try it "
-                        "again unless they ask."
-                    ),
-                }
-            )
+            decide({"type": "respond", "message": REFUSED})
 
 
 def draw_transcript() -> None:
