@@ -4,6 +4,20 @@ The graph's state stays in state.py; everything here works on the words that
 cross the worker/supervisor boundary or reach the user.
 """
 
+import re
+
+from langchain_core.messages import HumanMessage
+
+
+def asked_for(state) -> str:
+    """What the user actually wrote, which is also what says their language."""
+    for message in reversed(state.get("messages") or []):
+        if isinstance(message, HumanMessage):
+            return str(message.content)
+
+    return ""
+
+
 # Appended to a report whose table was cut because the application draws it:
 # the supervisor cannot see the drawing, and an intro pointing at nothing
 # reads as a worker that returned nothing, so it sends the task out again.
@@ -107,3 +121,28 @@ def without_drawn_table(said: str, tables: list[list[str]] | None) -> str:
     settle()
 
     return "\n".join(kept).strip()
+
+
+def arabic(said: str) -> bool:
+    """Whether any of the text is written in Arabic script."""
+    return any("؀" <= one <= "ۿ" for one in said)
+
+
+def repeated_sentence(said: str) -> str | None:
+    """A sentence the reply says more than once, or None.
+
+    Looser than undoubled, which is why it only ever reports: the repeat is
+    handed back to the model to rewrite rather than cut out of its answer.
+    """
+    counted: dict[str, str] = {}
+
+    for one in re.split(r"(?<=[.!?؟])\s+|\n+", said):
+        key = re.sub(r"[^\w]+", "", one, flags=re.UNICODE).casefold()
+
+        if len(key) > 8:
+            if key in counted:
+                return counted[key].strip()
+
+            counted[key] = one
+
+    return None

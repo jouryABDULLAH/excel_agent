@@ -6,6 +6,7 @@ from langgraph.graph import END, START, StateGraph
 from excel_agent.agents import SPECIALISTS
 from excel_agent.graph.state import State
 from excel_agent.graph.supervisor import build_supervisor, supervisor_node
+from excel_agent.graph.validator import route_correction, validator_node
 from excel_agent.model import build_model
 
 
@@ -40,15 +41,26 @@ def build_graph(model=None, checkpointer=None):
             specialist.build(model),
         )
 
+    builder.add_node("validator", validator_node)
+
     builder.add_edge(START, "supervisor")
 
+    # "end" still means the supervisor is done; the validator is what being
+    # done now goes through on the way out.
     builder.add_conditional_edges(
         "supervisor",
         route_worker,
         {
             **{one.NAME: one.NAME for one in SPECIALISTS},
-            "end": END,
+            "end": "validator",
         },
+    )
+
+    # Once, at most: the second visit always leaves.
+    builder.add_conditional_edges(
+        "validator",
+        route_correction,
+        {"supervisor": "supervisor", "end": END},
     )
 
     # Every worker reports back to the supervisor.

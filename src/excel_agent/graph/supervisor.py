@@ -140,6 +140,17 @@ HOW TO REPLY
 - Do one or the other, never both.
 """
 
+REWRITING = """\
+
+
+REWRITE YOUR ANSWER
+Your previous answer was rejected before reaching the user, for the
+reasons below. Write a corrected answer now, from WORK SO FAR THIS TURN
+and nothing else. Do not delegate. Fix only what is named; keep
+everything that was right.
+{feedback}
+"""
+
 OUT_OF_STEPS = """\
 
 OUT OF STEPS
@@ -161,6 +172,7 @@ class SupervisorState(AgentState):
     spreadsheet_name: str | None
     worker_results: list[str]
     delegations: int
+    correction: str | None
 
 
 @tool(DELEGATE, args_schema=Delegate)
@@ -183,6 +195,7 @@ def supervisor_instructions(
     spreadsheet_name: str | None,
     worker_results: list[str],
     out_of_steps: bool = False,
+    correction: str | None = None,
 ) -> str:
     """The prompt, named the file and the work so far."""
     return (
@@ -196,6 +209,11 @@ def supervisor_instructions(
         )
         + DECIDING
         + (OUT_OF_STEPS if out_of_steps else "")
+        + (
+            REWRITING.format(feedback=correction)
+            if correction is not None
+            else ""
+        )
     )
 
 
@@ -208,6 +226,7 @@ def supervisor_prompt(request) -> str:
         out_of_steps=(
             (request.state.get("delegations") or 0) >= MAX_DELEGATIONS
         ),
+        correction=request.state.get("correction"),
     )
 
 
@@ -218,7 +237,10 @@ def no_more_delegating(request, handler):
     The prompt says to answer; this makes delegating impossible as well, so a
     model that ignores the prompt still cannot loop.
     """
-    if (request.state.get("delegations") or 0) >= MAX_DELEGATIONS:
+    if (
+        (request.state.get("delegations") or 0) >= MAX_DELEGATIONS
+        or request.state.get("correction") is not None
+    ):
         request = request.override(tools=[])
 
     return handler(request)
@@ -291,6 +313,7 @@ def _one_call(supervisor, state: State, delegated: int, config=None):
             "spreadsheet_name": state.get("spreadsheet_name"),
             "worker_results": state.get("worker_results") or [],
             "delegations": delegated,
+            "correction": state.get("correction"),
         },
         config,
     )["messages"][-1]
@@ -340,12 +363,16 @@ def _nothing_to_say(state: State) -> str:
 def _decide(supervisor, state: State, config=None) -> dict:
     """Ask the planner what happens next, and turn it into state."""
     delegated = state.get("delegations") or 0
+    correcting = state.get("correction") is not None
 
     said = _said(supervisor, state, delegated, config)
 
     calls = getattr(said, "tool_calls", None) or []
 
-    if calls and delegated < MAX_DELEGATIONS:
+    # On the rewrite pass a delegation is ignored, not just discouraged: the
+    # tools were stripped, but a model that hallucinates a call anyway must
+    # not re-enter a worker with the turn's work already done.
+    if calls and delegated < MAX_DELEGATIONS and not correcting:
         asked = Delegate(**calls[0]["args"])
 
         # Only the first call is answered, so a second one checkpointed here
@@ -379,6 +406,20 @@ def _decide(supervisor, state: State, config=None) -> dict:
             else _nothing_to_say(state)
         )
 
+    # The rewrite pass changes the answer only. The thread still holds the
+    # original as its last message, so the validator can weigh the two and
+    # settle the message itself; writing one here would destroy the original
+    # before that comparison happens.
+    if correcting:
+        return {
+            "route": "end",
+            "task": None,
+            "final_answer": answer,
+        }
+
+    # The turn-scoped fields are not cleared here: the validator still needs
+    # the worker reports to check the answer against, and clears them itself
+    # once the turn truly ends.
     return {
         "route": "end",
         "task": None,
@@ -388,9 +429,6 @@ def _decide(supervisor, state: State, config=None) -> dict:
             if not calls and str(said.content or "") == answer
             else AIMessage(answer)
         ],
-        "worker_results": [],
-        "drawn_tables": [],
-        "delegations": 0,
     }
 
 

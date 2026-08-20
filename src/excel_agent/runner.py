@@ -383,6 +383,7 @@ class Session:
                 "delegations": 0,
                 "worker_results": [],
                 "drawn_tables": [],
+                "correction": None,
             }
         )
 

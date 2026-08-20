@@ -8,7 +8,7 @@ from langchain.agents import AgentState
 from langchain_core.messages import HumanMessage, ToolMessage
 from langgraph.errors import GraphInterrupt
 
-from excel_agent.graph.replies import DELIVERED, table_free
+from excel_agent.graph.replies import DELIVERED, asked_for, table_free
 from excel_agent.graph.state import State
 
 
@@ -49,15 +49,6 @@ class WorkerState(AgentState):
     """
 
     spreadsheet_name: str | None
-
-
-def asked_for(state: State) -> str:
-    """What the user actually wrote, which is also what says their language."""
-    for message in reversed(state.get("messages") or []):
-        if isinstance(message, HumanMessage):
-            return str(message.content)
-
-    return ""
 
 
 def instruction(state: State) -> str:

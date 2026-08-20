@@ -369,6 +369,9 @@ def test_every_turn_starts_with_last_turn_forgotten():
     assert asked[0]["delegations"] == 0
     assert asked[0]["worker_results"] == []
     assert asked[0]["drawn_tables"] == []
+    # Feedback left by a validator whose rewrite never landed would make the
+    # next question a rewrite-only turn that cannot delegate.
+    assert asked[0]["correction"] is None
 
 
 def test_an_answer_the_stream_lost_is_recovered_from_state():

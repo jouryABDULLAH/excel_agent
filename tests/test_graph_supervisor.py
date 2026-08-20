@@ -186,15 +186,16 @@ def test_finishing_carries_the_answer_and_ends():
     assert written["final_answer"] == "There are 51 rows."
 
 
-def test_finishing_forgets_the_work_it_was_based_on():
+def test_finishing_leaves_the_evidence_for_the_validator():
+    """Cleanup used to happen here; it moved to the validator, which needs
+    the worker reports still in state to check the answer against them."""
     written = deciding(
         [AIMessage("There are 51 rows.")],
         worker_results=["[analyst] 51 rows"],
     )
 
-    # worker_results belongs to one turn. Kept, the next turn's supervisor
-    # would read work it did not do as though it had just happened.
-    assert written["worker_results"] == []
+    assert "worker_results" not in written
+    assert "drawn_tables" not in written
 
 
 # What the supervisor is told

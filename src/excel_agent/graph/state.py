@@ -53,6 +53,12 @@ class State(AgentState):
     # report establishes.
     delegations: int
 
+    # What the validator found wrong with the answer, or None when nothing
+    # is pending. Set on the way back to the supervisor for its one
+    # correction pass, and what marks that pass as already spent: feedback
+    # from a second look is not acted on.
+    correction: str | None
+
 
 class Delegate(BaseModel):
     """Hand the next step to a specialist."""
