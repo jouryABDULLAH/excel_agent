@@ -391,7 +391,13 @@ def _decide(supervisor, state: State, config=None) -> dict:
             "delegations": delegated + 1,
         }
     
-    answer = "" if calls else str(said.content or "")
+    # On the rewrite pass a stray call is ignored, so text riding along with
+    # it is still the rewrite and must not be thrown away with the call.
+    answer = (
+        ""
+        if calls and not correcting
+        else str(said.content or "")
+    )
 
     answer = answer.replace(DELIVERED, "").strip()
 

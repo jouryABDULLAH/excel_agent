@@ -24,9 +24,18 @@ def route_worker(state: State) -> str:
     return route
 
 
-def build_graph(model=None, checkpointer=None):
+# "the judge is the model" as a default that None can override: a scripted
+# test switches the judge off with judge=None, or a clean finish would hand
+# the script's next entry to the judge and quietly desync the test.
+SAME_MODEL = object()
+
+
+def build_graph(model=None, checkpointer=None, judge=SAME_MODEL):
     """Wire the supervisor to its specialists and back."""
     model = model or build_model()
+
+    if judge is SAME_MODEL:
+        judge = model
 
     builder = StateGraph(State)
 
@@ -41,7 +50,7 @@ def build_graph(model=None, checkpointer=None):
             specialist.build(model),
         )
 
-    builder.add_node("validator", validator_node(model))
+    builder.add_node("validator", validator_node(judge))
 
     builder.add_edge(START, "supervisor")
 

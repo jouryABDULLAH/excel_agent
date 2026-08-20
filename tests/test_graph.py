@@ -39,7 +39,7 @@ def a_sheet(monkeypatch):
 
 def a_turn(script, **state) -> dict:
     """Put one question through the graph."""
-    graph = build_graph(ScriptedModel(script=script))
+    graph = build_graph(ScriptedModel(script=script), judge=None)
 
     return graph.invoke(
         {
@@ -176,7 +176,7 @@ def test_delegating_is_never_shown_to_the_user_as_work(a_sheet):
     the tool's name as a string: rename one without the other and the user is
     told about a delegation on every turn.
     """
-    session = Session(build_graph(ScriptedModel(script=DELEGATES_THEN_ANSWERS)))
+    session = Session(build_graph(ScriptedModel(script=DELEGATES_THEN_ANSWERS), judge=None))
     session.use("TEST - Sales Orders")
 
     work = [
@@ -199,7 +199,8 @@ def a_read(render_data: bool) -> list:
                     AIMessage("Here are the rows."),
                     AIMessage("Here are the first 5 rows."),
                 ]
-            )
+            ),
+            judge=None,
         )
     )
     session.use("TEST - Sales Orders")
@@ -234,7 +235,7 @@ def test_a_tool_call_says_which_specialist_made_it(a_sheet):
     The UI shows progress from this. Delegating stopped being a tool call, so
     without it every action would read "Working on it...".
     """
-    session = Session(build_graph(ScriptedModel(script=DELEGATES_THEN_ANSWERS)))
+    session = Session(build_graph(ScriptedModel(script=DELEGATES_THEN_ANSWERS), judge=None))
     session.use("TEST - Sales Orders")
 
     made = [
@@ -355,7 +356,7 @@ def traced(script) -> Recorder:
     """One turn through the graph, with its run tree recorded."""
     watching = Recorder()
 
-    build_graph(ScriptedModel(script=script)).invoke(
+    build_graph(ScriptedModel(script=script), judge=None).invoke(
         {
             "messages": [{"role": "user", "content": "how many rows?"}],
             "spreadsheet_name": "TEST - Sales Orders",
@@ -431,7 +432,7 @@ DELETES_A_ROW = [
 
 def asking_to_delete(script):
     """A session that has asked for a row to be deleted."""
-    session = Session(build_graph(ScriptedModel(script=list(script))))
+    session = Session(build_graph(ScriptedModel(script=list(script)), judge=None))
     session.use("TEST - Sales Orders")
 
     return session, list(session.ask("delete row 3"))

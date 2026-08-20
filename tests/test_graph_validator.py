@@ -168,7 +168,8 @@ def test_a_bad_answer_is_rewritten_once_and_reaches_the_user_corrected():
                     AIMessage("QUESTION: which sheet did you mean?"),
                     AIMessage("Which sheet did you mean?"),
                 ]
-            )
+            ),
+            judge=None,
         )
     )
     session.use("TEST - Sales Orders")
@@ -178,4 +179,43 @@ def test_a_bad_answer_is_rewritten_once_and_reaches_the_user_corrected():
         if isinstance(one, Answer)
     ]
 
+    assert answers == ["Which sheet did you mean?"]
+
+
+def test_a_stray_delegation_during_the_rewrite_is_ignored_not_obeyed():
+    """On the rewrite pass a call is ignored, but text riding along with it
+    is still the rewrite: throwing both away lost a usable answer."""
+    session = Session(
+        build_graph(
+            ScriptedModel(
+                script=[
+                    calling("delegate", "1", next="analyst", task="count"),
+                    AIMessage("done"),
+                    AIMessage("QUESTION: which sheet?"),
+                    # The rewrite arrives with a hallucinated call attached.
+                    AIMessage(
+                        content="Which sheet did you mean?",
+                        tool_calls=[
+                            {
+                                "name": "delegate",
+                                "args": {"next": "analyst", "task": "again"},
+                                "id": "9",
+                                "type": "tool_call",
+                            }
+                        ],
+                    ),
+                ]
+            ),
+            judge=None,
+        )
+    )
+    session.use("TEST - Sales Orders")
+
+    answers = [
+        one.text for one in session.ask("how many rows?")
+        if isinstance(one, Answer)
+    ]
+
+    # The text shipped and the call did not run: a script with no entry for
+    # a second analyst visit would have failed loudly here if it had.
     assert answers == ["Which sheet did you mean?"]
