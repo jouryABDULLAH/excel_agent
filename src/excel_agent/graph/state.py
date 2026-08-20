@@ -63,6 +63,22 @@ DELIVERED = (
     "Done. If you mention it, say the table below, never above.)"
 )
 
+
+def table_free(said: str) -> str:
+    """The text with any markdown table removed.
+
+    A table line is one that starts with a pipe; everything around it
+    survives. Used on both sides of the delivery note: the worker's report
+    loses its table because the application draws it, and the supervisor's
+    reply loses one it rebuilt from the report.
+    """
+    return "\n".join(
+        line
+        for line in said.splitlines()
+        if not line.lstrip().startswith("|")
+    ).strip()
+
+
 # Delegating is how the supervisor answers, not work done on a spreadsheet.
 # The runner skips it so it does not show up as an action the user was told
 # about.

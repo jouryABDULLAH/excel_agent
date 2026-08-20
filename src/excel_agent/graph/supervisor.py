@@ -12,7 +12,13 @@ from langchain.agents.middleware import (
 from langchain_core.messages import AIMessage
 from langchain_core.tools import tool
 
-from excel_agent.graph.state import DELEGATE, DELIVERED, Delegate, State
+from excel_agent.graph.state import (
+    DELEGATE,
+    DELIVERED,
+    Delegate,
+    State,
+    table_free,
+)
 from excel_agent.prompts import CANNOT_DO
 
 
@@ -269,11 +275,9 @@ def _spent(state: State) -> str:
     )
 
 
-def _decide(supervisor, state: State) -> dict:
-    """Ask the planner what happens next, and turn it into state."""
-    delegated = state.get("delegations") or 0
-
-    said = supervisor.invoke(
+def _one_call(supervisor, state: State, delegated: int):
+    """Ask the planner once."""
+    return supervisor.invoke(
         {
             "messages": state["messages"],
             "spreadsheet_id": state.get("spreadsheet_id"),
@@ -282,6 +286,54 @@ def _decide(supervisor, state: State) -> dict:
             "delegations": delegated,
         }
     )["messages"][-1]
+
+
+def _decided_something(said) -> bool:
+    """A decision is a tool call or some text; a blank message is neither."""
+    return bool(
+        getattr(said, "tool_calls", None)
+        or str(said.content or "").strip()
+    )
+
+
+def _said(supervisor, state: State, delegated: int):
+    """One supervisor call, retried once if it decides nothing.
+
+    The model sometimes returns a message with no tool call and no text --
+    neither a delegation nor an answer. Taken at face value that became an
+    empty reply, which the front end shows as a turn that said nothing.
+    """
+    said = _one_call(supervisor, state, delegated)
+
+    if _decided_something(said):
+        return said
+
+    return _one_call(supervisor, state, delegated)
+
+
+def _nothing_to_say(state: State) -> str:
+    """The honest reply when the model twice decided nothing."""
+    done = "\n".join(
+        f"- {one}" for one in state.get("worker_results") or []
+    )
+
+    if not done:
+        return (
+            "I could not produce an answer for that. Please try again, or "
+            "put it another way."
+        )
+
+    return (
+        "I could not write up an answer, but this much was done:\n"
+        f"{done}"
+    )
+
+
+def _decide(supervisor, state: State) -> dict:
+    """Ask the planner what happens next, and turn it into state."""
+    delegated = state.get("delegations") or 0
+
+    said = _said(supervisor, state, delegated)
 
     calls = getattr(said, "tool_calls", None) or []
 
@@ -310,14 +362,31 @@ def _decide(supervisor, state: State) -> dict:
     # composing from the report sometimes copies it out.
     answer = answer.replace(DELIVERED, "").strip()
 
-    if not answer and delegated >= MAX_DELEGATIONS:
-        answer = _spent(state)
+    # And sometimes it rebuilds the whole table in prose. When a report says
+    # a table is being drawn, the same rows written out here would show the
+    # data twice.
+    if any(DELIVERED in one for one in state.get("worker_results") or []):
+        answer = table_free(answer)
+
+    if not answer:
+        answer = (
+            _spent(state)
+            if delegated >= MAX_DELEGATIONS
+            else _nothing_to_say(state)
+        )
 
     return {
         "route": "end",
         "task": None,
         "final_answer": answer,
-        "messages": [said if not calls else AIMessage(answer)],
+        # The thread keeps the reply the user was actually given. When the
+        # model's own message is not that -- blank, a dropped straggling
+        # call, or a stripped table -- a clean message replaces it.
+        "messages": [
+            said
+            if not calls and str(said.content or "") == answer
+            else AIMessage(answer)
+        ],
         "worker_results": [],
         "delegations": 0,
     }

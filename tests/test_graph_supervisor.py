@@ -52,6 +52,52 @@ def test_delegating_clears_any_answer_left_from_before():
     assert written["final_answer"] is None
 
 
+def test_a_blank_decision_is_asked_again():
+    """REGRESSION: the model returned no tool call and no text, and that
+    became an empty reply -- shown as a turn that said nothing."""
+    written = deciding(
+        [AIMessage(""), AIMessage("There are 51 rows.")],
+    )
+
+    assert written["route"] == "end"
+    assert written["final_answer"] == "There are 51 rows."
+
+
+def test_two_blank_decisions_still_answer_with_something():
+    written = deciding(
+        [AIMessage(""), AIMessage("")],
+        worker_results=["[file_manager] Selected it."],
+    )
+
+    assert written["route"] == "end"
+    # Never a silent blank: the user is told what was done.
+    assert "Selected it." in written["final_answer"]
+
+
+def test_a_table_the_supervisor_rebuilt_is_cut_when_one_is_drawn():
+    """The worker's table was stripped; the supervisor rebuilt it from the
+    report and the user saw the data twice."""
+    from excel_agent.graph.state import DELIVERED
+
+    written = deciding(
+        [AIMessage(
+            "Here they are:\n| Title | Author |\n|---|---|\n| Dune | Herbert |"
+        )],
+        worker_results=[f"[analyst] Here they are:\n{DELIVERED}"],
+    )
+
+    assert written["final_answer"] == "Here they are:"
+
+
+def test_a_table_stays_when_nothing_is_drawn():
+    written = deciding(
+        [AIMessage("Compare:\n| A | B |")],
+        worker_results=["[analyst] plain report, nothing drawn"],
+    )
+
+    assert "| A | B |" in written["final_answer"]
+
+
 def test_the_delivery_note_never_reaches_the_user():
     from excel_agent.graph.state import DELIVERED
 

@@ -7,7 +7,7 @@ and what they hand back, is here.
 from langchain.agents import AgentState
 from langchain_core.messages import HumanMessage, ToolMessage
 
-from excel_agent.graph.state import DELIVERED, State
+from excel_agent.graph.state import DELIVERED, State, table_free
 
 
 DELEGATED = """\
@@ -118,23 +118,16 @@ def run_worker(name: str, agent, state: State) -> tuple[str, dict | None]:
 
 
 def without_table_lines(said: str) -> str:
-    """The report with any markdown table removed.
+    """The report with its table removed and the delivery note added.
 
-    A table line is one that starts with a pipe; the introduction around it
-    survives. A report that was nothing but the table still has to say
-    something, or the supervisor is left composing an answer from nothing.
+    A report that was nothing but the table still has to say something, or
+    the supervisor is left composing an answer from nothing. The note is
+    there because the supervisor cannot see the drawn table: an intro like
+    "here are the rows:" followed by nothing reads as a worker that returned
+    nothing, and the supervisor sends the task out again.
     """
-    kept = [
-        line
-        for line in said.splitlines()
-        if not line.lstrip().startswith("|")
-    ]
-
-    # The supervisor reads this and cannot see the drawn table. Without the
-    # note, an intro like "here are the rows:" followed by nothing reads as a
-    # worker that returned nothing, and the supervisor sends it out again.
     return (
-        "\n".join(kept).strip()
+        table_free(said)
         or "The requested rows are shown in the table below."
     ) + f"\n{DELIVERED}"
 
