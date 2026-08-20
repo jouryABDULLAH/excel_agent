@@ -13,6 +13,11 @@ from excel_agent.graph.validator import route_correction, validator_node
 from excel_agent.runner import Answer, Session
 
 
+# The judge is off here: these pin the deterministic checks and the one-visit
+# contract, which must hold with no model at all.
+checked = validator_node()
+
+
 def finished(answer, question="how many rows?", **state):
     """State as the supervisor's finish leaves it."""
     return {
@@ -33,7 +38,7 @@ def finished(answer, question="how many rows?", **state):
 
 
 def test_a_clean_answer_ends_the_turn_and_clears_it():
-    written = validator_node(finished("The sheet has 5 rows."))
+    written = checked(finished("The sheet has 5 rows."))
 
     assert written["correction"] is None
     assert written["worker_results"] == []
@@ -45,7 +50,7 @@ def test_a_clean_answer_ends_the_turn_and_clears_it():
 
 def test_our_own_fallbacks_are_never_judged():
     # We wrote this sentence; a rewrite could only make it worse.
-    written = validator_node(
+    written = checked(
         finished("I could not produce an answer for that. Please try again.")
     )
 
@@ -56,7 +61,7 @@ def test_our_own_fallbacks_are_never_judged():
 
 
 def test_an_english_answer_to_an_arabic_question_goes_back():
-    written = validator_node(
+    written = checked(
         finished("There are 5 rows.", question="كم عدد الصفوف؟")
     )
 
@@ -67,13 +72,13 @@ def test_an_english_answer_to_an_arabic_question_goes_back():
 
 def test_an_arabic_answer_to_an_english_question_is_fine():
     # Seen live and accepted, so only the reverse direction is a failure.
-    written = validator_node(finished("يوجد 5 صفوف."))
+    written = checked(finished("يوجد 5 صفوف."))
 
     assert written["correction"] is None
 
 
 def test_a_leaked_question_marker_goes_back():
-    written = validator_node(
+    written = checked(
         finished("QUESTION: which column did you mean?")
     )
 
@@ -81,7 +86,7 @@ def test_a_leaked_question_marker_goes_back():
 
 
 def test_naming_the_machinery_goes_back():
-    written = validator_node(
+    written = checked(
         finished("The row_editor added your row.")
     )
 
@@ -89,7 +94,7 @@ def test_naming_the_machinery_goes_back():
 
 
 def test_a_sentence_said_twice_goes_back():
-    written = validator_node(
+    written = checked(
         finished(
             "The highest rated book is Dune, with a rating of 5. "
             "Some other sentence. "
@@ -108,7 +113,7 @@ def test_the_rewrite_is_kept_and_settles_the_thread():
     state["correction"] = "- Reply in Arabic."
     state["final_answer"] = "يوجد 5 صفوف."
 
-    written = validator_node(state)
+    written = checked(state)
 
     assert written["final_answer"] == "يوجد 5 صفوف."
     assert written["correction"] is None
@@ -124,7 +129,7 @@ def test_a_rewrite_that_is_worse_ships_the_original():
     state["correction"] = "- Say it better."
     state["final_answer"] = ""
 
-    written = validator_node(state)
+    written = checked(state)
 
     # An empty rewrite loses to the answer the model already wrote.
     assert written["final_answer"] == "There are 5 rows."
@@ -136,7 +141,7 @@ def test_a_still_broken_rewrite_never_goes_around_again():
     state["correction"] = "- Drop the marker."
     state["final_answer"] = "QUESTION: which one?"
 
-    written = validator_node(state)
+    written = checked(state)
 
     # Second visit always ends the turn, however the rewrite came out.
     assert written["correction"] is None

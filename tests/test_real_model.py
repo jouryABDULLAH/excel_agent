@@ -262,3 +262,30 @@ def test_short_follow_ups_do_not_come_back_said_twice(a_sheet):
         doubled += said_twice(answer)
 
     assert doubled <= 1, f"{doubled} of 4 answers repeated themselves"
+
+
+def test_the_judge_reads_a_verdict_the_code_can_parse():
+    """The semantic judge asks for prose starting PASS or FAIL, because this
+    model returned malformed JSON about half the time when asked for a
+    schema. Measured 12 of 12 on the probe; this keeps that measurable."""
+    from excel_agent.graph.validator import judged
+
+    model = build_model()
+
+    caught = judged(
+        model,
+        "The row was duplicated 15 times as requested.",
+        "duplicate the row 15 times",
+        ["[row_editor] Appended 9 copies of row 2, then ran out of steps."],
+    )
+
+    assert caught, "a claim of 15 against a report of 9 went unchallenged"
+
+    clean = judged(
+        model,
+        "Row 3 has been deleted.",
+        "delete row 3",
+        ["[row_editor] Deleted row 3 from Sales Orders."],
+    )
+
+    assert clean is None

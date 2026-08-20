@@ -41,7 +41,7 @@ def build_graph(model=None, checkpointer=None):
             specialist.build(model),
         )
 
-    builder.add_node("validator", validator_node)
+    builder.add_node("validator", validator_node(model))
 
     builder.add_edge(START, "supervisor")
 

@@ -44,9 +44,70 @@ DONE: dict = {
 }
 
 
+JUDGING = """\
+You review one answer from a spreadsheet assistant before the user sees it.
+You are given the user's question, reports from the specialists that did the
+work, and the answer. Judge only these two things:
+
+1. UNSUPPORTED SUCCESS: the answer claims a change was made that no report
+   establishes. A report saying a change failed, partially succeeded, or
+   never happened means the answer must not claim it succeeded.
+2. SCOPE: the answer ignores what was asked and answers something else.
+   Extra helpful detail is fine; answering a different question is not.
+
+Judge nothing else. Style, length, formatting and language are not yours.
+
+Reply with exactly one line:
+PASS
+or
+FAIL: <one sentence saying what is wrong, addressed to the writer>
+"""
+
+
 def authored(answer: str) -> bool:
     """Whether the answer is one of our own sentences, not the model's."""
     return answer.startswith(AUTHORED)
+
+
+def judged(model, answer: str, question: str, reports: list[str]) -> str | None:
+    """What the judge finds wrong, or None.
+
+    Prose in, one line out. Asked for the verdict inside a schema, this model
+    returned malformed JSON about half the time; asked for a line starting
+    PASS or FAIL it was measured at 12 of 12. Anything else it says is
+    treated as a pass, because an unreadable verdict must never block a good
+    answer.
+    """
+    if model is None:
+        return None
+
+    try:
+        said = model.invoke(
+            [
+                {"role": "system", "content": JUDGING},
+                {
+                    "role": "user",
+                    "content": (
+                        f"QUESTION:\n{question}\n\n"
+                        "SPECIALIST REPORTS:\n"
+                        + ("\n".join(reports) or "(none)")
+                        + f"\n\nANSWER:\n{answer}"
+                    ),
+                },
+            ]
+        )
+
+    # The judge is a guard, not a dependency: a judge that cannot be
+    # reached must never take the answer down with it.
+    except Exception:  # noqa: BLE001
+        return None
+
+    verdict = str(said.content or "").strip()
+
+    if verdict.upper().startswith("FAIL"):
+        return verdict.split(":", 1)[-1].strip() or None
+
+    return None
 
 
 def problems(answer: str, question: str) -> list[str]:
@@ -101,37 +162,60 @@ def acceptable(answer: str, question: str) -> bool:
     )
 
 
-def validator_node(state: State, config=None) -> dict:
-    """Pass the answer, or send it back to the supervisor exactly once."""
-    answer = str(state.get("final_answer") or "")
-    question = asked_for(state)
+def validator_node(model=None):
+    """The node, holding the judge it consults for the semantic checks."""
 
-    # Second visit: the supervisor already rewrote once, so whatever the
-    # rewrite looks like, the loop ends here. The original is still the last
-    # message -- the correction pass wrote no message -- so the better of the
-    # two is kept, and the thread is settled to match what the user sees.
-    if state.get("correction") is not None:
-        last = (state.get("messages") or [None])[-1]
-        original = str(getattr(last, "content", "") or "")
+    def validate(state: State, config=None) -> dict:
+        """Pass the answer, or send it back to the supervisor exactly once."""
+        answer = str(state.get("final_answer") or "")
+        question = asked_for(state)
 
-        kept = answer if acceptable(answer, question) else original
+        # Second visit: the supervisor already rewrote once, so whatever the
+        # rewrite looks like, the loop ends here. The original is still the
+        # last message -- the correction pass wrote no message -- so the
+        # better of the two is kept, and the thread is settled to match what
+        # the user sees.
+        if state.get("correction") is not None:
+            last = (state.get("messages") or [None])[-1]
+            original = str(getattr(last, "content", "") or "")
 
-        return {
-            **DONE,
-            "final_answer": kept,
-            "messages": [AIMessage(kept, id=last.id)],
-        }
+            kept = answer if acceptable(answer, question) else original
 
-    if authored(answer):
+            return {
+                **DONE,
+                "final_answer": kept,
+                "messages": [AIMessage(kept, id=last.id)],
+            }
+
+        if authored(answer):
+            return DONE
+
+        found = problems(answer, question)
+
+        # The judge runs only when the cheap checks found nothing: an answer
+        # already going back for a deterministic reason does not need a
+        # second opinion on the same trip.
+        if not found:
+            semantic = judged(
+                model,
+                answer,
+                question,
+                state.get("worker_results") or [],
+            )
+
+            if semantic is not None:
+                found = [semantic]
+
+        if found:
+            # No cleanup: the supervisor needs the turn's evidence to
+            # rewrite.
+            return {
+                "correction": "\n".join(f"- {one}" for one in found)
+            }
+
         return DONE
 
-    found = problems(answer, question)
-
-    if found:
-        # No cleanup: the supervisor needs the turn's evidence to rewrite.
-        return {"correction": "\n".join(f"- {one}" for one in found)}
-
-    return DONE
+    return validate
 
 
 def route_correction(state: State) -> str:
