@@ -17,7 +17,7 @@ from excel_agent.graph.state import (
     DELIVERED,
     Delegate,
     State,
-    table_free,
+    without_drawn_table,
 )
 from excel_agent.prompts import CANNOT_DO
 
@@ -111,6 +111,8 @@ FINAL ANSWER
 - Never mention specialists, agents or tools.
 - Keep successful write confirmations concise.
 - Never restate the user's requested action as though you are the user: "insert row with value X in position Y", these instruction should only be directed to the subagents.
+- Say each thing once. Never repeat a sentence, restate the answer in other
+  words, or follow an answer with a fuller version of the same answer.
 - After a delegated write, say only what actually succeeded or why it could
   not be completed.
 - If no write succeeded, never phrase the requested change as completed or use wording that expresses the requested change as an intention, instruction, or request, including phrases like "I want to" or "Please create".
@@ -367,11 +369,10 @@ def _decide(supervisor, state: State, config=None) -> dict:
     # composing from the report sometimes copies it out.
     answer = answer.replace(DELIVERED, "").strip()
 
-    # And sometimes it rebuilds the whole table in prose. When a report says
-    # a table is being drawn, the same rows written out here would show the
-    # data twice.
-    if any(DELIVERED in one for one in state.get("worker_results") or []):
-        answer = table_free(answer)
+    # And sometimes it writes the drawn table out again, which would show the
+    # data twice. Only that table goes: one the planner composed itself, such
+    # as a table of columns it is suggesting, is its answer.
+    answer = without_drawn_table(answer, state.get("drawn_columns"))
 
     if not answer:
         answer = (
@@ -393,6 +394,7 @@ def _decide(supervisor, state: State, config=None) -> dict:
             else AIMessage(answer)
         ],
         "worker_results": [],
+        "drawn_columns": [],
         "delegations": 0,
     }
 
@@ -415,6 +417,7 @@ def supervisor_node(supervisor):
                     f"{_why(failure)}. Please try again."
                 ),
                 "worker_results": [],
+                "drawn_columns": [],
                 "delegations": 0,
             }
 

@@ -35,6 +35,10 @@ class State(AgentState):
     # Turn-scoped, cleared by the supervisor when it finishes.
     worker_results: list[str]
 
+    # Columns of the tables the application drew this turn, so the supervisor
+    # can tell a table it should not repeat from one it wrote itself.
+    drawn_columns: list[str]
+
     # How many times the supervisor has delegated this turn. Also
     # turn-scoped: past MAX_DELEGATIONS it must answer with what it has.
     delegations: int
@@ -77,6 +81,61 @@ def table_free(said: str) -> str:
         for line in said.splitlines()
         if not line.lstrip().startswith("|")
     ).strip()
+
+
+def _cells(line: str) -> list[str]:
+    """The names in one markdown table row."""
+    return [
+        one.strip().strip("*_ ").casefold()
+        for one in line.strip().strip("|").split("|")
+    ]
+
+
+def _is_the_drawn_one(block: list[str], columns: set[str]) -> bool:
+    """Whether a table block is the one the application already drew.
+
+    Matched on its heading naming the drawn columns, so a table the planner
+    wrote about something else -- suggested columns, a comparison it made up
+    -- is left alone.
+    """
+    named = {one for one in _cells(block[0]) if one}
+
+    return len(named & columns) >= 2
+
+
+def without_drawn_table(said: str, columns: list[str] | None) -> str:
+    """The reply with only the already-drawn table removed.
+
+    The planner cannot see the table the application draws, and writing the
+    same rows out again would show the data twice. Removing every table
+    instead threw away ones it wrote itself, which is how a reply that was a
+    table of suggested columns reached the user as nothing at all.
+    """
+    wanted = {one.strip().casefold() for one in columns or [] if one.strip()}
+
+    if not wanted:
+        return said
+
+    kept: list[str] = []
+    block: list[str] = []
+
+    def settle() -> None:
+        if block and not _is_the_drawn_one(block, wanted):
+            kept.extend(block)
+
+        block.clear()
+
+    for line in said.splitlines():
+        if line.lstrip().startswith("|"):
+            block.append(line)
+            continue
+
+        settle()
+        kept.append(line)
+
+    settle()
+
+    return "\n".join(kept).strip()
 
 
 # Delegating is how the supervisor answers, not work done on a spreadsheet.

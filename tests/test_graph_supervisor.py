@@ -75,18 +75,36 @@ def test_two_blank_decisions_still_answer_with_something():
 
 
 def test_a_table_the_supervisor_rebuilt_is_cut_when_one_is_drawn():
-    """The worker's table was stripped; the supervisor rebuilt it from the
-    report and the user saw the data twice."""
-    from excel_agent.graph.state import DELIVERED
-
+    """The worker's table was stripped; the supervisor wrote it out again
+    from the report and the user saw the data twice."""
     written = deciding(
         [AIMessage(
             "Here they are:\n| Title | Author |\n|---|---|\n| Dune | Herbert |"
         )],
-        worker_results=[f"[analyst] Here they are:\n{DELIVERED}"],
+        drawn_columns=["Title", "Author"],
     )
 
     assert written["final_answer"] == "Here they are:"
+
+
+def test_a_table_the_supervisor_wrote_itself_is_kept():
+    """REGRESSION: an answer that WAS a table reached the user as nothing.
+
+    Asked to suggest columns, the planner replies with a table of its own.
+    Cutting every table whenever one had been drawn threw that away, and the
+    turn arrived empty.
+    """
+    suggestion = (
+        "Columns worth adding:\n"
+        "| Column | Why |\n|---|---|\n| Pages | length of each book |"
+    )
+
+    written = deciding(
+        [AIMessage(suggestion)],
+        drawn_columns=["Title", "Author", "Rating"],
+    )
+
+    assert written["final_answer"] == suggestion
 
 
 def test_a_table_stays_when_nothing_is_drawn():

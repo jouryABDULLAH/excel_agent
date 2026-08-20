@@ -79,8 +79,8 @@ def test_a_worker_writes_nothing_the_supervisor_owns(a_sheet):
     # route, task and final_answer are the supervisor's. A worker that set one
     # would be deciding where to go next, or answering the user itself.
     # messages is here because the report answers the supervisor's delegate
-    # call in the thread.
-    assert set(written) == {"worker_results", "messages"}
+    # call in the thread, and drawn_columns says what the application drew.
+    assert set(written) == {"worker_results", "messages", "drawn_columns"}
 
 
 def test_a_worker_that_falls_over_does_not_take_the_turn_with_it(a_sheet):

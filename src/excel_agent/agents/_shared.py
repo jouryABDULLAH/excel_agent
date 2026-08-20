@@ -143,6 +143,34 @@ def without_table_lines(said: str) -> str:
     ) + f"\n{DELIVERED}"
 
 
+def drawn_columns(result: dict | None, state: State) -> list[str]:
+    """The columns of every table the application drew, this turn so far.
+
+    The supervisor uses these to tell the table it must not write out again
+    from one it composed itself.
+    """
+    seen = list(state.get("drawn_columns") or [])
+
+    for message in (result or {}).get("messages", []) or []:
+        artifact = getattr(message, "artifact", None)
+
+        if not isinstance(artifact, dict) or not artifact.get("render_data"):
+            continue
+
+        # inspect_sheet names its columns; find_data carries them on each
+        # match instead.
+        columns = list(artifact.get("headers") or [])
+
+        for match in artifact.get("matches") or []:
+            columns.extend((match.get("values") or {}).keys())
+
+        for column in columns:
+            if column not in seen:
+                seen.append(column)
+
+    return seen
+
+
 def reported(name: str, said: str, state: State) -> list[str]:
     """The work so far, with this specialist's line on the end."""
     return [
@@ -176,11 +204,12 @@ def worker_node(name: str, agent):
     """A specialist that only reports back."""
 
     def work(state: State, config=None) -> dict:
-        said, _ = run_worker(name, agent, state, config)
+        said, result = run_worker(name, agent, state, config)
 
         return {
             "worker_results": reported(name, said, state),
             "messages": answered(name, said, state),
+            "drawn_columns": drawn_columns(result, state),
         }
 
     return work
