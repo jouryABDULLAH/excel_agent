@@ -23,7 +23,8 @@ You change row data.
 Tool choice:
 - update_row: change specified fields in an existing row.
 - insert_row: create a row at a specific row number.
-- append_row: add a new record at the end.
+- append_row: add a new record at the end. To repeat a row, one call
+  with count - never one call per copy.
 - delete_row: delete one existing row.
 - move_row: reposition one existing row.
 - inspect_sheet/find_data: establish the correct row before changing it.

@@ -578,6 +578,66 @@ def test_a_new_row_goes_under_the_last_one(a_writable_sheet):
     }
 
 
+def test_a_repeated_row_is_one_call_and_one_batch(a_writable_sheet):
+    """The model loses count calling append_row once per copy; count moves
+    the counting into the tool."""
+    sent = a_writable_sheet()
+
+    answer = row_tools.append_row.invoke(
+        {"values": {"Product": "Dock"}, "count": 3}
+    )
+
+    assert answer["ok"] is True
+    assert answer["row"] == 7
+    assert answer["last_row_written"] == 9
+    assert answer["count"] == 3
+
+    # One write, one range three rows tall - not three writes.
+    updates = [one for one in sent if one["call"] == "update_cells"]
+    assert len(updates) == 1
+    (entry,) = updates[0]["updates"]
+    assert entry["range"] == "'Sales Orders'!D7:D9"
+    assert entry["values"] == [["Dock"], ["Dock"], ["Dock"]]
+
+
+def test_repeating_grows_the_grid_by_what_is_missing(a_writable_sheet, monkeypatch):
+    # The grid ends at row 8; rows 7..11 need three more made first.
+    from excel_agent.services.spreadsheet import spreadsheet_service
+
+    sent = a_writable_sheet()
+
+    monkeypatch.setattr(
+        spreadsheet_service,
+        "resolve_sheet",
+        lambda id, name=None: {
+            "title": "Sales Orders",
+            "sheetId": 0,
+            "gridProperties": {"rowCount": 8, "columnCount": 10},
+        },
+    )
+
+    answer = row_tools.append_row.invoke(
+        {"values": {"Product": "Dock"}, "count": 5}
+    )
+
+    assert answer["ok"] is True
+    grown = [one for one in sent if one["call"] == "insert_rows"]
+    assert len(grown) == 1
+    assert grown[0]["start_row"] == 9
+    assert grown[0]["count"] == 3
+
+
+def test_a_count_below_one_is_refused(a_writable_sheet):
+    a_writable_sheet()
+
+    answer = row_tools.append_row.invoke(
+        {"values": {"Product": "Dock"}, "count": 0}
+    )
+
+    assert answer["ok"] is False
+    assert answer["error"] == "invalid_count"
+
+
 def test_a_row_can_be_put_at_a_chosen_position(a_writable_sheet):
     sent = a_writable_sheet()
 

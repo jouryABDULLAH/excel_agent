@@ -45,18 +45,19 @@ def _cell_updates(
     row: int,
     values: dict[str, CellValue],
     headers: dict[str, int],
+    count: int = 1,
 ) -> list[dict]:
-    """Build one ValueRange per changed column."""
+    """Build one ValueRange per changed column, count rows tall."""
     return [
         {
             "range": a1(
                 sheet_name,
                 first_row=row,
-                last_row=row,
+                last_row=row + count - 1,
                 first_column=headers[column],
                 last_column=headers[column],
             ),
-            "values": [["" if value is None else value]],
+            "values": [["" if value is None else value]] * count,
         }
         for column, value in values.items()
     ]
@@ -357,17 +358,21 @@ def insert_row(
 @tool
 def append_row(
     values: dict[str, CellValue],
+    count: int = 1,
     spreadsheet: str | None = None,
     sheet: str | None = None,
     runtime: ToolRuntime = None,
 ) -> dict:
-    """Append a new data row after the current table.
+    """Append one or more copies of a new data row after the current table.
 
     Use this when the requested row belongs at the end. Use insert_row when it
-    must be placed at a specific position.
+    must be placed at a specific position. To repeat a row, make ONE call with
+    count set - never call this once per copy.
 
     Args:
         values: Column names mapped to values for the new row.
+        count: How many copies of the row to append. All of them are written
+            in one batch.
         spreadsheet: Spreadsheet name, not an ID. Omit to use the current
             spreadsheet.
         sheet: Sheet/tab name, not the spreadsheet name. Omit to use the
@@ -405,6 +410,15 @@ def append_row(
             invalid["sheet"] = sheet_name
             return invalid
 
+        if count < 1:
+            return _error(
+                "invalid_count",
+                "count must be at least 1.",
+                spreadsheet=spreadsheet_name,
+                sheet=sheet_name,
+                count=count,
+            )
+
         # The row after the last one holding data, worked out here rather than
         # left to Google.
         #
@@ -422,22 +436,24 @@ def append_row(
             .get("rowCount")
         )
 
+        last_new_row = target_row + count - 1
+
         # values.append grew the sheet when it ran out of rows, so a grid
-        # already full to its last row needs one made for it.
+        # already full to its last row needs the room made for it.
         if (
             grid_rows is not None
-            and target_row > grid_rows
+            and last_new_row > grid_rows
         ):
             spreadsheet_service.insert_rows(
                 spreadsheet_id=spreadsheet_id,
                 sheet_id=properties["sheetId"],
-                start_row=target_row,
-                count=1,
+                start_row=grid_rows + 1,
+                count=last_new_row - grid_rows,
             )
 
-        # One range per named column, so a column with no value given is left
-        # alone rather than written blank, and nothing is written into the
-        # gaps between one table and the next.
+        # One range per named column, count rows tall, so a column with no
+        # value given is left alone rather than written blank, and nothing is
+        # written into the gaps between one table and the next.
         response = spreadsheet_service.update_cells(
             spreadsheet_id=spreadsheet_id,
             updates=_cell_updates(
@@ -445,6 +461,7 @@ def append_row(
                 target_row,
                 values,
                 headers,
+                count,
             ),
             value_input_option="USER_ENTERED",
         )
@@ -455,11 +472,13 @@ def append_row(
             "spreadsheet": spreadsheet_name,
             "sheet": sheet_name,
             "row": target_row,
+            "last_row_written": last_new_row,
+            "count": count,
             "values": values,
             "updated_columns": list(values),
             "updated_cells": response.get(
                 "totalUpdatedCells",
-                len(values),
+                len(values) * count,
             ),
         }
 
