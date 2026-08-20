@@ -83,6 +83,35 @@ def table_free(said: str) -> str:
     ).strip()
 
 
+def undoubled(said: str) -> str:
+    """The reply with an exactly repeated copy of itself removed.
+
+    Deliberately narrow. The model sometimes emits its whole answer twice --
+    "Fantasy.Fantasy." -- and only that is taken out: the two halves must be
+    character for character the same. Anything looser starts correcting the
+    model's writing, and an answer that is wrong or clumsy should stay
+    visible rather than be tidied into looking right.
+    """
+    text = said.strip()
+
+    for separator in ("", " ", "\n", "\n\n"):
+        half, odd = divmod(len(text) - len(separator), 2)
+
+        # A single character repeated is a word like "aa", not an answer
+        # said twice.
+        if odd or half < 2:
+            continue
+
+        first = text[:half]
+        between = text[half:half + len(separator)]
+        second = text[half + len(separator):]
+
+        if between == separator and first == second:
+            return first
+
+    return said
+
+
 def _cells(line: str) -> list[str]:
     """The names in one markdown table row."""
     return [

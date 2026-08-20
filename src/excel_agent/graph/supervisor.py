@@ -17,6 +17,7 @@ from excel_agent.graph.state import (
     DELIVERED,
     Delegate,
     State,
+    undoubled,
     without_drawn_table,
 )
 from excel_agent.prompts import CANNOT_DO
@@ -113,6 +114,8 @@ FINAL ANSWER
 - Never restate the user's requested action as though you are the user: "insert row with value X in position Y", these instruction should only be directed to the subagents.
 - Say each thing once. Never repeat a sentence, restate the answer in other
   words, or follow an answer with a fuller version of the same answer.
+- Never end with a sign-off or an offer of more help. "Let me know if you
+  need any more details" is not part of an answer.
 - After a delegated write, say only what actually succeeded or why it could
   not be completed.
 - If no write succeeded, never phrase the requested change as completed or use wording that expresses the requested change as an intention, instruction, or request, including phrases like "I want to" or "Please create".
@@ -373,6 +376,10 @@ def _decide(supervisor, state: State, config=None) -> dict:
     # data twice. Only that table goes: one the planner composed itself, such
     # as a table of columns it is suggesting, is its answer.
     answer = without_drawn_table(answer, state.get("drawn_columns"))
+
+    # The model sometimes emits its whole answer twice. Only that exact
+    # doubling is removed; a clumsy or wrong answer stays as it was written.
+    answer = undoubled(answer)
 
     if not answer:
         answer = (

@@ -116,6 +116,31 @@ def test_a_table_stays_when_nothing_is_drawn():
     assert "| A | B |" in written["final_answer"]
 
 
+def test_an_answer_said_twice_is_said_once():
+    """The model sometimes emits its whole answer twice: "Fantasy.Fantasy."."""
+    written = deciding([AIMessage("Fantasy.Fantasy.")])
+
+    assert written["final_answer"] == "Fantasy."
+
+
+def test_an_answer_that_only_nearly_repeats_is_left_alone():
+    """Deliberately narrow. Anything looser starts correcting the model's
+    writing, and a clumsy answer should stay visible rather than be tidied
+    into looking right."""
+    clumsy = "J.R.R Tolkien.J.R.R. Tolkien."
+
+    assert deciding([AIMessage(clumsy)])["final_answer"] == clumsy
+
+
+def test_an_ordinary_answer_is_untouched():
+    for said in (
+        "There are 51 rows.",
+        "Yes. No.",
+        "The total is 6.6.",
+    ):
+        assert deciding([AIMessage(said)])["final_answer"] == said
+
+
 def test_the_delivery_note_never_reaches_the_user():
     from excel_agent.graph.state import DELIVERED
 

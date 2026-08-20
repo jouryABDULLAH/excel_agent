@@ -14,6 +14,8 @@ binding allowed it. Only a real model shows what the model actually does when
 asked to delegate or to write a sentence.
 """
 
+import re
+
 import fake_sheets
 import pytest
 
@@ -156,3 +158,51 @@ def test_one_add_writes_one_row(a_sheet, monkeypatch):
     )
 
     assert len(written) == 1
+
+
+# Answer quality, measured rather than asserted
+
+
+REPEATED = re.compile(r"(?<=[.!?])\s*|\n+")
+
+
+def said_twice(answer: str) -> bool:
+    """Whether a sentence appears more than once, however punctuated."""
+    counted: dict[str, int] = {}
+
+    for one in REPEATED.split(answer):
+        key = re.sub(r"[^\w]+", "", one).casefold()
+
+        if len(key) > 8:
+            counted[key] = counted.get(key, 0) + 1
+
+    return any(count > 1 for count in counted.values())
+
+
+def test_short_follow_ups_do_not_come_back_said_twice(a_sheet):
+    """The model repeats itself on short follow-ups late in a conversation.
+
+    A rate, not a guarantee: this is model quality, and the run is allowed
+    one bad answer out of the four so a single flake does not fail the
+    build. Two means it got worse.
+    """
+    session = Session(build_graph(build_model()))
+    session.use(SPREADSHEET)
+
+    doubled = 0
+
+    for question in (
+        "how many rows are in the sheet?",
+        "and what are the column names?",
+        "which region appears most often?",
+        "and how many times?",
+    ):
+        answer = next(
+            one.text
+            for one in session.ask(question)
+            if isinstance(one, Answer)
+        )
+
+        doubled += said_twice(answer)
+
+    assert doubled <= 1, f"{doubled} of 4 answers repeated themselves"
