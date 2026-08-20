@@ -18,6 +18,7 @@ import streamlit as st
 
 from excel_agent import browsing
 from excel_agent.config import MODEL, build
+from excel_agent.tools.rows import _runs
 from excel_agent.runner import (
     Answer,
     Approval,
@@ -394,6 +395,7 @@ def draw_turn(
                         "tool": event.tool,
                         "arguments": event.arguments,
                         "id": event.id,
+                        "task": event.task,
                     }
                 )
 
@@ -525,6 +527,42 @@ def decide(decision: dict) -> None:
     st.rerun()
 
 
+def _shown(name: str, value) -> str:
+    """One argument as a card line, row lists written as ranges."""
+    if name == "rows" and isinstance(value, list):
+        value = ", ".join(
+            str(first) if first == last else f"{first}–{last}"
+            for first, last in _runs(sorted(set(value)))
+        )
+
+    return f"**{name.replace('_', ' ').capitalize()}:** {value}"
+
+
+def permission_card(one: dict) -> str:
+    """The pending change, laid out as what, where and why."""
+    arguments = one.get("arguments") or {}
+
+    lines = [
+        f"**Task:** {one['task']}" if one.get("task") else None,
+        f"**Action:** {one['tool']}",
+        *(
+            _shown(name, value)
+            for name, value in arguments.items()
+            if name != "spreadsheet"
+        ),
+        "**Spreadsheet:** "
+        + str(
+            arguments.get("spreadsheet")
+            or st.session_state.session.in_use()
+            or "not chosen"
+        ),
+        "",
+        "There is no undo.",
+    ]
+
+    return "\n\n".join(line for line in lines if line is not None)
+
+
 def draw_permission(turn: dict) -> None:
     """Show what is about to change, and offer to allow or refuse it.
 
@@ -534,11 +572,7 @@ def draw_permission(turn: dict) -> None:
     """
     with st.chat_message("assistant"):
         for one in turn["waiting"]:
-            st.warning(
-                f"This will change the spreadsheet: "
-                f"**{rendered(ToolCall(one['tool'], one['arguments']))}**. "
-                "There is no undo."
-            )
+            st.warning(permission_card(one), icon="⚠️")
 
         allow, refuse = st.columns(2)
 

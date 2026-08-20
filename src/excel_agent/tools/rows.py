@@ -40,6 +40,45 @@ def _error(
     }
 
 
+def _one_or_many(
+    row: int | None,
+    rows: list[int] | None,
+) -> tuple[list[int], dict | None]:
+    """The rows a call names, whichever argument carried them.
+
+    Sorted and deduplicated, because "rows 3, 3 and 5" names two rows, and
+    the two arguments together must name something.
+    """
+    if row is not None and rows:
+        return [], _error(
+            "conflicting_rows",
+            "Give either row or rows, not both.",
+        )
+
+    named = sorted({*(rows or []), *([row] if row is not None else [])})
+
+    if not named:
+        return [], _error(
+            "missing_row",
+            "Give a row, or several in rows.",
+        )
+
+    return named, None
+
+
+def _runs(rows: list[int]) -> list[tuple[int, int]]:
+    """Sorted rows as inclusive contiguous ranges: [3,4,5,9] -> (3,5),(9,9)."""
+    ranges: list[tuple[int, int]] = []
+
+    for one in rows:
+        if ranges and one == ranges[-1][1] + 1:
+            ranges[-1] = (ranges[-1][0], one)
+        else:
+            ranges.append((one, one))
+
+    return ranges
+
+
 def _cell_updates(
     sheet_name: str,
     row: int,
@@ -127,13 +166,18 @@ def _validate_values(
 
 @tool
 def update_row(
-    row: int,
     values: dict[str, CellValue],
+    row: int | None = None,
+    rows: list[int] | None = None,
     spreadsheet: str | None = None,
     sheet: str | None = None,
     runtime: ToolRuntime = None,
 ) -> dict:
-    """Update selected cells in an existing row.
+    """Update selected cells in existing rows, all with the same values.
+
+    One row goes in row; several go in rows, in one call - never one call
+    per row. All named rows change together or not at all: one row that does
+    not exist refuses the whole call before anything is written.
 
     Only the columns supplied in values are changed. A null value clears the
     cell. A string beginning with "=" is interpreted by Google Sheets as a
@@ -143,8 +187,9 @@ def update_row(
     known.
 
     Args:
-        row: Existing row number, using the numbers shown in Google Sheets.
         values: Column names mapped to their new values.
+        row: One existing row, using the numbers shown in Google Sheets.
+        rows: Several existing rows to change together.
         spreadsheet: Spreadsheet name, not an ID. Omit to use the current
             spreadsheet.
         sheet: Sheet/tab name, not the spreadsheet name. Omit to use the
@@ -153,6 +198,13 @@ def update_row(
     # Left out, the file is the one the orchestrator handed this
     # specialist, which lives in its state rather than in a global.
     spreadsheet = spreadsheet or chosen(runtime)
+
+    asked, wrong = _one_or_many(row, rows)
+
+    if wrong:
+        wrong["spreadsheet"] = spreadsheet
+        wrong["sheet"] = sheet
+        return wrong
 
     try:
         (
@@ -176,13 +228,19 @@ def update_row(
                 header_row=header_row,
             )
 
-        if row <= header_row or row > last_row:
+        missing = [
+            one for one in asked
+            if one <= header_row or one > last_row
+        ]
+
+        if missing:
             return _error(
                 "row_not_found",
-                "The requested row is not an existing data row.",
+                "One or more requested rows are not existing data rows. "
+                "Nothing was changed.",
                 spreadsheet=spreadsheet_name,
                 sheet=sheet_name,
-                row=row,
+                rows_not_found=missing,
                 first_data_row=header_row + 1,
                 last_data_row=last_row,
             )
@@ -195,12 +253,16 @@ def update_row(
 
         response = spreadsheet_service.update_cells(
             spreadsheet_id=spreadsheet_id,
-            updates=_cell_updates(
-                sheet_name,
-                row,
-                values,
-                headers,
-            ),
+            updates=[
+                update
+                for one in asked
+                for update in _cell_updates(
+                    sheet_name,
+                    one,
+                    values,
+                    headers,
+                )
+            ],
             value_input_option="USER_ENTERED",
         )
 
@@ -209,11 +271,11 @@ def update_row(
             "operation": "update_row",
             "spreadsheet": spreadsheet_name,
             "sheet": sheet_name,
-            "row": row,
+            "rows": asked,
             "updated_columns": list(values),
             "updated_cells": response.get(
                 "totalUpdatedCells",
-                len(values),
+                len(values) * len(asked),
             ),
         }
 
@@ -501,17 +563,23 @@ def append_row(
 
 @tool
 def delete_row(
-    row: int,
+    row: int | None = None,
+    rows: list[int] | None = None,
     spreadsheet: str | None = None,
     sheet: str | None = None,
     runtime: ToolRuntime = None,
 ) -> dict:
-    """Delete one existing data row and everything in it.
+    """Delete existing data rows and everything in them.
 
-    Row numbers below the deleted row change after this operation.
+    One row goes in row; several go in rows, in one call - never one call
+    per row. All named rows are deleted together or not at all: one row that
+    does not exist refuses the whole call before anything is changed.
+
+    Row numbers below a deleted row change after this operation.
 
     Args:
-        row: Existing data row to delete.
+        row: One existing data row to delete.
+        rows: Several existing data rows to delete together.
         spreadsheet: Spreadsheet name, not an ID. Omit to use the current
             spreadsheet.
         sheet: Sheet/tab name, not the spreadsheet name. Omit to use the
@@ -520,6 +588,13 @@ def delete_row(
     # Left out, the file is the one the orchestrator handed this
     # specialist, which lives in its state rather than in a global.
     spreadsheet = spreadsheet or chosen(runtime)
+
+    asked, wrong = _one_or_many(row, rows)
+
+    if wrong:
+        wrong["spreadsheet"] = spreadsheet
+        wrong["sheet"] = sheet
+        return wrong
 
     try:
         (
@@ -534,13 +609,19 @@ def delete_row(
 
         sheet_name = properties["title"]
 
-        if row <= header_row or row > last_row:
+        missing = [
+            one for one in asked
+            if one <= header_row or one > last_row
+        ]
+
+        if missing:
             return _error(
                 "row_not_found",
-                "The requested row is not an existing data row.",
+                "One or more requested rows are not existing data rows. "
+                "Nothing was deleted.",
                 spreadsheet=spreadsheet_name,
                 sheet=sheet_name,
-                row=row,
+                rows_not_found=missing,
                 first_data_row=header_row + 1,
                 last_data_row=last_row,
             )
@@ -548,7 +629,7 @@ def delete_row(
         spreadsheet_service.delete_rows(
             spreadsheet_id=spreadsheet_id,
             sheet_id=properties["sheetId"],
-            start_row=row,
+            ranges=_runs(asked),
         )
 
         return {
@@ -556,7 +637,8 @@ def delete_row(
             "operation": "delete_row",
             "spreadsheet": spreadsheet_name,
             "sheet": sheet_name,
-            "deleted_row": row,
+            "deleted_rows": asked,
+            "deleted_count": len(asked),
             "row_numbers_changed": True,
         }
 

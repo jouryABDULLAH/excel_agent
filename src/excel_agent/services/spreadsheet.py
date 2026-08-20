@@ -281,14 +281,20 @@ class SpreadsheetService:
         self,
         spreadsheet_id: str,
         sheet_id: int,
-        start_row: int,
-        end_row: int | None = None,
+        ranges: list[tuple[int, int]],
     ) -> dict:
-        """Delete an inclusive range of 1-based rows."""
-        end_row = end_row if end_row is not None else start_row
+        """Delete inclusive ranges of 1-based rows, as one atomic batch.
 
-        if start_row < 1 or end_row < start_row:
-            raise ValueError("Invalid row range.")
+        Deletions are sent bottom-up so an earlier one never shifts the rows
+        a later one names, and Google applies the whole batch or none of it,
+        so a failure leaves the sheet untouched.
+        """
+        if not ranges:
+            raise ValueError("At least one row range is required.")
+
+        for start_row, end_row in ranges:
+            if start_row < 1 or end_row < start_row:
+                raise ValueError("Invalid row range.")
 
         return self.batch_update(
             spreadsheet_id,
@@ -303,6 +309,7 @@ class SpreadsheetService:
                         }
                     }
                 }
+                for start_row, end_row in sorted(ranges, reverse=True)
             ],
         )
 

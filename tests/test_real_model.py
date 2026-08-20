@@ -289,3 +289,42 @@ def test_the_judge_reads_a_verdict_the_code_can_parse():
     )
 
     assert clean is None
+
+
+def test_deleting_several_rows_asks_for_permission_once(a_sheet, monkeypatch):
+    """The point of the rows argument: one request, one approval, one batch.
+
+    Three separate calls would be three approval prompts, which is the
+    exact experience the batched form exists to remove.
+    """
+    from excel_agent.runner import Approval
+    from excel_agent.tools import rows as rows_tool
+
+    monkeypatch.setattr(
+        rows_tool,
+        "resolve_spreadsheet",
+        lambda name=None: ("an-id", name or SPREADSHEET),
+    )
+
+    deleted: list[dict] = []
+
+    monkeypatch.setattr(
+        spreadsheet_service,
+        "delete_rows",
+        lambda **sent: deleted.append(sent) or {},
+    )
+
+    session = Session(build_graph(build_model()))
+    session.use(SPREADSHEET)
+
+    waiting = [
+        one for one in session.ask("delete rows 3, 4 and 5")
+        if isinstance(one, Approval)
+    ]
+
+    assert len(waiting) == 1, f"{len(waiting)} approvals for one deletion"
+    assert deleted == []
+
+    list(session.resume({"decisions": [{"type": "approve"}]}))
+
+    assert [one["ranges"] for one in deleted] == [[(3, 5)]]

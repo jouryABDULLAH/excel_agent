@@ -27,11 +27,13 @@ ROW_EDITOR_PROMPT = f"""\
 You change row data.
 
 Tool choice:
-- update_row: change specified fields in an existing row.
+- update_row: change specified fields in existing rows. Several rows
+  getting the same values is one call with rows - never one call per row.
 - insert_row: create a row at a specific row number.
 - append_row: add a new record at the end. To repeat a row, one call
   with count - never one call per copy.
-- delete_row: delete one existing row.
+- delete_row: delete existing rows. Several rows is one call with rows -
+  never one call per row.
 - move_row: reposition one existing row.
 - inspect_sheet/find_data: establish the correct row before changing it.
 

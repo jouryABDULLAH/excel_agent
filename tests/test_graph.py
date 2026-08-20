@@ -460,7 +460,7 @@ def test_allowing_a_deletion_carries_the_turn_on(a_deletable_row):
 
     events = list(session.resume({"decisions": [{"type": "approve"}]}))
 
-    assert [one["start_row"] for one in a_deletable_row] == [3]
+    assert [one["ranges"] for one in a_deletable_row] == [[(3, 3)]]
     assert [one.text for one in events if isinstance(one, Answer)] == [
         "Deleted row 3."
     ]
@@ -589,4 +589,4 @@ def test_every_change_in_one_pause_gets_its_own_decision(a_deletable_row):
         )
     )
 
-    assert [one["start_row"] for one in a_deletable_row] == [3, 4]
+    assert [one["ranges"] for one in a_deletable_row] == [[(3, 3)], [(4, 4)]]

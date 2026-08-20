@@ -38,10 +38,10 @@ def only_request(pretend) -> dict:
 def test_deleting_one_row_asks_for_that_row_alone():
     service, pretend = a_service()
 
-    service.delete_rows("an-id", sheet_id=0, start_row=4)
+    service.delete_rows("an-id", sheet_id=0, ranges=[(4, 4)])
 
-    # Row 4 alone: counting from 0 makes the start 3, and leaving the end out
-    # makes it 4. An end of 3 would delete row 3 instead.
+    # Row 4 alone: counting from 0 makes the start 3, and the end-exclusive
+    # index 4. An end of 3 would delete row 3 instead.
     assert only_request(pretend) == {
         "deleteDimension": {
             "range": {
@@ -57,10 +57,25 @@ def test_deleting_one_row_asks_for_that_row_alone():
 def test_deleting_a_run_of_rows_covers_both_ends():
     service, pretend = a_service()
 
-    service.delete_rows("an-id", sheet_id=0, start_row=4, end_row=6)
+    service.delete_rows("an-id", sheet_id=0, ranges=[(4, 6)])
 
     deleted = only_request(pretend)["deleteDimension"]["range"]
     assert (deleted["startIndex"], deleted["endIndex"]) == (3, 6)
+
+
+def test_separate_ranges_are_deleted_bottom_up_in_one_batch():
+    service, pretend = a_service()
+
+    service.delete_rows("an-id", sheet_id=0, ranges=[(3, 5), (9, 9)])
+
+    # One request, so Google applies all of it or none of it; and the lower
+    # range last, or deleting 3-5 first would shift what 9 names.
+    (method, sent), = pretend.spreadsheets_endpoint.calls
+    starts = [
+        one["deleteDimension"]["range"]["startIndex"]
+        for one in sent["body"]["requests"]
+    ]
+    assert starts == [8, 2]
 
 
 @pytest.mark.parametrize("start,end", [(0, 4), (4, 3)])
@@ -68,7 +83,7 @@ def test_a_range_that_makes_no_sense_is_refused_before_google_sees_it(start, end
     service, pretend = a_service()
 
     with pytest.raises(ValueError):
-        service.delete_rows("an-id", sheet_id=0, start_row=start, end_row=end)
+        service.delete_rows("an-id", sheet_id=0, ranges=[(start, end)])
 
     assert pretend.spreadsheets_endpoint.calls == []
 
@@ -286,7 +301,7 @@ def test_a_structural_change_forgets_the_sheets_it_may_have_moved():
     service.list_sheets("an-id")
     assert len(pretend.spreadsheets_endpoint.calls) == 1
 
-    service.delete_rows("an-id", sheet_id=0, start_row=4)
+    service.delete_rows("an-id", sheet_id=0, ranges=[(4, 4)])
     service.list_sheets("an-id")
 
     # Read, write, read again: the write sent the next reader back to Google

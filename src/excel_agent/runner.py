@@ -75,6 +75,9 @@ class Approval:
         default_factory=dict
     )
     id: str = ""
+    # What the supervisor asked for, so the approval can say why this
+    # change is being made and not only what it is.
+    task: str | None = None
 
 
 Event = (
@@ -426,6 +429,7 @@ class Session:
         cut_off = False
         artifacts: list[dict] = []
         waiting: list[Approval] = []
+        task = None
 
         try:
             for namespace, mode, payload in (
@@ -493,6 +497,7 @@ class Session:
                                 id=str(
                                     paused.id
                                 ),
+                                task=task,
                             )
                         )
 
@@ -504,6 +509,9 @@ class Session:
                         dict,
                     ):
                         continue
+
+                    if "task" in update and update["task"]:
+                        task = str(update["task"])
 
                     written = update.get(
                         "final_answer"

@@ -677,10 +677,60 @@ def test_removing_a_row_asks_for_that_row_alone(a_writable_sheet):
     answer = row_tools.delete_row.invoke({"row": 4})
 
     assert answer["ok"] is True
-    assert answer["deleted_row"] == 4
+    assert answer["deleted_rows"] == [4]
     assert answer["row_numbers_changed"] is True
     assert sent[0]["call"] == "delete_rows"
-    assert sent[0]["start_row"] == 4
+    assert sent[0]["ranges"] == [(4, 4)]
+
+
+def test_several_rows_are_removed_in_one_call(a_writable_sheet):
+    sent = a_writable_sheet()
+
+    answer = row_tools.delete_row.invoke({"rows": [5, 3, 4, 6]})
+
+    assert answer["ok"] is True
+    assert answer["deleted_rows"] == [3, 4, 5, 6]
+    assert answer["deleted_count"] == 4
+    # One service call carrying one contiguous range.
+    assert [one["call"] for one in sent] == ["delete_rows"]
+    assert sent[0]["ranges"] == [(3, 6)]
+
+
+def test_one_missing_row_stops_the_whole_deletion(a_writable_sheet):
+    sent = a_writable_sheet()
+
+    answer = row_tools.delete_row.invoke({"rows": [3, 99]})
+
+    # All together or not at all: a bad row number must not let the good
+    # ones vanish around it.
+    assert answer["ok"] is False
+    assert answer["error"] == "row_not_found"
+    assert answer["rows_not_found"] == [99]
+    assert sent == []
+
+
+def test_the_same_values_land_in_every_named_row(a_writable_sheet):
+    sent = a_writable_sheet()
+
+    answer = row_tools.update_row.invoke(
+        {"rows": [3, 5], "values": {"Region": "West"}}
+    )
+
+    assert answer["ok"] is True
+    assert answer["rows"] == [3, 5]
+    assert written(sent) == {
+        "'Sales Orders'!B3:B3": "West",
+        "'Sales Orders'!B5:B5": "West",
+    }
+
+
+def test_naming_rows_both_ways_at_once_is_refused(a_writable_sheet):
+    sent = a_writable_sheet()
+
+    answer = row_tools.delete_row.invoke({"row": 3, "rows": [4]})
+
+    assert answer["error"] == "conflicting_rows"
+    assert sent == []
 
 
 def test_moving_a_row_says_where_it_came_from_and_went_to(a_writable_sheet):
