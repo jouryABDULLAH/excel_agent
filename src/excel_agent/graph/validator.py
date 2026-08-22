@@ -114,12 +114,24 @@ def problems(answer: str, question: str) -> list[str]:
     """
     found = []
 
+    # The question is taken out first: an answer that opens by repeating
+    # "اعرض الجدول" and carries on in English contains Arabic script while
+    # being an English reply, and passed this check by echoing.
+    said_alone = answer.replace(question.strip(), "").strip()
+
     # One-directional on purpose: an Arabic answer to an English question
     # was seen and accepted, so only the reverse is a failure.
-    if arabic(question) and not arabic(answer):
+    if arabic(question) and not arabic(said_alone):
         found.append(
             "The user wrote in Arabic but the answer contains no Arabic. "
             "Reply in the user's language."
+        )
+
+    # An answer that is mostly the question said back is not an answer.
+    if said_alone and len(said_alone) < len(answer) / 3:
+        found.append(
+            "The answer repeats the question back and says almost nothing "
+            "else. Answer it instead."
         )
 
     if "QUESTION:" in answer:

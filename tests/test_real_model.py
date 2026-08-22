@@ -527,3 +527,64 @@ def test_the_judge_catches_the_model_thinking_out_loud():
     )
 
     assert finished is None, f"a clean answer was sent back: {finished}"
+
+
+def test_a_write_far_past_the_data_does_not_pad_the_sheet(a_sheet, monkeypatch):
+    """REGRESSION, seen live: asked to put a value in row 500, the model
+    tried to add 489 empty rows first -- two approval cards for hundreds of
+    blank rows -- because nothing told it a write may simply land there."""
+    from excel_agent.runner import Approval
+    from excel_agent.tools import rows as rows_tool
+
+    monkeypatch.setattr(
+        rows_tool,
+        "resolve_spreadsheet",
+        lambda name=None: ("an-id", name or SPREADSHEET),
+    )
+
+    monkeypatch.setattr(
+        spreadsheet_service,
+        "update_cells",
+        lambda **sent: {"totalUpdatedCells": 1},
+    )
+    monkeypatch.setattr(
+        spreadsheet_service, "insert_rows", lambda **sent: None
+    )
+
+    session = Session(build_graph(build_model()))
+    session.use(SPREADSHEET)
+
+    waiting = [
+        one
+        for one in session.ask('put "audit" in the Region column of row 500')
+        if isinstance(one, Approval)
+    ]
+
+    assert waiting, "the write never asked to be allowed"
+
+    asked = waiting[0]
+    rows = asked.arguments.get("rows")
+
+    # One row is being written, not a block of hundreds of empty ones.
+    assert not (isinstance(rows, list) and len(rows) > 5), (
+        f"{asked.tool} was asked to write {len(rows or [])} rows"
+    )
+
+
+def test_sorting_reaches_the_editor_that_owns_it(a_sheet):
+    """REGRESSION, seen live: "sort by Rating" was answered "not possible
+    with the available tools". row_editor holds sort_rows; the supervisor's
+    routing had no line for sorting, so the request went elsewhere."""
+    from excel_agent.runner import Approval
+
+    session = Session(build_graph(build_model()))
+    session.use(SPREADSHEET)
+
+    events = list(session.ask("sort the rows by Units"))
+
+    tools = [one.name for one in events if isinstance(one, ToolCall)]
+    waiting = [one.tool for one in events if isinstance(one, Approval)]
+
+    assert "sort_rows" in tools + waiting, (
+        f"sorting never reached sort_rows; called {tools}"
+    )

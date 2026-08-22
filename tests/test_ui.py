@@ -656,3 +656,53 @@ def test_every_gated_tool_can_be_drawn_as_a_card(tool):
 
     assert f"**Action:** {tool}" in card
     assert "There is no undo." in card
+
+
+def test_an_approved_action_is_listed_once_not_twice():
+    """REGRESSION: resuming re-runs the specialist, so the approved call was
+    made again and the actions list showed delete_row(row=500) twice for one
+    deletion."""
+    from excel_agent.ui import joined
+
+    whole = joined(
+        {
+            "role": "assistant",
+            "text": "",
+            "calls": ["inspect_sheet()", "delete_row(row=500)"],
+            "artifacts": [],
+            "waiting": [{"tool": "delete_row", "arguments": {}, "id": "a"}],
+        },
+        {
+            "role": "assistant",
+            "text": "Row 500 is gone.",
+            "calls": ["delete_row(row=500)"],
+            "artifacts": [],
+            "waiting": [],
+        },
+    )
+
+    assert whole["calls"] == ["inspect_sheet()", "delete_row(row=500)"]
+
+
+def test_a_genuinely_different_action_after_approval_is_kept():
+    from excel_agent.ui import joined
+
+    whole = joined(
+        {
+            "role": "assistant",
+            "text": "",
+            "calls": ["delete_row(row=500)"],
+            "artifacts": [],
+            "waiting": [{"tool": "delete_row", "arguments": {}, "id": "a"}],
+        },
+        {
+            "role": "assistant",
+            "text": "Done.",
+            "calls": ["delete_row(row=500)", "inspect_sheet()"],
+            "artifacts": [],
+            "waiting": [],
+        },
+    )
+
+    # Only the replay is dropped; work done after it still counts.
+    assert whole["calls"] == ["delete_row(row=500)", "inspect_sheet()"]

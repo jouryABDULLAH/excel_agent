@@ -290,3 +290,41 @@ def test_the_traced_false_deletion_turn_ends_honestly(monkeypatch):
     assert len(answers) == 1
     assert answers[0] != "All rows have been deleted."
     assert "this much was done" in answers[0] or "could not confirm" in answers[0]
+
+
+def test_an_answer_that_echoes_an_arabic_question_is_still_english():
+    """REGRESSION, seen live: "اعرض الجدول\n\nThe table below is" passed the
+    language check, because the echoed question put Arabic script in an
+    answer that was written in English."""
+    written = checked(
+        finished(
+            "اعرض الجدول\n\nThe table below is",
+            question="اعرض الجدول",
+        )
+    )
+
+    assert "Arabic" in written["correction"]
+
+
+def test_an_answer_that_is_mostly_the_question_said_back_goes_show(
+):
+    written = checked(
+        finished(
+            "how many rows are there? Well.",
+            question="how many rows are there?",
+        )
+    )
+
+    assert "repeats the question" in written["correction"]
+
+
+def test_an_ordinary_answer_that_quotes_the_question_is_fine():
+    written = checked(
+        finished(
+            "You asked how many rows are there? There are 51 rows of data "
+            "in the sheet, counted from the header down.",
+            question="how many rows are there?",
+        )
+    )
+
+    assert written["correction"] is None

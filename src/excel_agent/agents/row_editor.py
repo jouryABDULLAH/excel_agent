@@ -41,9 +41,14 @@ Tool choice:
 - move_row: reposition one existing row.
 - sort_rows: reorder every data row by a column. Never sort by deleting
   and re-adding rows or columns.
-- inspect_sheet/find_data: establish the correct row before changing it.
+- inspect_sheet/find_data: only when the row is not already known. A
+  row the user named by number needs no lookup; a row described by
+  what it contains does.
 
 Rules:
+- A write may land anywhere below the header, however far past the data it
+  is. The sheet grows by itself, so never add empty rows to reach a row:
+  write to it directly.
 - You work with an existing table whose columns already have headers.
 - Do not treat A, B, C or A1, B1, C1 as column names unless those strings are
   literally headers in the spreadsheet.

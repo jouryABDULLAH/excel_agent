@@ -483,6 +483,18 @@ def _decisions(waiting: list[dict], decision: dict) -> dict:
     }
 
 
+def _once(before: list[str], after: list[str]) -> list[str]:
+    """The resumed half's actions, without the one it replayed.
+
+    Resuming re-runs the specialist from the start, so the call that was
+    approved is made again and would be listed twice for one change.
+    """
+    if before and after and after[0] == before[-1]:
+        return after[1:]
+
+    return after
+
+
 def joined(paused: dict, said: dict) -> dict:
     """One turn again, after stopping to ask split it in two.
 
@@ -497,7 +509,7 @@ def joined(paused: dict, said: dict) -> dict:
             for one in (paused["text"], said["text"])
             if one
         ),
-        "calls": paused["calls"] + said["calls"],
+        "calls": paused["calls"] + _once(paused["calls"], said["calls"]),
         "artifacts": (
             paused["artifacts"] + said["artifacts"]
         ),

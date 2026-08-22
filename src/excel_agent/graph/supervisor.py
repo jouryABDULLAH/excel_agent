@@ -58,7 +58,8 @@ PLANNING
 ROUTING
 - Finding/listing/selecting spreadsheet files -> file_manager.
 - Reading/showing/searching/statistics -> analyst.
-- Changing row values or adding/removing/moving records -> row_editor.
+- Changing row values, adding/removing/moving records, or sorting the
+  rows -> row_editor.
 - Columns, formulas or visual formatting -> structure_editor.
 - Charts -> chart_maker.
 
