@@ -453,7 +453,10 @@ def test_a_destination_that_is_whole_copies_of_the_source_is_accepted(a_sheet):
     assert pasted(sent) != []
 
 
-def test_a_destination_that_does_not_fit_is_refused_with_both_sizes(a_sheet):
+def test_a_destination_that_is_not_a_whole_number_of_copies_pastes_anyway(a_sheet):
+    """This used to be refused as incompatible_ranges. Sheets itself pastes
+    and lets the pattern repeat, and the agent is never stricter than
+    Sheets, so the refusal was dropped."""
     sent = a_sheet(style)
 
     answer = style.copy_format.invoke(
@@ -465,11 +468,79 @@ def test_a_destination_that_does_not_fit_is_refused_with_both_sizes(a_sheet):
         }
     )
 
-    # Five rows is not a whole number of copies of two, and Google would
-    # spill the last one. Saying only that the sizes disagree leaves the model
-    # guessing, so both are named.
+    assert answer["ok"] is True
+    copied = pasted(sent)[0]
+    assert copied["destination"]["startRowIndex"] == 3
+    assert copied["destination"]["endRowIndex"] == 8
+
+
+def test_the_look_of_one_span_of_headers_is_copied_onto_another(a_sheet):
+    """REGRESSION, from a live trace: asked to copy the Title..Rating header
+    formatting onto Pages..Review Count, the tool took one column per side,
+    so the model left the columns out entirely and copied row 1 onto
+    itself."""
+    sent = a_sheet(style)
+
+    answer = style.copy_format.invoke(
+        {
+            "source_column": "Order ID",
+            "source_last_column": "Region",
+            "source_first_row": 1,
+            "source_last_row": 1,
+            "destination_column": "Units",
+            "destination_last_column": "Product",
+            "destination_first_row": 1,
+            "destination_last_row": 1,
+        }
+    )
+
+    assert answer["ok"] is True
+
+    copied = pasted(sent)[0]
+    # Columns 1-2 onto columns 3-4, header row only.
+    assert (
+        copied["source"]["startColumnIndex"],
+        copied["source"]["endColumnIndex"],
+    ) == (0, 2)
+    assert (
+        copied["destination"]["startColumnIndex"],
+        copied["destination"]["endColumnIndex"],
+    ) == (2, 4)
+
+
+def test_a_span_named_backwards_still_covers_the_same_columns(a_sheet):
+    sent = a_sheet(style)
+
+    answer = style.copy_format.invoke(
+        {
+            "source_column": "Region",
+            "source_last_column": "Order ID",
+            "source_first_row": 1,
+            "source_last_row": 1,
+            "destination_column": "Units",
+            "destination_first_row": 1,
+        }
+    )
+
+    assert answer["ok"] is True
+    copied = pasted(sent)[0]
+    assert (
+        copied["source"]["startColumnIndex"],
+        copied["source"]["endColumnIndex"],
+    ) == (0, 2)
+
+
+def test_a_span_naming_a_column_that_is_not_there_is_refused(a_sheet):
+    sent = a_sheet(style)
+
+    answer = style.copy_format.invoke(
+        {
+            "source_column": "Order ID",
+            "source_last_column": "Nonsense",
+            "source_first_row": 1,
+        }
+    )
+
     assert answer["ok"] is False
-    assert answer["error"] == "incompatible_ranges"
-    assert "2 row(s)" in answer["message"]
-    assert "5 by" in answer["message"]
+    assert answer["unknown_columns"] == ["Nonsense"]
     assert pasted(sent) == []

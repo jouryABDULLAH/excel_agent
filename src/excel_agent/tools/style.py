@@ -147,6 +147,7 @@ def _format_area(
     header_row: int,
     end_of_data: int,
     column: str | None,
+    last_column: str | None,
     first_row: int | None,
     last_row: int | None,
 ) -> tuple[dict, int, int, int, int]:
@@ -192,8 +193,17 @@ def _format_area(
         )
 
     if column is not None:
-        first_column = headers[column]
-        last_column = headers[column]
+        first_number = headers[column]
+        # A span runs between the two named columns whichever way round
+        # they were given; one column named alone is a span of one.
+        last_number = (
+            headers[last_column]
+            if last_column is not None
+            else first_number
+        )
+
+        first_column = min(first_number, last_number)
+        last_column = max(first_number, last_number)
     else:
         first_column = min(headers.values())
         last_column = max(headers.values())
@@ -725,9 +735,11 @@ def format_range(
 @tool
 def copy_format(
     source_column: str | None = None,
+    source_last_column: str | None = None,
     source_first_row: int | None = None,
     source_last_row: int | None = None,
     destination_column: str | None = None,
+    destination_last_column: str | None = None,
     destination_first_row: int | None = None,
     destination_last_row: int | None = None,
     spreadsheet: str | None = None,
@@ -738,18 +750,28 @@ def copy_format(
 
     Values and formulas are not copied.
 
-    Leave a column out to use every named column in the table. Leave row
+    Several columns side by side are a span: name the first in
+    source_column and the last in source_last_column. To copy the look of
+    the Title..Rating headers onto the Pages..Review Count headers, that is
+    source_column="Title", source_last_column="Rating",
+    destination_column="Pages", destination_last_column="Review Count",
+    with both row bounds set to the header row.
+
+    Leave the columns out to use every named column in the table. Leave row
     bounds out to use the whole used table. Giving only first_row means one
     row.
 
-    A one-cell or smaller source may be repeated over a larger destination
-    when the destination size is an exact multiple of the source size.
+    A smaller source is repeated across a larger destination, the way
+    Sheets itself pastes.
 
     Args:
-        source_column: Optional source column by header name.
+        source_column: Optional first source column, by header name.
+        source_last_column: Optional final source column, for a span.
         source_first_row: Optional first source row.
         source_last_row: Optional final source row.
-        destination_column: Optional destination column by header name.
+        destination_column: Optional first destination column, by header
+            name.
+        destination_last_column: Optional final destination column.
         destination_first_row: Optional first destination row.
         destination_last_row: Optional final destination row.
         spreadsheet: Spreadsheet name, not an ID. Omit for the current
@@ -789,7 +811,9 @@ def copy_format(
             column
             for column in (
                 source_column,
+                source_last_column,
                 destination_column,
+                destination_last_column,
             )
             if column is not None
             and column not in headers
@@ -817,6 +841,7 @@ def copy_format(
             header_row=header_row,
             end_of_data=end_of_data,
             column=source_column,
+            last_column=source_last_column,
             first_row=source_first_row,
             last_row=source_last_row,
         )
@@ -848,35 +873,10 @@ def copy_format(
             header_row=header_row,
             end_of_data=end_of_data,
             column=destination_column,
+            last_column=destination_last_column,
             first_row=destination_first_row,
             last_row=destination_last_row,
         )
-
-        # Google repeats a source pattern when the destination dimensions
-        # are exact multiples of it. Reject other shapes so a source larger
-        # than the requested destination cannot spill beyond it.
-        if (
-            destination_height < source_height
-            or destination_width < source_width
-            or destination_height % source_height != 0
-            or destination_width % source_width != 0
-        ):
-            return _error(
-                "incompatible_ranges",
-                (
-                    f"The source is {source_height} row(s) by "
-                    f"{source_width} column(s) and the destination is "
-                    f"{destination_height} by {destination_width}. The "
-                    "destination must be the same size as the source, or a "
-                    "whole number of copies of it."
-                ),
-                spreadsheet=spreadsheet_name,
-                sheet=sheet_name,
-                source_height=source_height,
-                source_width=source_width,
-                destination_height=destination_height,
-                destination_width=destination_width,
-            )
 
         spreadsheet_service.copy_paste(
             spreadsheet_id=spreadsheet_id,
