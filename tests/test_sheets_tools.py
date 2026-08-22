@@ -810,13 +810,19 @@ def test_moving_a_row_to_where_it_already_is_changes_nothing(a_writable_sheet):
     assert sent == []
 
 
-def test_a_destination_outside_the_data_is_refused(a_writable_sheet):
+def test_a_destination_far_below_the_data_is_allowed_and_said_out_loud(
+    a_writable_sheet,
+):
+    """This used to be refused. The destination bound was the last tool
+    still refusing to reach past the data."""
     sent = a_writable_sheet()
 
     answer = row_tools.move_row.invoke({"row": 3, "to_row": 9999})
 
-    assert answer["error"] == "invalid_destination"
-    assert sent == []
+    assert answer["ok"] is True
+    assert answer["past_end_of_data"] is True
+    assert answer["empty_rows_above"] == 9992
+    assert calls(sent, "move_row")[0]["to_row"] == 9999
 
 
 def test_a_formula_is_written_as_a_formula(a_writable_sheet):
@@ -1504,4 +1510,69 @@ def test_sorting_a_table_with_no_rows_changes_nothing_and_says_so(
     assert answer["ok"] is True
     assert answer["sorted_rows"] == 0
     assert answer["changed"] is False
+    assert sent == []
+
+
+def test_a_row_can_be_moved_past_the_end_of_the_data(
+    a_writable_sheet, monkeypatch
+):
+    """This used to be invalid_destination. Dragging a row below the last
+    one is ordinary in Sheets, and it is how "send this to the bottom" is
+    said."""
+    from excel_agent.services.spreadsheet import spreadsheet_service
+
+    sent = a_writable_sheet()
+
+    monkeypatch.setattr(
+        spreadsheet_service,
+        "resolve_sheet",
+        lambda id, name=None: {
+            "title": "Sales Orders",
+            "sheetId": 0,
+            "gridProperties": {"rowCount": 10, "columnCount": 10},
+        },
+    )
+
+    answer = row_tools.move_row.invoke({"row": 2, "to_row": 9})
+
+    assert answer["ok"] is True
+    assert answer["past_end_of_data"] is True
+    assert answer["empty_rows_above"] == 2
+    # Inside the grid already, so no room had to be made.
+    assert [one["call"] for one in sent] == ["move_row"]
+
+
+def test_a_move_beyond_the_grid_makes_the_room_first(
+    a_writable_sheet, monkeypatch
+):
+    from excel_agent.services.spreadsheet import spreadsheet_service
+
+    sent = a_writable_sheet()
+
+    monkeypatch.setattr(
+        spreadsheet_service,
+        "resolve_sheet",
+        lambda id, name=None: {
+            "title": "Sales Orders",
+            "sheetId": 0,
+            "gridProperties": {"rowCount": 10, "columnCount": 10},
+        },
+    )
+
+    answer = row_tools.move_row.invoke({"row": 2, "to_row": 14})
+
+    assert answer["ok"] is True
+    # moveDimension cannot land outside the grid, so four rows are added.
+    grown = calls(sent, "insert_rows")[0]
+    assert (grown["start_row"], grown["count"]) == (11, 4)
+    assert [one["call"] for one in sent] == ["insert_rows", "move_row"]
+
+
+def test_a_row_still_cannot_be_moved_onto_the_header(a_writable_sheet):
+    sent = a_writable_sheet()
+
+    answer = row_tools.move_row.invoke({"row": 3, "to_row": 1})
+
+    assert answer["ok"] is False
+    assert answer["error"] == "invalid_destination"
     assert sent == []

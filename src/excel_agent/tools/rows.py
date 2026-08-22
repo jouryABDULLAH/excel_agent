@@ -993,6 +993,9 @@ def move_row(
 ) -> dict:
     """Move one existing data row to another position.
 
+    The destination may be past the end of the data, which is how a row is
+    sent to the bottom; the sheet grows to reach it if it has to.
+
     Args:
         row: Current row number.
         to_row: Final row number after the move.
@@ -1029,15 +1032,18 @@ def move_row(
                 last_data_row=last_row,
             )
 
-        if to_row <= header_row or to_row > last_row:
+        # Only the header is out of bounds. Dragging a row down past the
+        # last one is ordinary in Sheets, and it is how "move this to the
+        # bottom" is said; refusing it made this the one tool that still
+        # would not reach past the data.
+        if to_row <= header_row:
             return _error(
                 "invalid_destination",
-                "The destination is outside the data rows.",
+                "A row cannot be moved to or above the header row.",
                 spreadsheet=spreadsheet_name,
                 sheet=sheet_name,
                 to_row=to_row,
                 first_data_row=header_row + 1,
-                last_data_row=last_row,
             )
 
         if row == to_row:
@@ -1050,6 +1056,22 @@ def move_row(
                 "to_row": to_row,
                 "changed": False,
             }
+
+        grid_rows = (
+            properties
+            .get("gridProperties", {})
+            .get("rowCount")
+        )
+
+        # moveDimension cannot land a row outside the grid, so the room is
+        # made first, exactly as a person scrolling past the end makes it.
+        if grid_rows is not None and to_row > grid_rows:
+            spreadsheet_service.insert_rows(
+                spreadsheet_id=spreadsheet_id,
+                sheet_id=properties["sheetId"],
+                start_row=grid_rows + 1,
+                count=to_row - grid_rows,
+            )
 
         spreadsheet_service.move_row(
             spreadsheet_id=spreadsheet_id,
@@ -1065,6 +1087,7 @@ def move_row(
             "sheet": sheet_name,
             "from_row": row,
             "to_row": to_row,
+            **_far_from_data(to_row, last_row),
             "changed": True,
             "row_numbers_changed": True,
         }

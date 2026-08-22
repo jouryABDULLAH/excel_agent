@@ -128,10 +128,14 @@ FINAL ANSWER
 SUMMARISE_AT = 0.7
 KEEP_MESSAGES = 20
 
-# One request gets this many delegations at most. A turn that legitimately
-# needs more than this is not a turn; it is a loop, and every extra pass by a
-# writing specialist lands another copy of the same change on the sheet.
-MAX_DELEGATIONS = 8
+# One request gets this many delegations at most. Raised from 8 once the
+# repeat-write bug it was built against was fixed properly -- the delegation
+# now sits in the thread where the supervisor can see it -- and once the bulk
+# tools cut a twenty-row fill from twenty passes to one. Eight was truncating
+# real work: a live fill ran out mid-job at row 47. What the cap still buys is
+# a graceful stop: the tools are taken away and the turn must report what was
+# done, rather than dying at the recursion limit with nothing said.
+MAX_DELEGATIONS = 15
 
 DECIDING = """\
 
