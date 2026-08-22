@@ -496,3 +496,34 @@ def test_a_lowercased_column_name_reaches_the_column(a_sheet, monkeypatch):
     ranges = [one["range"] for update in written for one in update["updates"]]
     # Region is column B, whatever case the model wrote it in.
     assert any("B3" in one for one in ranges), ranges
+
+
+def test_the_judge_catches_the_model_thinking_out_loud():
+    """REGRESSION, seen live: "The books Emma and Ulyshan...? Wait, the
+    second book is Ulysses have been added." The judge's rubric covered
+    false claims and scope but not the writer's working reaching the page.
+
+    Measured 18 of 18 on the probe; this keeps the clause honest, and the
+    passing half keeps it from firing on ordinary answers."""
+    from excel_agent.graph.validator import judged
+
+    model = build_model()
+
+    thinking = judged(
+        model,
+        'The books "Emma" (rating 4) and "Ulyshan...? Wait, the second book '
+        'is "Ulysses" (rating 2) have been added.',
+        "add Emma and Ulysses",
+        ["[row_editor] Appended 2 rows: Emma, Ulysses."],
+    )
+
+    assert thinking, "the writer's working reached the user unchallenged"
+
+    finished = judged(
+        model,
+        "Emma and Ulysses have been added.",
+        "add Emma and Ulysses",
+        ["[row_editor] Appended 2 rows: Emma, Ulysses."],
+    )
+
+    assert finished is None, f"a clean answer was sent back: {finished}"

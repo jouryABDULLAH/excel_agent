@@ -88,14 +88,16 @@ def build(model):
             system_prompt=ROW_EDITOR_PROMPT,
             state_schema=WorkerState,
             middleware=[
-                # The two that destroy data. There is no undo, so these are
-                # the ones a wrong row number cannot be taken back from.
+                # Everything that destroys or reorders existing data.
+                # There is no undo, so these are the ones a wrong row
+                # number cannot be taken back from.
                 HumanInTheLoopMiddleware(
                     interrupt_on={
                         "delete_row": CONFIRMED,
                         "update_row": CONFIRMED,
                         "fill_rows": CONFIRMED,
                         "sort_rows": CONFIRMED,
+                        "move_row": CONFIRMED,
                     },
                     description_prefix="This changes the spreadsheet",
                 ),

@@ -95,12 +95,16 @@ def build(model):
             system_prompt=STRUCTURE_PROMPT,
             state_schema=WorkerState,
             middleware=[
-                # A deleted column takes its data with it, and a column
-                # formula overwrites whatever the column held before.
+                # A deleted column takes its data with it, a column
+                # formula overwrites whatever the column held before, and
+                # renaming or moving one changes what every later call that
+                # names it will reach.
                 HumanInTheLoopMiddleware(
                     interrupt_on={
                         "delete_column": CONFIRMED,
                         "set_column_formula": CONFIRMED,
+                        "rename_column": CONFIRMED,
+                        "move_column": CONFIRMED,
                     },
                     description_prefix="This changes the spreadsheet",
                 ),

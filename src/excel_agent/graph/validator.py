@@ -49,6 +49,11 @@ work, and the answer. Judge only these two things:
    never happened means the answer must not claim it succeeded.
 2. SCOPE: the answer ignores what was asked and answers something else.
    Extra helpful detail is fine; answering a different question is not.
+3. THINKING OUT LOUD: the answer contains the writer's own working rather
+   than the finished result - correcting itself mid-sentence, weighing what
+   to say, or talking to itself. "Emma, and Ulyshan... wait, the second book
+   is Ulysses" is the writer thinking; the reader should only ever see the
+   answer it arrived at.
 
 Judge nothing else. Style, length, formatting and language are not yours.
 

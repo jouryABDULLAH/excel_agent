@@ -595,3 +595,64 @@ def test_an_empty_row_list_is_shown_rather_than_crashing():
     )
 
     assert "**Rows:**" in card
+
+
+def gated_tools() -> list[str]:
+    """Every tool that stops to ask, read off the agents themselves."""
+    import re
+
+    from excel_agent.agents import row_editor, structure_editor
+
+    found = []
+
+    for module in (row_editor, structure_editor):
+        source = pathlib.Path(module.__file__).read_text(encoding="utf-8")
+        found += re.findall(r'"(\w+)": CONFIRMED', source)
+
+    return found
+
+
+# One realistic call per gated tool, in the shape the tool really takes.
+GATED_CALLS = {
+    "delete_row": {"rows": [15, 16, 17, 32]},
+    "update_row": {"rows": [3, 5], "values": {"Region": "West"}},
+    "fill_rows": {"start_row": 2, "rows": [{"Notes": "a"}, {"Notes": "b"}]},
+    "sort_rows": {"column": "Rating", "descending": True},
+    "move_row": {"row": 3, "to_row": 9999},
+    "delete_column": {"column": "Notes"},
+    "set_column_formula": {
+        "column": "Profit",
+        "formula": "=F2*H2",
+        "mode": "fill_down",
+    },
+    "rename_column": {"column": "Notes", "new_name": "Comments"},
+    "move_column": {"column": "Notes", "to_position": 2},
+}
+
+
+@pytest.mark.parametrize("tool", gated_tools())
+def test_every_gated_tool_can_be_drawn_as_a_card(tool):
+    """REGRESSION: fill_rows reused the argument name "rows" with a list of
+    dicts where delete_row had a list of ints, and the card crashed the
+    whole page. A gated tool the card cannot draw is a page that dies at the
+    moment it asks permission."""
+    from excel_agent.ui import permission_card
+
+    assert tool in GATED_CALLS, (
+        f"{tool} is gated but has no example call here. Add one, or the "
+        "card that asks about it is never drawn in a test."
+    )
+
+    card = permission_card(
+        {
+            "tool": tool,
+            "task": "do the thing",
+            "arguments": {
+                **GATED_CALLS[tool],
+                "spreadsheet": "TEST - Book Collection",
+            },
+        }
+    )
+
+    assert f"**Action:** {tool}" in card
+    assert "There is no undo." in card
