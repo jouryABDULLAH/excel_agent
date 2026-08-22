@@ -7,8 +7,6 @@ ToolMessage, graph state, or checkpoints.
 
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from typing import Any
-
 from langchain_core.messages import (
     AIMessage,
     ToolMessage,
@@ -39,13 +37,6 @@ class ToolCall:
     # The specialist whose graph it happened in, or None for the supervisor's
     # own. The stream namespaces every event by the node that produced it.
     worker: str | None = None
-
-
-@dataclass
-class Text:
-    """One streamed piece of model text."""
-
-    text: str
 
 
 @dataclass
@@ -82,7 +73,6 @@ class Approval:
 
 Event = (
     ToolCall
-    | Text
     | Artifact
     | Answer
     | Approval
@@ -295,13 +285,9 @@ class Session:
     def __init__(
         self,
         agent,
-        stream_text: bool = False,
         name: str = "orchestrator",
     ):
         self.agent = agent
-        self.stream_text = (
-            stream_text
-        )
         self.thread_id = (
             new_thread()
         )
@@ -438,26 +424,10 @@ class Session:
                     config=config,
                     stream_mode=[
                         "updates",
-                        "messages",
                     ],
                     subgraphs=True,
                 )
             ):
-                if mode == "messages":
-                    token, _ = payload
-
-                    if (
-                        self.stream_text
-                        and token.content
-                    ):
-                        yield Text(
-                            str(
-                                token.content
-                            )
-                        )
-
-                    continue
-
                 # A tool that needs permission stops the graph here. The turn
                 # is not over, so nothing is answered until it resumes.
                 for paused in (

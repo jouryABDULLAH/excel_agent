@@ -11,7 +11,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from scripted import ScriptedModel, calling
 
 from excel_agent.model import CUT_OFF
-from excel_agent.runner import Answer, Approval, Session, Text, ToolCall, rendered
+from excel_agent.runner import Answer, Approval, Session, ToolCall, rendered
 from excel_agent.graph.state import State
 from excel_agent.tools import TOOLS
 
@@ -135,28 +135,6 @@ def test_resetting_starts_a_conversation_with_nothing_in_it():
         {"configurable": {"thread_id": session.thread_id}}
     ).values["messages"]
     assert [message.content for message in said] == ["what is my name?", "second"]
-
-
-# Streaming the words as they come
-
-
-def test_the_answer_can_arrive_a_piece_at_a_time():
-    session = session_reading([AIMessage("hello there")], stream_text=True)
-
-    events = list(session.ask("say hello"))
-
-    pieces = [event.text for event in events if isinstance(event, Text)]
-    assert pieces
-    # The pieces spell out the same words the answer holds, which is why a
-    # caller shows one or the other rather than both.
-    assert "".join(pieces) == "hello there"
-    assert events[-1] == Answer("hello there")
-
-
-def test_the_pieces_are_left_out_unless_they_are_asked_for():
-    session = session_reading([AIMessage("hello there")])
-
-    assert not [event for event in session.ask("say hello") if isinstance(event, Text)]
 
 
 def test_a_turn_that_writes_still_writes(a_spreadsheet):

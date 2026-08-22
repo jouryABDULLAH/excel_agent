@@ -11,7 +11,6 @@ Streamlit reruns this file after interactions, so conversation state that must
 survive a rerun lives in st.session_state.
 """
 
-import time
 from collections.abc import Iterable
 
 import streamlit as st

@@ -8,13 +8,14 @@ import argparse
 
 from excel_agent import browsing
 from excel_agent.config import MODEL, use_utf8_output
-from excel_agent.runner import Answer, Session, Text, ToolCall, rendered
 from excel_agent.graph.graph import build_graph
 from excel_agent.model import build_model
 from excel_agent.runner import (
     Answer,
     Artifact,
+    Session,
     ToolCall,
+    rendered,
 )
 
 HELP = """\
@@ -141,8 +142,6 @@ def run_turn(session, question: str, show_tools: bool) -> None:
     for event in session.ask(question):
         if isinstance(event, ToolCall) and show_tools:
             print(f"  . {rendered(event)}")
-        elif isinstance(event, Text):
-            print(event.text, end="", flush=True)
         elif isinstance(event, Answer):
             print(event.text)
         elif isinstance(event, Artifact):
