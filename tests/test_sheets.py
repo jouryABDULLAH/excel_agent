@@ -293,3 +293,62 @@ def test_a_quote_in_a_search_term_cannot_close_the_query():
     # with apostrophes in them.
     assert quoted("O'Brien") == "O\\'Brien"
     assert quoted("back\\slash") == "back\\\\slash"
+
+
+# Reaching a column however its name was written
+
+
+def a_header_map():
+    return header_map(
+        [[fake_sheets.text("Order ID"), fake_sheets.text("Profit Margin")]],
+        1,
+    )
+
+
+def test_a_column_is_reached_however_it_was_capitalised():
+    """REGRESSION: 'profit margin' missed 'Profit Margin', and the worker
+    fell back to column letters and wrote to the wrong column."""
+    headers = a_header_map()
+
+    assert "profit margin" in headers
+    assert headers["profit margin"] == 2
+    assert headers.get("PROFIT MARGIN") == 2
+    # Surrounding spaces are typing, not identity.
+    assert headers["  profit margin  "] == 2
+
+
+def test_a_name_no_column_has_is_still_missing():
+    headers = a_header_map()
+
+    assert "Nonsense" not in headers
+    assert headers.get("Nonsense") is None
+
+    with pytest.raises(KeyError):
+        headers["Nonsense"]
+
+
+def test_the_real_spelling_is_what_comes_back_out():
+    headers = a_header_map()
+
+    # What the sheet holds, for messages that name the columns that exist.
+    assert list(headers) == ["Order ID", "Profit Margin"]
+
+
+def test_the_exact_spelling_wins_when_a_sheet_holds_both():
+    headers = header_map(
+        [[fake_sheets.text("Region"), fake_sheets.text("region")]],
+        1,
+    )
+
+    assert headers["Region"] == 1
+    assert headers["region"] == 2
+
+
+def test_two_columns_differing_only_in_case_refuse_a_third_spelling():
+    headers = header_map(
+        [[fake_sheets.text("Region"), fake_sheets.text("region")]],
+        1,
+    )
+
+    # Neither is what was written, so there is nothing to prefer.
+    assert "REGION" not in headers

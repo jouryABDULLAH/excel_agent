@@ -463,3 +463,36 @@ def test_sorting_uses_the_sort_tool_not_delete_and_re_add(a_sheet, monkeypatch):
     list(session.resume({"decisions": [{"type": "approve"}]}))
 
     assert sent == ["sort_range"], f"sorting reached for {sent}"
+
+
+def test_a_lowercased_column_name_reaches_the_column(a_sheet, monkeypatch):
+    """REGRESSION, from the traces: column_not_found on 'profit margin'
+    against a 'Profit Margin' header. The column tools were fixed first;
+    this is a row tool, which resolves names through header_map."""
+    from excel_agent.runner import Approval
+    from excel_agent.tools import rows as rows_tool
+
+    monkeypatch.setattr(
+        rows_tool,
+        "resolve_spreadsheet",
+        lambda name=None: ("an-id", name or SPREADSHEET),
+    )
+
+    written: list[dict] = []
+
+    monkeypatch.setattr(
+        spreadsheet_service,
+        "update_cells",
+        lambda **sent: written.append(sent) or {"totalUpdatedCells": 1},
+    )
+
+    session = Session(build_graph(build_model()))
+    session.use(SPREADSHEET)
+
+    list(session.ask("set the region in row 3 to Central"))
+    list(session.resume({"decisions": [{"type": "approve"}]}))
+
+    assert written, "the lowercase column name never reached a write"
+    ranges = [one["range"] for update in written for one in update["updates"]]
+    # Region is column B, whatever case the model wrote it in.
+    assert any("B3" in one for one in ranges), ranges

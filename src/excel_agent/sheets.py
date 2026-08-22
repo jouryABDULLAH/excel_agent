@@ -105,7 +105,60 @@ def find_header_row(rows: list[list[Cell]], search_depth: int = 10) -> int:
     return 1
 
 
-def header_map(rows: list[list[Cell]], header_row: int) -> dict[str, int]:
+class Headers(dict):
+    """Column names to column numbers, reached however they were written.
+
+    Capitalisation and surrounding spaces are how someone types a header,
+    not what tells two columns apart: "profit margin" means the "Profit
+    Margin" column. An exact match wins, so a sheet holding both spellings
+    still reaches the one actually named, and two columns differing only in
+    case are unreachable by a spelling that is neither -- which is a refusal
+    rather than a guess.
+
+    A dict subclass so that every tool reading `column in headers` or
+    `headers[column]` gets this without knowing it exists.
+    """
+
+    def _named(self, key) -> str | None:
+        """The real header a name reaches, or None."""
+        if dict.__contains__(self, key):
+            return key
+
+        if not isinstance(key, str):
+            return None
+
+        wanted = key.strip().casefold()
+
+        found = [
+            name
+            for name in self
+            if name.strip().casefold() == wanted
+        ]
+
+        return found[0] if len(found) == 1 else None
+
+    def __contains__(self, key) -> bool:
+        return self._named(key) is not None
+
+    def __getitem__(self, key) -> int:
+        found = self._named(key)
+
+        if found is None:
+            raise KeyError(key)
+
+        return dict.__getitem__(self, found)
+
+    def get(self, key, default=None):
+        found = self._named(key)
+
+        return (
+            dict.__getitem__(self, found)
+            if found is not None
+            else default
+        )
+
+
+def header_map(rows: list[list[Cell]], header_row: int) -> Headers:
     """Map each column name to its column number, counting from 1.
 
     Looking columns up by name means no column letters are written down, so a
@@ -113,13 +166,13 @@ def header_map(rows: list[list[Cell]], header_row: int) -> dict[str, int]:
     no column and is left out.
     """
     if header_row > len(rows):
-        return {}
+        return Headers()
 
-    return {
-        str(one.displayed).strip(): number
+    return Headers(
+        (str(one.displayed).strip(), number)
         for number, one in enumerate(rows[header_row - 1], start=1)
         if not is_blank(one.displayed)
-    }
+    )
 
 
 def last_data_row(rows: list[list[Cell]], header_row: int) -> int:
