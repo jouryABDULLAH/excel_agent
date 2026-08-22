@@ -18,3 +18,7 @@ sheet_quickstart.py
 /data
 /.agents
 18-aug-additions.md
+
+# Trace-inspection scratch, may hold sheet data
+inspect_langsmith_run.py
+langsmith_run.json
