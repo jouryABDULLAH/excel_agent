@@ -17,6 +17,7 @@ from langgraph.errors import (
 )
 
 from excel_agent.config import START_SPREADSHEET
+from excel_agent.services.spreadsheet import spreadsheet_service
 from excel_agent.graph.state import DECISION_NAMES
 from excel_agent.model import (
     CUT_OFF,
@@ -359,6 +360,11 @@ class Session:
         question: str,
     ) -> Iterator[Event]:
         """Run one turn and emit application-level events."""
+        # The cached grids go first: within a turn one fetch serves every
+        # step, but a question must always start from the live sheet, or an
+        # edit made by hand in Google stays invisible until some write lands.
+        spreadsheet_service._grids.clear()
+
         # All three are turn-scoped. A turn that died outside the supervisor's
         # own handling left them behind for the next turn to answer from.
         yield from self._run(

@@ -402,3 +402,34 @@ def test_a_write_forgets_only_the_spreadsheet_it_landed_on():
         if method == "get"
     ]
     assert len(reads) == 2
+
+
+def test_a_new_turn_reads_the_live_sheet_not_the_cached_one():
+    """The cache serves one turn; a hand edit in Google between questions
+    must be seen by the next one."""
+    from langchain_core.messages import AIMessage
+    import sys
+    sys.path.insert(0, "tests")
+    from scripted import ScriptedModel
+
+    from excel_agent.runner import Session
+    from excel_agent.services.spreadsheet import spreadsheet_service
+
+    spreadsheet_service._grids[("an-id", "Sales")] = [["stale"]]
+
+    class Quiet:
+        def stream(self, payload, config=None, **settings):
+            return iter(())
+
+        def get_state(self, where):
+            class Snapshot:
+                values: dict = {}
+
+            return Snapshot()
+
+        def update_state(self, where, values):
+            pass
+
+    list(Session(Quiet()).ask("how many rows?"))
+
+    assert spreadsheet_service._grids == {}
