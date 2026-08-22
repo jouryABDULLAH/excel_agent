@@ -40,6 +40,12 @@ class SpreadsheetService:
         # filled by list_sheets(). cleared by invalidate().
         self._sheets: dict[str, dict[str, dict]] = {}
 
+        # Cached grids: (spreadsheet_id, sheet title) -> rows of cells,
+        # filled by read_sheet(), cleared by the same invalidate() every
+        # write already calls. Within one turn a read and the write that
+        # follows it stop fetching the same sheet twice.
+        self._grids: dict[tuple[str, str], list] = {}
+
     # ------------------------------------------------------------------
     # Spreadsheet / sheet metadata
     # ------------------------------------------------------------------
@@ -121,7 +127,17 @@ class SpreadsheetService:
         spreadsheet_id: str,
         sheet_name: str,
     ) -> list[list[Cell]]:
-        """Read the populated grid of one sheet."""
+        """Read the populated grid of one sheet, from the cache when clean.
+
+        The trade is deliberate: an edit made by hand in Google mid-turn can
+        be missed until the next write or turn, and in exchange a turn stops
+        downloading the same sheet before every step.
+        """
+        key = (spreadsheet_id, sheet_name)
+
+        if key in self._grids:
+            return self._grids[key]
+
         response = self._google.execute(
             self._google.sheets
             .spreadsheets()
@@ -139,13 +155,15 @@ class SpreadsheetService:
             for data in sheet.get("data", []):
                 raw_rows.extend(data.get("rowData", []))
 
-        return [
+        self._grids[key] = [
             [
                 self._as_cell(raw_cell)
                 for raw_cell in row.get("values", [])
             ]
             for row in raw_rows
         ]
+
+        return self._grids[key]
 
     def read_range(
         self,
@@ -681,8 +699,13 @@ class SpreadsheetService:
     # ------------------------------------------------------------------
 
     def invalidate(self, spreadsheet_id: str) -> None:
-        """Forget cached sheet metadata for a spreadsheet."""
+        """Forget what is cached about a spreadsheet a write may have moved."""
         self._sheets.pop(spreadsheet_id, None)
+
+        for key in [
+            one for one in self._grids if one[0] == spreadsheet_id
+        ]:
+            self._grids.pop(key, None)
 
     @staticmethod
     def _as_cell(raw: dict) -> Cell:

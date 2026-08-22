@@ -71,6 +71,7 @@ def nothing_remembered_between_tests():
         google_api._services,
         drive_service._spreadsheet_ids,
         spreadsheet_service._sheets,
+        spreadsheet_service._grids,
     ):
         cache.clear()
 
@@ -80,6 +81,7 @@ def nothing_remembered_between_tests():
         google_api._services,
         drive_service._spreadsheet_ids,
         spreadsheet_service._sheets,
+        spreadsheet_service._grids,
     ):
         cache.clear()
 

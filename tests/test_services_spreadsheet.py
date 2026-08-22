@@ -330,3 +330,75 @@ def test_reading_a_sheet_asks_for_the_fields_a_cell_is_built_from():
     for wanted in ("formattedValue", "userEnteredValue", "effectiveValue",
                    "effectiveFormat(numberFormat(type))"):
         assert wanted in GRID_FIELDS
+
+
+# The grid cache
+
+
+def a_grid_service():
+    """A service whose Google answers one sheet of data."""
+    return a_service(
+        answers={
+            "get": {
+                "sheets": [
+                    {
+                        "properties": {"sheetId": 0, "title": "Sales"},
+                        "data": [
+                            {
+                                "rowData": [
+                                    {"values": [{"formattedValue": "Region"}]},
+                                    {"values": [{"formattedValue": "North"}]},
+                                ]
+                            }
+                        ],
+                    }
+                ]
+            }
+        }
+    )
+
+
+def test_a_sheet_is_read_once_and_then_answered_from_memory():
+    service, pretend = a_grid_service()
+
+    first = service.read_sheet("an-id", "Sales")
+    second = service.read_sheet("an-id", "Sales")
+
+    # inspect_sheet followed by update_row used to fetch the same grid
+    # twice within seconds; the second read now costs nothing.
+    assert len(pretend.spreadsheets_endpoint.calls) == 1
+    assert second is first
+    assert first[0][0].displayed == "Region"
+
+
+def test_a_write_sends_the_next_read_back_to_google():
+    service, pretend = a_grid_service()
+
+    service.read_sheet("an-id", "Sales")
+    service.update_cells("an-id", updates=[{"range": "A1", "values": [["x"]]}])
+    service.read_sheet("an-id", "Sales")
+
+    # Read, write, read again: acting on the pre-write grid is the
+    # deleted-the-wrong-row class of bug, so the write clears it.
+    reads = [
+        method for method, _ in pretend.spreadsheets_endpoint.calls
+        if method == "get"
+    ]
+    assert len(reads) == 2
+
+
+def test_a_write_forgets_only_the_spreadsheet_it_landed_on():
+    service, pretend = a_grid_service()
+
+    service.read_sheet("an-id", "Sales")
+    service.read_sheet("other-id", "Sales")
+    service.update_cells("an-id", updates=[{"range": "A1", "values": [["x"]]}])
+
+    service.read_sheet("other-id", "Sales")
+
+    # The untouched spreadsheet still answers from memory.
+    reads = [
+        method for method, _ in pretend.spreadsheets_endpoint.calls
+        if method == "get"
+    ]
+    assert len(reads) == 2
