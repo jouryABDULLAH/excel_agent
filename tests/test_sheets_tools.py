@@ -1458,3 +1458,27 @@ def test_a_column_can_be_created_past_the_last_named_one(
     assert answer["ok"] is True
     assert answer["position"] == 9
     assert calls(sent, "insert_columns")[0]["start_column"] == 9
+
+
+def test_a_formula_goes_into_a_table_that_has_only_headers(a_writable_columns_sheet):
+    """This used to be refused as no_data_rows. Sheets lets a formula go in
+    any cell, and the agent is never stricter than Sheets."""
+    sent = a_writable_columns_sheet(
+        rows=[
+            [
+                fake_sheets.text("Order ID"),
+                fake_sheets.text("Region"),
+                fake_sheets.text("Units"),
+                fake_sheets.text("Product"),
+            ]
+        ]
+    )
+
+    answer = columns.set_column_formula.invoke(
+        {"column": "Units", "formula": "=A2&B2"}
+    )
+
+    assert answer["ok"] is True
+    # The first data row, with nothing under the header yet.
+    assert (answer["first_row"], answer["last_row"]) == (2, 2)
+    assert calls(sent, "repeat_cell")[0]["grid_range"]["startRowIndex"] == 1

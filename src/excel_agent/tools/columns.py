@@ -956,15 +956,10 @@ def set_column_formula(
 
         first_data_row = header_row + 1
 
-        if last_row < first_data_row:
-            return _error(
-                "no_data_rows",
-                "There are no data rows to fill.",
-                spreadsheet=spreadsheet_name,
-                sheet=sheet_name,
-                column=target_header,
-                position=target_position,
-            )
+        # A table with headers and nothing under them used to be refused.
+        # Sheets lets a formula go in any cell, so the first data row is
+        # written and the column starts there.
+        last_row = max(last_row, first_data_row)
 
         # A spilling formula fills the column itself, so a copy in every row
         # would be overlapping spills, which Sheets blocks with #REF!.
