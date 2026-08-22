@@ -12,6 +12,7 @@ from excel_agent.agents._shared import (
 from excel_agent.prompts import CANNOT_DO, LANGUAGE_AND_SHEET_TEXT
 from excel_agent.tools import (
     append_row,
+    fill_rows,
     delete_row,
     find_data,
     insert_row,
@@ -29,6 +30,8 @@ You change row data.
 Tool choice:
 - update_row: change specified fields in existing rows. Several rows
   getting the same values is one call with rows - never one call per row.
+- fill_rows: write a block of consecutive rows that each get different
+  values. Twenty rows is one call with twenty dicts, never twenty calls.
 - insert_row: create a row at a specific row number.
 - append_row: add a new record at the end. To repeat a row, one call
   with count - never one call per copy.
@@ -63,6 +66,7 @@ TOOLS = (
     inspect_sheet,
     find_data,
     update_row,
+    fill_rows,
     insert_row,
     append_row,
     delete_row,
@@ -86,6 +90,7 @@ def build(model):
                     interrupt_on={
                         "delete_row": CONFIRMED,
                         "update_row": CONFIRMED,
+                        "fill_rows": CONFIRMED,
                     },
                     description_prefix="This changes the spreadsheet",
                 ),

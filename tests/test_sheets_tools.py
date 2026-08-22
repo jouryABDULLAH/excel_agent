@@ -1247,3 +1247,104 @@ def test_two_columns_matching_only_by_case_are_still_ambiguous(
     assert answer["ok"] is False
     assert answer["error"] == "ambiguous_column"
     assert sent == []
+
+
+# Filling a block of rows, each with its own values
+
+
+def test_a_block_of_rows_is_written_in_one_call(a_writable_sheet):
+    sent = a_writable_sheet()
+
+    answer = row_tools.fill_rows.invoke(
+        {
+            "start_row": 3,
+            "rows": [
+                {"Region": "West", "Units": 1},
+                {"Region": "East", "Units": 2},
+            ],
+        }
+    )
+
+    assert answer["ok"] is True
+    assert (answer["first_row"], answer["last_row"]) == (3, 4)
+    assert answer["rows_written"] == 2
+
+    # One service call for the whole block: the shape that used to be one
+    # update_row per row, twenty calls deep, running out of steps part way.
+    assert [one["call"] for one in sent] == ["update_cells"]
+    assert written(sent) == {
+        "'Sales Orders'!B3:B3": "West",
+        "'Sales Orders'!C3:C3": 1,
+        "'Sales Orders'!B4:B4": "East",
+        "'Sales Orders'!C4:C4": 2,
+    }
+
+
+def test_a_column_that_does_not_exist_stops_the_whole_block(a_writable_sheet):
+    sent = a_writable_sheet()
+
+    answer = row_tools.fill_rows.invoke(
+        {
+            "start_row": 3,
+            "rows": [{"Region": "West"}, {"Nonsense": 1}],
+        }
+    )
+
+    # Checked across every row before anything is written, so a bad name in
+    # the last dict cannot leave the first rows half written.
+    assert answer["ok"] is False
+    assert answer["error"] == "unknown_columns"
+    assert answer["unknown_columns"] == ["Nonsense"]
+    assert sent == []
+
+
+def test_a_block_never_overwrites_the_header(a_writable_sheet):
+    sent = a_writable_sheet()
+
+    answer = row_tools.fill_rows.invoke(
+        {"start_row": 1, "rows": [{"Region": "West"}]}
+    )
+
+    assert answer["error"] == "row_not_found"
+    assert sent == []
+
+
+def test_a_block_reaching_past_the_grid_makes_room_first(
+    a_writable_sheet, monkeypatch
+):
+    from excel_agent.services.spreadsheet import spreadsheet_service
+
+    sent = a_writable_sheet()
+
+    monkeypatch.setattr(
+        spreadsheet_service,
+        "resolve_sheet",
+        lambda id, name=None: {
+            "title": "Sales Orders",
+            "sheetId": 0,
+            "gridProperties": {"rowCount": 6, "columnCount": 10},
+        },
+    )
+
+    answer = row_tools.fill_rows.invoke(
+        {"start_row": 6, "rows": [{"Region": "A"}, {"Region": "B"}]}
+    )
+
+    assert answer["ok"] is True
+    # Row 7 is past a six-row grid, so the room is made before the write.
+    assert [one["call"] for one in sent] == ["insert_rows", "update_cells"]
+    # And the block landing past the data is said out loud.
+    assert answer["rows_past_data"] == 1
+
+
+def test_a_row_left_empty_in_the_block_is_left_alone(a_writable_sheet):
+    sent = a_writable_sheet()
+
+    answer = row_tools.fill_rows.invoke(
+        {"start_row": 3, "rows": [{"Region": "West"}, {}, {"Region": "East"}]}
+    )
+
+    assert answer["ok"] is True
+    assert answer["rows_written"] == 3
+    # The gap row is skipped rather than blanked.
+    assert "'Sales Orders'!B4:B4" not in written(sent)

@@ -376,3 +376,54 @@ def test_a_refused_deletion_ends_with_a_graceful_answer(a_sheet, monkeypatch):
         "the refused deletion was asked for again"
     )
     assert answer.strip(), "the refusal ended without a written answer"
+
+
+def test_filling_many_rows_is_one_call_not_one_per_row(a_sheet, monkeypatch):
+    """REGRESSION, from a live trace: "fill the empty rows" became twenty
+    update_row calls, ran out of steps at row 47, and came back having done
+    part of the job. One block, one call."""
+    from excel_agent.runner import Approval
+    from excel_agent.tools import rows as rows_tool
+
+    monkeypatch.setattr(
+        rows_tool,
+        "resolve_spreadsheet",
+        lambda name=None: ("an-id", name or SPREADSHEET),
+    )
+
+    written: list[dict] = []
+
+    monkeypatch.setattr(
+        spreadsheet_service,
+        "update_cells",
+        lambda **sent: written.append(sent) or {"totalUpdatedCells": 8},
+    )
+    monkeypatch.setattr(
+        spreadsheet_service, "insert_rows", lambda **sent: None
+    )
+
+    session = Session(build_graph(build_model()))
+    session.use(SPREADSHEET)
+
+    waiting = [
+        one
+        for one in session.ask(
+            "Set the Region for rows 2 to 6 to North, South, East, West "
+            "and North in that order."
+        )
+        if isinstance(one, Approval)
+    ]
+
+    assert waiting, "the block never asked to be allowed"
+    assert written == []
+
+    list(session.resume({"decisions": [{"type": "approve"}]}))
+
+    assert len(written) == 1, f"{len(written)} writes for one block of rows"
+
+    ranges = [
+        one["range"]
+        for update in written
+        for one in update["updates"]
+    ]
+    assert len(ranges) == 5

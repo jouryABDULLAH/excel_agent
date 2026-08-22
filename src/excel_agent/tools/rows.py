@@ -165,6 +165,155 @@ def _validate_values(
 
 
 @tool
+def fill_rows(
+    start_row: int,
+    rows: list[dict[str, CellValue]],
+    spreadsheet: str | None = None,
+    sheet: str | None = None,
+    runtime: ToolRuntime = None,
+) -> dict:
+    """Write a block of consecutive rows, each with its own values, at once.
+
+    One call fills the whole block: rows[0] lands in start_row, rows[1] in
+    the row below it, and so on. Never write a block one update_row call per
+    row - twenty rows is one fill_rows call with twenty dicts.
+
+    Use update_row instead when several rows get the SAME values; use
+    append_row to add records after the end of the data.
+
+    Only the columns named in each dict are changed. A null clears the cell;
+    a string beginning with "=" is a formula. Rows past the end of the data
+    are written where asked, growing the sheet if needed.
+
+    Args:
+        start_row: The sheet row the first dict lands in.
+        rows: One dict of column-name -> value per consecutive row.
+        spreadsheet: Spreadsheet name, not an ID. Omit to use the current
+            spreadsheet.
+        sheet: Sheet/tab name, not the spreadsheet name. Omit to use the
+            first sheet.
+    """
+    # Left out, the file is the one the orchestrator handed this
+    # specialist, which lives in its state rather than in a global.
+    spreadsheet = spreadsheet or chosen(runtime)
+
+    if not rows:
+        return _error(
+            "no_values",
+            "No rows were supplied.",
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
+
+    try:
+        (
+            spreadsheet_id,
+            spreadsheet_name,
+            properties,
+            _,
+            header_row,
+            headers,
+            last_row,
+        ) = _load_table(spreadsheet, sheet)
+
+        sheet_name = properties["title"]
+
+        if not headers:
+            return _error(
+                "headers_not_found",
+                "No column headers were found.",
+                spreadsheet=spreadsheet_name,
+                sheet=sheet_name,
+                header_row=header_row,
+            )
+
+        if start_row <= header_row:
+            return _error(
+                "row_not_found",
+                "The block would overwrite the header row.",
+                spreadsheet=spreadsheet_name,
+                sheet=sheet_name,
+                first_data_row=header_row + 1,
+            )
+
+        # Every column across every row, checked before anything is written:
+        # the block lands whole or not at all.
+        together: dict[str, CellValue] = {}
+        for one in rows:
+            together.update(one)
+
+        invalid = _validate_values(together, headers)
+        if invalid:
+            invalid["spreadsheet"] = spreadsheet_name
+            invalid["sheet"] = sheet_name
+            return invalid
+
+        last_new_row = start_row + len(rows) - 1
+
+        grid_rows = (
+            properties
+            .get("gridProperties", {})
+            .get("rowCount")
+        )
+
+        if grid_rows is not None and last_new_row > grid_rows:
+            spreadsheet_service.insert_rows(
+                spreadsheet_id=spreadsheet_id,
+                sheet_id=properties["sheetId"],
+                start_row=grid_rows + 1,
+                count=last_new_row - grid_rows,
+            )
+
+        response = spreadsheet_service.update_cells(
+            spreadsheet_id=spreadsheet_id,
+            updates=[
+                update
+                for offset, values in enumerate(rows)
+                if values
+                for update in _cell_updates(
+                    sheet_name,
+                    start_row + offset,
+                    values,
+                    headers,
+                )
+            ],
+            value_input_option="USER_ENTERED",
+        )
+
+        past_data = max(0, last_new_row - max(last_row, header_row))
+
+        return {
+            "ok": True,
+            "operation": "fill_rows",
+            "spreadsheet": spreadsheet_name,
+            "sheet": sheet_name,
+            "first_row": start_row,
+            "last_row": last_new_row,
+            "rows_written": len(rows),
+            # Said out loud so a block that landed past the data is visible,
+            # rather than a silent surprise off the bottom of the table.
+            "rows_past_data": past_data,
+            "updated_cells": response.get("totalUpdatedCells", 0),
+        }
+
+    except ValueError as failure:
+        return _error(
+            "invalid_request",
+            str(failure),
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
+
+    except HttpError as failure:
+        return _error(
+            "google_api_error",
+            readable(failure),
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
+
+
+@tool
 def update_row(
     values: dict[str, CellValue],
     row: int | None = None,
@@ -175,9 +324,11 @@ def update_row(
 ) -> dict:
     """Update selected cells in existing rows, all with the same values.
 
-    One row goes in row; several go in rows, in one call - never one call
-    per row. All named rows change together or not at all: one row that does
-    not exist refuses the whole call before anything is written.
+    One row goes in row; several rows getting the SAME values go in rows,
+    in one call - never one call per row. All named rows change together or
+    not at all: one row that does not exist refuses the whole call before
+    anything is written. For consecutive rows that each get DIFFERENT
+    values, use fill_rows.
 
     Only the columns supplied in values are changed. A null value clears the
     cell. A string beginning with "=" is interpreted by Google Sheets as a
