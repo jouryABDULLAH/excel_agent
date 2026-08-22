@@ -19,6 +19,7 @@ from excel_agent.tools.inspect import inspect_sheet
 from excel_agent.tools.rows import (
     append_row,
     fill_rows,
+    sort_rows,
     delete_row,
     insert_row,
     move_row,
@@ -49,6 +50,7 @@ TOOLS = [
     
     append_row,
     fill_rows,
+    sort_rows,
     delete_row,
     insert_row,
     move_row,

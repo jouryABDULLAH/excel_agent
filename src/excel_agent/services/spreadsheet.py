@@ -332,6 +332,47 @@ class SpreadsheetService:
         )
 
 
+    def sort_range(
+        self,
+        spreadsheet_id: str,
+        grid_range: dict,
+        by_columns: list[tuple[int, bool]],
+    ) -> dict:
+        """Sort the rows of a grid range by one or more columns.
+
+        by_columns pairs a 1-based column number with whether it sorts
+        descending. The conversion to Google's 0-based index happens here,
+        beside the rest of that arithmetic, and nowhere above.
+        """
+        if not by_columns:
+            raise ValueError("At least one column to sort by is required.")
+
+        for column, _ in by_columns:
+            if column < 1:
+                raise ValueError("Column numbers must be at least 1.")
+
+        return self.batch_update(
+            spreadsheet_id,
+            [
+                {
+                    "sortRange": {
+                        "range": grid_range,
+                        "sortSpecs": [
+                            {
+                                "dimensionIndex": column - 1,
+                                "sortOrder": (
+                                    "DESCENDING"
+                                    if descending
+                                    else "ASCENDING"
+                                ),
+                            }
+                            for column, descending in by_columns
+                        ],
+                    }
+                }
+            ],
+        )
+
     def move_row(
         self,
         spreadsheet_id: str,

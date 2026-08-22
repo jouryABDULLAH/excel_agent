@@ -1348,3 +1348,50 @@ def test_a_row_left_empty_in_the_block_is_left_alone(a_writable_sheet):
     assert answer["rows_written"] == 3
     # The gap row is skipped rather than blanked.
     assert "'Sales Orders'!B4:B4" not in written(sent)
+
+
+# Sorting the data rows
+
+
+def test_sorting_leaves_the_header_where_it_is(a_writable_sheet):
+    sent = a_writable_sheet()
+
+    answer = row_tools.sort_rows.invoke({"column": "Region"})
+
+    assert answer["ok"] is True
+    assert answer["sorted_rows"] == 5
+    assert answer["row_numbers_changed"] is True
+
+    sorted_by = calls(sent, "sort_range")[0]
+    # Rows 2 to 6, never row 1: the header is not part of the data.
+    assert sorted_by["grid_range"]["startRowIndex"] == 1
+    assert sorted_by["grid_range"]["endRowIndex"] == 6
+    assert sorted_by["by_columns"] == [(2, False)]
+
+
+def test_sorting_the_other_way_and_breaking_ties(a_writable_sheet):
+    sent = a_writable_sheet()
+
+    answer = row_tools.sort_rows.invoke(
+        {
+            "column": "Units",
+            "descending": True,
+            "then_by": "Product",
+        }
+    )
+
+    assert answer["ok"] is True
+    assert calls(sent, "sort_range")[0]["by_columns"] == [(3, True), (4, False)]
+
+
+def test_sorting_by_a_column_that_is_not_there_is_refused(a_writable_sheet):
+    sent = a_writable_sheet()
+
+    answer = row_tools.sort_rows.invoke({"column": "Nonsense"})
+
+    # REGRESSION: with no sort tool at all, the model improvised by deleting
+    # the columns and adding them back.
+    assert answer["ok"] is False
+    assert answer["error"] == "unknown_columns"
+    assert answer["available_columns"] == ["Order ID", "Region", "Units", "Product"]
+    assert sent == []

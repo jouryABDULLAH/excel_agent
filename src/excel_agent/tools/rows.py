@@ -11,6 +11,7 @@ from excel_agent.services.spreadsheet import spreadsheet_service
 from excel_agent.tools.runtime import chosen
 from excel_agent.sheets import (
     a1,
+    to_grid_range,
     find_header_row,
     header_map,
     last_data_row,
@@ -162,6 +163,135 @@ def _validate_values(
         )
 
     return None
+
+
+@tool
+def sort_rows(
+    column: str,
+    descending: bool = False,
+    then_by: str | None = None,
+    then_descending: bool = False,
+    spreadsheet: str | None = None,
+    sheet: str | None = None,
+    runtime: ToolRuntime = None,
+) -> dict:
+    """Sort the data rows of a sheet by one or two columns.
+
+    The header row stays where it is; only the rows under it are reordered.
+    Sheets moves each row whole, so values, formulas and formatting travel
+    with their row.
+
+    Args:
+        column: Header name of the column to sort by.
+        descending: Largest or latest first. Ascending by default.
+        then_by: Optional second column, used to break ties in the first.
+        then_descending: Whether that second column sorts descending.
+        spreadsheet: Spreadsheet name, not an ID. Omit to use the current
+            spreadsheet.
+        sheet: Sheet/tab name, not the spreadsheet name. Omit to use the
+            first sheet.
+    """
+    # Left out, the file is the one the orchestrator handed this
+    # specialist, which lives in its state rather than in a global.
+    spreadsheet = spreadsheet or chosen(runtime)
+
+    try:
+        (
+            spreadsheet_id,
+            spreadsheet_name,
+            properties,
+            rows,
+            header_row,
+            headers,
+            last_row,
+        ) = _load_table(spreadsheet, sheet)
+
+        sheet_name = properties["title"]
+
+        if not headers:
+            return _error(
+                "headers_not_found",
+                "No column headers were found.",
+                spreadsheet=spreadsheet_name,
+                sheet=sheet_name,
+                header_row=header_row,
+            )
+
+        asked = [(column, descending)]
+
+        if then_by:
+            asked.append((then_by, then_descending))
+
+        unknown = [
+            name for name, _ in asked if name not in headers
+        ]
+
+        if unknown:
+            return _error(
+                "unknown_columns",
+                "One or more column names do not exist.",
+                spreadsheet=spreadsheet_name,
+                sheet=sheet_name,
+                unknown_columns=unknown,
+                available_columns=list(headers),
+            )
+
+        if last_row <= header_row:
+            return _error(
+                "no_data_rows",
+                "There are no data rows to sort.",
+                spreadsheet=spreadsheet_name,
+                sheet=sheet_name,
+            )
+
+        width = max((len(one) for one in rows), default=len(headers))
+
+        spreadsheet_service.sort_range(
+            spreadsheet_id=spreadsheet_id,
+            grid_range=to_grid_range(
+                properties["sheetId"],
+                header_row + 1,
+                last_row,
+                1,
+                width,
+            ),
+            by_columns=[
+                (headers[name], way) for name, way in asked
+            ],
+        )
+
+        return {
+            "ok": True,
+            "operation": "sort_rows",
+            "spreadsheet": spreadsheet_name,
+            "sheet": sheet_name,
+            "sorted_by": [
+                {"column": name, "descending": way}
+                for name, way in asked
+            ],
+            "first_row": header_row + 1,
+            "last_row": last_row,
+            "sorted_rows": last_row - header_row,
+            # Every row number a caller had before this is now meaningless,
+            # and a formula pointing at another row moved with its own row.
+            "row_numbers_changed": True,
+        }
+
+    except ValueError as failure:
+        return _error(
+            "invalid_request",
+            str(failure),
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
+
+    except HttpError as failure:
+        return _error(
+            "google_api_error",
+            readable(failure),
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
 
 
 @tool

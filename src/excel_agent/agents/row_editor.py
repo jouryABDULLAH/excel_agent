@@ -13,6 +13,7 @@ from excel_agent.prompts import CANNOT_DO, LANGUAGE_AND_SHEET_TEXT
 from excel_agent.tools import (
     append_row,
     fill_rows,
+    sort_rows,
     delete_row,
     find_data,
     insert_row,
@@ -38,6 +39,8 @@ Tool choice:
 - delete_row: delete existing rows. Several rows is one call with rows -
   never one call per row.
 - move_row: reposition one existing row.
+- sort_rows: reorder every data row by a column. Never sort by deleting
+  and re-adding rows or columns.
 - inspect_sheet/find_data: establish the correct row before changing it.
 
 Rules:
@@ -67,6 +70,7 @@ TOOLS = (
     find_data,
     update_row,
     fill_rows,
+    sort_rows,
     insert_row,
     append_row,
     delete_row,
@@ -91,6 +95,7 @@ def build(model):
                         "delete_row": CONFIRMED,
                         "update_row": CONFIRMED,
                         "fill_rows": CONFIRMED,
+                        "sort_rows": CONFIRMED,
                     },
                     description_prefix="This changes the spreadsheet",
                 ),

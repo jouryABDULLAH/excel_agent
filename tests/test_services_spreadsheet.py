@@ -433,3 +433,50 @@ def test_a_new_turn_reads_the_live_sheet_not_the_cached_one():
     list(Session(Quiet()).ask("how many rows?"))
 
     assert spreadsheet_service._grids == {}
+
+
+# Sorting
+
+
+def test_sorting_names_the_column_google_counts_from_zero():
+    service, pretend = a_service()
+
+    service.sort_range(
+        "an-id",
+        grid_range={"sheetId": 0, "startRowIndex": 1, "endRowIndex": 6},
+        by_columns=[(5, True)],
+    )
+
+    # Column 5 to a person is dimensionIndex 4 to Google; off by one here
+    # sorts the table by the wrong column.
+    sorted_by = only_request(pretend)["sortRange"]
+    assert sorted_by["sortSpecs"] == [
+        {"dimensionIndex": 4, "sortOrder": "DESCENDING"}
+    ]
+    assert sorted_by["range"]["startRowIndex"] == 1
+
+
+def test_a_second_column_breaks_ties_in_the_first():
+    service, pretend = a_service()
+
+    service.sort_range(
+        "an-id",
+        grid_range={"sheetId": 0},
+        by_columns=[(2, False), (1, True)],
+    )
+
+    # Order matters: the first spec decides, the second only breaks ties.
+    assert [
+        (one["dimensionIndex"], one["sortOrder"])
+        for one in only_request(pretend)["sortRange"]["sortSpecs"]
+    ] == [(1, "ASCENDING"), (0, "DESCENDING")]
+
+
+@pytest.mark.parametrize("by_columns", [[], [(0, False)]])
+def test_a_sort_that_makes_no_sense_never_reaches_google(by_columns):
+    service, pretend = a_service()
+
+    with pytest.raises(ValueError):
+        service.sort_range("an-id", grid_range={"sheetId": 0}, by_columns=by_columns)
+
+    assert pretend.spreadsheets_endpoint.calls == []

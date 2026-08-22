@@ -427,3 +427,39 @@ def test_filling_many_rows_is_one_call_not_one_per_row(a_sheet, monkeypatch):
         for one in update["updates"]
     ]
     assert len(ranges) == 5
+
+
+def test_sorting_uses_the_sort_tool_not_delete_and_re_add(a_sheet, monkeypatch):
+    """REGRESSION: with no sort tool, "sort books by Rating" was answered by
+    deleting the columns and adding them back."""
+    from excel_agent.runner import Approval
+    from excel_agent.tools import rows as rows_tool
+
+    monkeypatch.setattr(
+        rows_tool,
+        "resolve_spreadsheet",
+        lambda name=None: ("an-id", name or SPREADSHEET),
+    )
+
+    sent: list[str] = []
+
+    for name in ("sort_range", "delete_columns", "insert_columns", "delete_rows"):
+        monkeypatch.setattr(
+            spreadsheet_service,
+            name,
+            lambda _name=name, **args: sent.append(_name) or {},
+        )
+
+    session = Session(build_graph(build_model()))
+    session.use(SPREADSHEET)
+
+    waiting = [
+        one for one in session.ask("sort the rows by Units, highest first")
+        if isinstance(one, Approval)
+    ]
+
+    assert waiting, "sorting never asked to be allowed"
+
+    list(session.resume({"decisions": [{"type": "approve"}]}))
+
+    assert sent == ["sort_range"], f"sorting reached for {sent}"

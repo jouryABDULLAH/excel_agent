@@ -97,6 +97,7 @@ SERVICE_WRITES = (
     "insert_rows",
     "delete_rows",
     "move_row",
+    "sort_range",
     "insert_columns",
     "delete_columns",
     "move_column",
