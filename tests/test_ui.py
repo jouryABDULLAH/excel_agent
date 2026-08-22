@@ -559,3 +559,39 @@ def test_the_permission_card_stands_without_a_task(monkeypatch):
     assert card.splitlines()[0] == "**Action:** update_row"
     assert "**Row:** 3" in card
     assert "**Spreadsheet:** TEST - Sales Orders" in card
+
+
+def test_the_card_survives_every_shape_of_argument():
+    """REGRESSION: fill_rows carries rows as a list of dicts, and the card
+    tried to collapse them into ranges. The unhashable dict crashed the
+    whole page, not just the card."""
+    from excel_agent.ui import permission_card
+
+    card = permission_card(
+        {
+            "tool": "fill_rows",
+            "task": "Fill the Notes column",
+            "arguments": {
+                "start_row": 2,
+                "rows": [{"Notes": "classic"}, {"Notes": "romance"}],
+                "spreadsheet": "TEST - Book Collection",
+            },
+        }
+    )
+
+    assert "**Action:** fill_rows" in card
+    assert "2 row(s), each with its own values" in card
+    assert "**Start row:** 2" in card
+
+
+def test_an_empty_row_list_is_shown_rather_than_crashing():
+    from excel_agent.ui import permission_card
+
+    card = permission_card(
+        {
+            "tool": "delete_row",
+            "arguments": {"rows": [], "spreadsheet": "TEST - Book Collection"},
+        }
+    )
+
+    assert "**Rows:**" in card

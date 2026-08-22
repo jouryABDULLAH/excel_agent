@@ -539,12 +539,24 @@ REFUSED = (
 
 
 def _shown(name: str, value) -> str:
-    """One argument as a card line, row lists written as ranges."""
-    if name == "rows" and isinstance(value, list):
+    """One argument as a card line.
+
+    Row numbers are written as ranges, the way a person says them. Anything
+    else is shown as it is: rows also carries a value per row for fill_rows,
+    and a card must never be the thing that breaks the page.
+    """
+    numbers = isinstance(value, list) and all(
+        isinstance(one, int) for one in value
+    )
+
+    if name == "rows" and numbers:
         value = ", ".join(
             str(first) if first == last else f"{first}–{last}"
             for first, last in _runs(sorted(set(value)))
         )
+
+    elif name == "rows" and isinstance(value, list):
+        value = f"{len(value)} row(s), each with its own values"
 
     return f"**{name.replace('_', ' ').capitalize()}:** {value}"
 
