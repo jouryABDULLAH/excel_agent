@@ -11,8 +11,8 @@ from excel_agent.services.spreadsheet import (
     Cell,
     spreadsheet_service,
 )
+from excel_agent.tools.runtime import chosen
 from excel_agent.sheets import (
-    chosen,
     cell,
     chart_kind,
     chart_title,

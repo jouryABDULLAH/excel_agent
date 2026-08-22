@@ -13,14 +13,10 @@ from googleapiclient.errors import HttpError
 from langchain.tools import tool, ToolRuntime
 from langchain.messages import ToolMessage
 from langgraph.types import Command
-from excel_agent.sheets import (
-    chosen,
-    containing,
-    number_forms,
-    readable,
-    resolve_spreadsheet,
-    search,
-)
+from excel_agent.services.drive import drive_service, number_forms
+from excel_agent.services.google import readable
+from excel_agent.tools.runtime import chosen
+from excel_agent.sheets import resolve_spreadsheet
 
 
 @tool(
@@ -115,7 +111,7 @@ def list_workbooks(
         list_workbooks(name="sales")
     """
     try:
-        found = search(name)
+        found = drive_service.search_spreadsheets(name)
     except HttpError as failure:
         return readable(failure)
 
@@ -196,7 +192,7 @@ def use_spreadsheet(
         # or asks for an id no tool accepts. Both are dead ends, so the names
         # themselves go back instead and the choice gets made from those.
         try:
-            candidates = search()
+            candidates = drive_service.search_spreadsheets()
         except HttpError as failure:
             return answer(readable(failure))
 
@@ -268,12 +264,12 @@ def find_spreadsheet(
     # showing $12,240.00. Only tried when the plain text found nothing, so an
     # ordinary search still costs one call.
     try:
-        found = containing(text)
+        found = drive_service.search_spreadsheets_by_content(text)
         tried = [text]
         if not found:
             for form in number_forms(text)[1:]:
                 tried.append(form)
-                found = containing(form)
+                found = drive_service.search_spreadsheets_by_content(form)
                 if found:
                     break
     except HttpError as failure:

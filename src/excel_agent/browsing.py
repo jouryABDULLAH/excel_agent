@@ -69,9 +69,11 @@ def asks_for(columns: dict[str, list]) -> list[str]:
 
 def workbooks() -> list[str]:
     """The spreadsheets that can be worked on, by name."""
-    from excel_agent.sheets import search
+    from excel_agent.services.drive import drive_service
 
-    return [title for _, title in search()]
+    return [
+        title for _, title in drive_service.search_spreadsheets()
+    ]
 
 
 def choose(name: str) -> tuple[str, str]:
@@ -96,14 +98,15 @@ def where(in_use: str | None) -> str:
     spreadsheet holds several sheets, and the one used when none is asked for
     is simply the first.
     """
-    from excel_agent.sheets import resolve_sheet, resolve_spreadsheet
+    from excel_agent.services.spreadsheet import spreadsheet_service
+    from excel_agent.sheets import resolve_spreadsheet
 
     if not in_use:
         return "[no spreadsheet chosen yet]"
 
     try:
         spreadsheet_id, title = resolve_spreadsheet(in_use)
-        properties = resolve_sheet(spreadsheet_id, None)
+        properties = spreadsheet_service.resolve_sheet(spreadsheet_id)
     except Exception:  # noqa: BLE001 - the page says where, it does not diagnose
         return str(in_use)
 
@@ -132,13 +135,12 @@ def link(in_use: str | None) -> str | None:
 
 def suggestions(in_use: str | None) -> list[str]:
     """A few things worth asking about the spreadsheet in hand."""
+    from excel_agent.services.spreadsheet import spreadsheet_service
     from excel_agent.sheets import (
         cell,
         find_header_row,
-        grid,
         header_map,
         last_data_row,
-        resolve_sheet,
         resolve_spreadsheet,
     )
 
@@ -147,8 +149,11 @@ def suggestions(in_use: str | None) -> list[str]:
 
     try:
         spreadsheet_id, _ = resolve_spreadsheet(in_use)
-        properties = resolve_sheet(spreadsheet_id, None)
-        rows = grid(spreadsheet_id, properties["title"])
+        properties = spreadsheet_service.resolve_sheet(spreadsheet_id)
+        rows = spreadsheet_service.read_sheet(
+            spreadsheet_id,
+            properties["title"],
+        )
     except Exception:  # noqa: BLE001 - a sheet that will not open offers nothing
         return list(GENERIC)
 

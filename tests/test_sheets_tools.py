@@ -12,6 +12,7 @@ import fake_sheets
 import pytest
 from pydantic import ValidationError
 
+from excel_agent.services.drive import drive_service
 from excel_agent.services.spreadsheet import spreadsheet_service
 from excel_agent.tools import columns, find, inspect, rows as row_tools, spreadsheets, stats
 
@@ -193,7 +194,7 @@ def test_a_name_that_reaches_no_spreadsheet_comes_back_as_the_explanation(
 
 def test_every_spreadsheet_is_listed(monkeypatch):
     monkeypatch.setattr(
-        spreadsheets, "search", lambda name=None: [("1", "Sales"), ("2", "Returns")]
+        drive_service, "search_spreadsheets", lambda name=None: [("1", "Sales"), ("2", "Returns")]
     )
     answer = spreadsheets.list_workbooks.invoke({})
 
@@ -217,7 +218,7 @@ class Working:
 
 def test_the_one_being_worked_on_is_marked(monkeypatch):
     monkeypatch.setattr(
-        spreadsheets, "search", lambda name=None: [("1", "Sales"), ("2", "Returns")]
+        drive_service, "search_spreadsheets", lambda name=None: [("1", "Sales"), ("2", "Returns")]
     )
 
     # Which file is in hand comes from the subagent's state now, so the tool
@@ -230,7 +231,7 @@ def test_the_one_being_worked_on_is_marked(monkeypatch):
 
 def test_two_files_sharing_a_name_are_flagged_as_unusable(monkeypatch):
     monkeypatch.setattr(
-        spreadsheets, "search", lambda name=None: [("1", "Budget"), ("2", "Budget")]
+        drive_service, "search_spreadsheets", lambda name=None: [("1", "Budget"), ("2", "Budget")]
     )
     answer = spreadsheets.list_workbooks.invoke({})
 
@@ -240,7 +241,7 @@ def test_two_files_sharing_a_name_are_flagged_as_unusable(monkeypatch):
 
 
 def test_a_search_that_finds_nothing_says_what_was_looked_for(monkeypatch):
-    monkeypatch.setattr(spreadsheets, "search", lambda name=None: [])
+    monkeypatch.setattr(drive_service, "search_spreadsheets", lambda name=None: [])
 
     assert 'No spreadsheet has "sales" in its name.' in (
         spreadsheets.list_workbooks.invoke({"name": "sales"})
@@ -315,7 +316,7 @@ def test_asking_for_nothing_is_refused(a_sheet):
 
 def test_which_file_holds_something_is_a_different_tool(monkeypatch):
     monkeypatch.setattr(
-        spreadsheets, "containing", lambda text: [("1", "Sales"), ("2", "Returns")]
+        drive_service, "search_spreadsheets_by_content", lambda text: [("1", "Sales"), ("2", "Returns")]
     )
 
     answer = spreadsheets.find_spreadsheet.invoke({"text": "quarterly"})
@@ -329,7 +330,7 @@ def test_which_file_holds_something_is_a_different_tool(monkeypatch):
 
 def test_a_search_does_not_push_a_change_of_file_when_one_is_in_hand(monkeypatch):
     monkeypatch.setattr(
-        spreadsheets, "containing", lambda text: [("1", "Sales"), ("2", "Returns")]
+        drive_service, "search_spreadsheets_by_content", lambda text: [("1", "Sales"), ("2", "Returns")]
     )
 
     answer = spreadsheets.find_spreadsheet.func("quarterly", Working("Sales"))
@@ -341,14 +342,14 @@ def test_a_search_does_not_push_a_change_of_file_when_one_is_in_hand(monkeypatch
 
 
 def test_a_search_says_what_to_do_next_when_no_file_is_settled(monkeypatch):
-    monkeypatch.setattr(spreadsheets, "containing", lambda text: [("1", "Sales")])
+    monkeypatch.setattr(drive_service, "search_spreadsheets_by_content", lambda text: [("1", "Sales")])
     answer = spreadsheets.find_spreadsheet.invoke({"text": "quarterly"})
 
     assert "Nothing is being worked on yet" in answer
 
 
 def test_a_drive_search_that_finds_nothing_says_why_it_might_not_have(monkeypatch):
-    monkeypatch.setattr(spreadsheets, "containing", lambda text: [])
+    monkeypatch.setattr(drive_service, "search_spreadsheets_by_content", lambda text: [])
 
     answer = spreadsheets.find_spreadsheet.invoke({"text": "quarterly"})
 
@@ -359,7 +360,7 @@ def test_a_drive_search_that_finds_nothing_says_why_it_might_not_have(monkeypatc
 
 
 def test_find_spreadsheet_needs_something_to_look_for(monkeypatch):
-    monkeypatch.setattr(spreadsheets, "containing", lambda text: [("1", "Sales")])
+    monkeypatch.setattr(drive_service, "search_spreadsheets_by_content", lambda text: [("1", "Sales")])
 
     assert spreadsheets.find_spreadsheet.invoke({"text": "  "}) == "Say what to look for."
 
@@ -498,7 +499,7 @@ def test_a_number_is_looked_for_in_the_ways_a_sheet_might_show_it(monkeypatch):
         asked.append(text)
         return [("1", "Sales")] if text == "12,240.00" else []
 
-    monkeypatch.setattr(spreadsheets, "containing", only_the_formatted_one)
+    monkeypatch.setattr(drive_service, "search_spreadsheets_by_content", only_the_formatted_one)
     answer = spreadsheets.find_spreadsheet.invoke({"text": "12240"})
 
     # Drive indexes what a cell shows, so a bare 12240 misses a sheet showing
@@ -515,7 +516,7 @@ def test_words_are_searched_once_and_not_reshaped(monkeypatch):
         asked.append(text)
         return []
 
-    monkeypatch.setattr(spreadsheets, "containing", watch)
+    monkeypatch.setattr(drive_service, "search_spreadsheets_by_content", watch)
 
     spreadsheets.find_spreadsheet.invoke({"text": "Laptop"})
 
@@ -524,7 +525,7 @@ def test_words_are_searched_once_and_not_reshaped(monkeypatch):
 
 
 def test_a_number_that_is_nowhere_says_what_was_tried(monkeypatch):
-    monkeypatch.setattr(spreadsheets, "containing", lambda text: [])
+    monkeypatch.setattr(drive_service, "search_spreadsheets_by_content", lambda text: [])
 
     answer = spreadsheets.find_spreadsheet.invoke({"text": "999"})
 

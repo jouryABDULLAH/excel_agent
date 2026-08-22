@@ -1,175 +1,26 @@
+"""The arithmetic of a sheet, and the names the tools share.
+
+Nothing here holds a Google client or a cache: reads and writes go through
+the services, and what lives here is how a grid of cells is measured and
+addressed once it has been read.
 """
-Google API clients.
-How to deal with the Google Sheets and Drive APIs.
 
-"""
-
-import random
-import time
-from typing import Any
-
-# from googleapiclient.discovery import build
-# from googleapiclient.errors import HttpError
-
-from excel_agent import config
-from excel_agent.services.google import google_api, readable
-from excel_agent.services.drive import DriveService
+from excel_agent.services.drive import drive_service
 # Taken from the service rather than declared here as well. A second class of
 # the same name and the same fields is still a different class: read_sheet
 # returns the service's Cell, and a helper annotated with a local one does not
 # accept it, which is a type error on every tool that reads a sheet and then
-# measures it. GRID_FIELDS is here for the same reason: one list of the fields
-# a Cell is built from.
-from excel_agent.services.spreadsheet import Cell, EMPTY, GRID_FIELDS
-# from excel_agent.auth import get_credentials
-# from excel_agent.scopes import SCOPES
-
-
-_drive = DriveService()
-
-# Worth trying again: too many requests, and the five hundreds that mean
-# Google rather than the request. A 400 would be just as wrong the second time.
-RETRY_ON = (429, 500, 502, 503, 504)
-MAX_ATTEMPTS = 5
-MAX_BACKOFF = 32.0
-
-SPREADSHEET_MIME = "application/vnd.google-apps.spreadsheet"
-
-
-# Looked up once and kept, because none of it changes while the agent runs and
-# all of it costs a round trip.
-# _services: dict[str, Any] = {}
-# _spreadsheet_ids: dict[str, str] = {}
-_sheets_in: dict[str, dict[str, dict]] = {}
-
-
-def sheets():
-    """Return the shared Google Sheets API client."""
-    return google_api.sheets
-
-
-def drive():
-    """Return the shared Google Drive API client."""
-    return google_api.drive
-
-
-def forget(spreadsheet_id: str) -> None:
-    """Drop what is remembered about one spreadsheet.
-
-    Adding or removing a sheet changes which numeric ids are real, and every
-    structural change moves the rows and columns that were counted. Anything
-    that writes calls this, so the next read asks Google rather than answering
-    from what was true before.
-    """
-    _sheets_in.pop(spreadsheet_id, None)
-
-
-def with_retries(call):
-    """Execute a Google API request using the shared Google API client."""
-    return google_api.execute(call)
-
-def batch(
-    spreadsheet_id: str, 
-    requests: list[dict]
-) -> dict:
-    """Send one or more changes as a single batchUpdate."""
-    answer = google_api.execute(
-        sheets()
-        .spreadsheets()
-        .batchUpdate(
-            spreadsheetId=spreadsheet_id,
-            body={"requests": requests},
-        )
-    )
-
-    forget(spreadsheet_id)
-    return answer
-
-
-def write_values(
-    spreadsheet_id: str, 
-    data: list[dict]
-) -> dict:
-    """Write values to one or more ranges."""
-    answer = google_api.execute(
-        sheets()
-        .spreadsheets()
-        .values()
-        .batchUpdate(
-            spreadsheetId=spreadsheet_id,
-            body={
-                "valueInputOption": "USER_ENTERED",
-                "data": data,
-            },
-        )
-    )
-
-    forget(spreadsheet_id)
-    return answer
-
-
-def quoted(text: str) -> str:
-    """Escape a value going into a Drive query.
-
-    A quote inside the text would otherwise close the string early and change
-    what is being asked for. Search terms reach here from the model, so this
-    is not only about names with apostrophes in them.
-    """
-    return text.replace("\\", "\\\\").replace("'", "\\'")
-
-
-def search(name: str | None = None) -> list[tuple[str, str]]:
-    """Find spreadsheets by name."""
-    return _drive.search_spreadsheets(name)
-
-def containing(text: str) -> list[tuple[str, str]]:
-    """Find spreadsheets containing text."""
-    return _drive.search_spreadsheets_by_content(text)
-
-def number_forms(text: str) -> list[str]:
-    """The ways a number might be written in a sheet, given one of them.
-
-    Drive indexes what a cell displays, not the number behind it, so looking
-    for 12240 finds nothing in a sheet showing $12,240.00. Measured: 12240 and
-    12,240 both miss, while 12240.00, 12,240.00 and $12,240.00 all hit.
-
-    The text itself comes first, so anything that is not a number is searched
-    exactly as it was given and nothing else is tried.
-    """
-    forms = [text]
-
-    try:
-        value = float(text.strip().replace(",", "").replace("$", ""))
-    except ValueError:
-        return forms
-
-    for form in (f"{value:,.2f}", f"{value:.2f}", f"{value:,.0f}"):
-        if form not in forms:
-            forms.append(form)
-
-    return forms
-
-
-def chosen(runtime) -> str | None:
-    """The spreadsheet the subagent running this tool was handed.
-
-    A tool takes a name. When the model leaves the argument out, the name to
-    use is the one the orchestrator put into the subagent's state, and this is
-    where a tool reaches it.
-
-    Untyped on purpose: this module knows nothing about langchain, and what is
-    wanted here is only something with state on it. Invoked outside an agent,
-    as the tests do, there is no runtime and no name, and the caller falls
-    through to whatever it would have done before.
-    """
-    if runtime is None:
-        return None
-
-    return (runtime.state or {}).get("spreadsheet_name")
+# measures it.
+from excel_agent.services.spreadsheet import Cell, EMPTY
 
 
 def resolve_spreadsheet(name: str | None = None) -> tuple[str, str]:
-    """Turn the name of a spreadsheet into its id, and give back both."""
+    """Turn the name of a spreadsheet into its id, and give back both.
+
+    The refusal for a missing name lives here rather than in the service,
+    because it tells the model which tool to call next -- the service does
+    not know the tools exist.
+    """
     wanted = (name or "").strip()
 
     if not wanted:
@@ -179,82 +30,7 @@ def resolve_spreadsheet(name: str | None = None) -> tuple[str, str]:
             "spreadsheet argument."
         )
 
-    return _drive.resolve_spreadsheet(wanted)
-
-
-def sheets_in(spreadsheet_id: str) -> dict[str, dict]:
-    """Every sheet in one spreadsheet, by title, with its id and its size.
-
-    batchUpdate works in numeric sheet ids and never in titles, so this is
-    what stands between the name a person uses and the number Google wants.
-    """
-    if spreadsheet_id not in _sheets_in:
-        answer = with_retries(
-            sheets().spreadsheets().get(
-                spreadsheetId=spreadsheet_id,
-                fields="sheets(properties(sheetId,title,gridProperties))",
-            )
-        )
-        _sheets_in[spreadsheet_id] = {
-            sheet["properties"]["title"]: sheet["properties"]
-            for sheet in answer.get("sheets", [])
-        }
-
-    return _sheets_in[spreadsheet_id]
-
-
-def resolve_sheet(spreadsheet_id: str, name: str | None = None) -> dict:
-    """Pick a sheet out of a spreadsheet by name.
-
-    Returns the first sheet when given nothing, which is the one a spreadsheet
-    opens on. Names are matched ignoring case and surrounding spaces, the same
-    way workbook.resolve_sheet does it, so " notes " reaches Notes.
-
-    Raises ValueError, naming the sheets that do exist, when the name reaches
-    none of them.
-    """
-    found = sheets_in(spreadsheet_id)
-
-    if not found:
-        raise ValueError("This spreadsheet has no sheets.")
-
-    if not name or not name.strip():
-        return next(iter(found.values()))
-
-    wanted = name.strip()
-    for title, properties in found.items():
-        if title.lower() == wanted.lower():
-            return properties
-
-    raise ValueError(
-        f'There is no sheet called "{name}". The spreadsheet has: '
-        f"{', '.join(found)}."
-    )
-
-
-def charts_in(spreadsheet_id: str, title: str) -> list[dict]:
-    """Every chart on one sheet, in the order Google gives them.
-
-    A chart has an id but no name, so the only way to point at one is by
-    where it comes in this list. That is the same bargain as a row number:
-    good until something is added or removed, which is why a caller reads
-    before it acts.
-
-    The whole spec comes back, because changing a chart means sending its
-    spec again with one thing altered.
-    """
-    answer = with_retries(
-        sheets().spreadsheets().get(
-            spreadsheetId=spreadsheet_id,
-            fields="sheets(properties(title),charts(chartId,spec))",
-        )
-    )
-
-    for sheet in answer.get("sheets", []):
-        if sheet.get("properties", {}).get("title") == title:
-            return sheet.get("charts", [])
-
-    return []
+    return drive_service.resolve_spreadsheet(wanted)
 
 
 def chart_kind(spec: dict) -> str:
@@ -270,63 +46,6 @@ def chart_kind(spec: dict) -> str:
 def chart_title(spec: dict) -> str:
     """What a chart is called, or a note that it is called nothing."""
     return spec.get("title") or "(untitled)"
-
-
-def grid(spreadsheet_id: str, title: str) -> list[list[Cell]]:
-    """Read one sheet into rows of cells.
-
-    One call serves every reading tool. valueRenderOption applies to a whole
-    request rather than to one range within it, so asking values.batchGet for
-    displayed values and formulas at once is not possible; spreadsheets.get
-    returns all of it for every cell, and the field mask keeps it to the four
-    things worth having.
-
-    Rows are indexed from 0 and ragged: a row reaches only as far as its last
-    filled cell. Use cell() rather than indexing into them.
-    """
-    answer = with_retries(
-        sheets().spreadsheets().get(
-            spreadsheetId=spreadsheet_id,
-            ranges=[title],
-            includeGridData=True,
-            fields=GRID_FIELDS,
-        )
-    )
-
-    raw_rows = []
-    for sheet in answer.get("sheets", []):
-        for data in sheet.get("data", []):
-            raw_rows = data.get("rowData", [])
-
-    rows = []
-    for raw_row in raw_rows:
-        rows.append([as_cell(raw) for raw in raw_row.get("values", [])])
-
-    return rows
-
-
-def as_cell(raw: dict) -> Cell:
-    """Turn one cell of Google's answer into a Cell.
-
-    effectiveValue arrives tagged with its type, one key of numberValue,
-    stringValue, boolValue or formulaValue, so which key is there is what says
-    whether the cell holds a number or text.
-    """
-    effective = raw.get("effectiveValue") or {}
-    value = None
-    for key in ("numberValue", "stringValue", "boolValue"):
-        if key in effective:
-            value = effective[key]
-            break
-
-    return Cell(
-        displayed=raw.get("formattedValue"),
-        formula=(raw.get("userEnteredValue") or {}).get("formulaValue"),
-        value=value,
-        number_format=(
-            (raw.get("effectiveFormat") or {}).get("numberFormat") or {}
-        ).get("type"),
-    )
 
 
 def cell(rows: list[list[Cell]], row: int, column: int) -> Cell:
@@ -349,9 +68,8 @@ def cell(rows: list[list[Cell]], row: int, column: int) -> Cell:
 def is_blank(value) -> bool:
     """Whether a cell holds nothing worth reading.
 
-    The same rule workbook.is_blank uses, and for the same reason: a cell
-    never filled in and one emptied by hand look identical to a reader, so
-    they are treated identically here. A zero is not blank.
+    A cell never filled in and one emptied by hand look identical to a
+    reader, so they are treated identically here. A zero is not blank.
     """
     if value is None:
         return True
@@ -361,15 +79,14 @@ def is_blank(value) -> bool:
 def find_header_row(rows: list[list[Cell]], search_depth: int = 10) -> int:
     """Find the row that holds the column names, counting from 1.
 
-    The same walk workbook.find_header_row does: the first row near the top
-    with at least two filled cells, all of them text, and something filled in
-    the row below. A title above the table fails the two cell test, so a sheet
-    that does not start with its header is still read correctly.
+    The first row near the top with at least two filled cells, all of them
+    text, and something filled in the row below. A title above the table
+    fails the two cell test, so a sheet that does not start with its header
+    is still read correctly.
 
     Whether a cell is text is asked of its value and not of what it displays,
     because Google formats every cell into a string for display: a row of
-    years would otherwise pass for a header, where the local backend refuses
-    it.
+    years would otherwise pass for a header.
     """
     for index in range(min(search_depth, len(rows))):
         filled = [one for one in rows[index] if not is_blank(one.displayed)]
@@ -485,25 +202,3 @@ def to_grid_range(
         grid_range["endColumnIndex"] = last_column
 
     return grid_range
-
-
-def to_dimension_range(
-    sheet_id: int, dimension: str, first: int, last: int | None = None
-) -> dict:
-    """The range a row or column request wants, counting from 1.
-
-    Used by the requests that insert, delete and move whole rows or columns.
-    One row means first and last are the same, which is the common case and
-    why last may be left out.
-
-    Google moves a run of rows by where they should land before they are
-    lifted out, so moving rows 2 and 3 down to sit after row 5 asks for
-    destinationIndex 5, not 3. Whoever builds that request works it out; this
-    only says which rows are being moved.
-    """
-    return {
-        "sheetId": sheet_id,
-        "dimension": dimension,
-        "startIndex": first - 1,
-        "endIndex": (last if last is not None else first),
-    }

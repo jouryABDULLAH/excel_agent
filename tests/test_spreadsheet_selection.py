@@ -15,6 +15,7 @@ import pytest
 from langchain_core.messages import ToolMessage
 from langgraph.types import Command
 
+from excel_agent.services.drive import drive_service
 from excel_agent.tools import spreadsheets
 from excel_agent.tools.spreadsheets import use_spreadsheet
 
@@ -119,7 +120,7 @@ def refusing(monkeypatch, *titles: str):
 
     monkeypatch.setattr(spreadsheets, "resolve_spreadsheet", refuse)
     monkeypatch.setattr(
-        spreadsheets, "search", lambda name=None: [(f"id-{one}", one) for one in titles]
+        drive_service, "search_spreadsheets", lambda name=None: [(f"id-{one}", one) for one in titles]
     )
 
 
@@ -176,7 +177,7 @@ def test_two_files_sharing_a_name_come_back_the_same_way(monkeypatch):
 
     monkeypatch.setattr(spreadsheets, "resolve_spreadsheet", refuse)
     monkeypatch.setattr(
-        spreadsheets, "search", lambda name=None: [("one", "Budget"), ("two", "Budget")]
+        drive_service, "search_spreadsheets", lambda name=None: [("one", "Budget"), ("two", "Budget")]
     )
 
     answer = choosing("Budget")
@@ -210,7 +211,7 @@ def test_a_google_failure_while_listing_is_answered_too(monkeypatch):
         raise error(401)
 
     monkeypatch.setattr(spreadsheets, "resolve_spreadsheet", refuse)
-    monkeypatch.setattr(spreadsheets, "search", fail)
+    monkeypatch.setattr(drive_service, "search_spreadsheets", fail)
 
     assert "token.json" in said(choosing("books"))
 

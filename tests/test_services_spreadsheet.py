@@ -311,3 +311,22 @@ def test_a_structural_change_forgets_the_sheets_it_may_have_moved():
         "batchUpdate",
         "get",
     ]
+
+
+def test_reading_a_sheet_asks_for_the_fields_a_cell_is_built_from():
+    """Losing one field from the mask leaves that part of every cell empty,
+    with nothing raising to say so."""
+    from excel_agent.services.spreadsheet import GRID_FIELDS
+
+    service, pretend = a_service(answers={"get": {"sheets": []}})
+
+    service.read_sheet("an-id", "Sales")
+
+    (method, sent), = pretend.spreadsheets_endpoint.calls
+    assert method == "get"
+    assert sent["fields"] == GRID_FIELDS
+    assert sent["includeGridData"] is True
+
+    for wanted in ("formattedValue", "userEnteredValue", "effectiveValue",
+                   "effectiveFormat(numberFormat(type))"):
+        assert wanted in GRID_FIELDS

@@ -12,8 +12,8 @@ from excel_agent.services.spreadsheet import (
     Cell,
     spreadsheet_service,
 )
+from excel_agent.tools.runtime import chosen
 from excel_agent.sheets import (
-    chosen,
     cell,
     find_header_row,
     header_map,

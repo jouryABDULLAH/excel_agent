@@ -7,8 +7,8 @@ from langchain_core.tools import tool
 
 from excel_agent.services.google import readable
 from excel_agent.services.spreadsheet import spreadsheet_service
+from excel_agent.tools.runtime import chosen
 from excel_agent.sheets import (
-    chosen,
     find_header_row,
     header_map,
     last_data_row,

@@ -14,6 +14,30 @@ def quoted(text: str) -> str:
     return text.replace("\\", "\\\\").replace("'", "\\'")
 
 
+def number_forms(text: str) -> list[str]:
+    """The ways a number might be written in a sheet, given one of them.
+
+    Drive indexes what a cell displays, not the number behind it, so looking
+    for 12240 finds nothing in a sheet showing $12,240.00. Measured: 12240 and
+    12,240 both miss, while 12240.00, 12,240.00 and $12,240.00 all hit.
+
+    The text itself comes first, so anything that is not a number is searched
+    exactly as it was given and nothing else is tried.
+    """
+    forms = [text]
+
+    try:
+        value = float(text.strip().replace(",", "").replace("$", ""))
+    except ValueError:
+        return forms
+
+    for form in (f"{value:,.2f}", f"{value:.2f}", f"{value:,.0f}"):
+        if form not in forms:
+            forms.append(form)
+
+    return forms
+
+
 class DriveService:
     """Application-level operations over Google Drive spreadsheets."""
 
@@ -99,7 +123,6 @@ class DriveService:
         if not found:
             raise ValueError(
                 f'There is no spreadsheet called "{wanted}". '
-                # "Call list_workbooks to see the spreadsheets available."
             )
 
         exact = [
@@ -146,3 +169,7 @@ class DriveService:
 
         for name in stale_names:
             self._spreadsheet_ids.pop(name, None)
+
+# The one Drive service every caller shares. A second instance would be a
+# second name-to-id cache, which is how two caches drift.
+drive_service = DriveService()

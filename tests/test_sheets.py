@@ -9,22 +9,25 @@ decides which row gets deleted should not need a spreadsheet to check.
 import fake_sheets
 import pytest
 
-from excel_agent import sheets as sheets_module
+from excel_agent.services.drive import drive_service, quoted
+from excel_agent.services.spreadsheet import spreadsheet_service
 from excel_agent.sheets import (
     Cell,
-    as_cell,
     cell,
     column_letter,
     find_header_row,
     header_map,
     is_blank,
     last_data_row,
-    quoted,
     resolve_spreadsheet,
-    to_dimension_range,
     to_grid_range,
     a1,
 )
+
+# The one live parser of Google's cell shape; the module-level copy that
+# these tests used to drive was deleted with the rest of the duplicate
+# client.
+as_cell = spreadsheet_service._as_cell
 
 
 # Turning a name into the file it means
@@ -37,13 +40,13 @@ def a_drive(monkeypatch):
     Drive matches a name by what contains it, so what search gives back here
     is every file whose name holds the one asked for, the way Drive would.
 
-    Patched on the DriveService that sheets.py holds, rather than on
-    sheets.search: resolving goes straight to the service now, so the module
-    level function is no longer on the path this exercises.
+    Patched on the shared drive_service, which is what resolving goes
+    through; its name-to-id cache is cleared so one test's answer cannot
+    leak into the next.
     """
 
     def use(*titles: str):
-        sheets_module._drive._spreadsheet_ids.clear()
+        drive_service._spreadsheet_ids.clear()
 
         def search(name=None):
             return [
@@ -52,7 +55,7 @@ def a_drive(monkeypatch):
                 if not name or name.lower() in title.lower()
             ]
 
-        monkeypatch.setattr(sheets_module._drive, "search_spreadsheets", search)
+        monkeypatch.setattr(drive_service, "search_spreadsheets", search)
 
     return use
 
@@ -282,24 +285,6 @@ def test_a_bound_left_out_means_the_whole_of_that_direction():
         "sheetId": 5,
         "startColumnIndex": 1,
         "endColumnIndex": 3,
-    }
-
-
-def test_a_run_of_rows_becomes_a_dimension_range():
-    assert to_dimension_range(0, "ROWS", 2, 3) == {
-        "sheetId": 0,
-        "dimension": "ROWS",
-        "startIndex": 1,
-        "endIndex": 3,
-    }
-
-
-def test_one_row_needs_no_end_given():
-    assert to_dimension_range(0, "COLUMNS", 4) == {
-        "sheetId": 0,
-        "dimension": "COLUMNS",
-        "startIndex": 3,
-        "endIndex": 4,
     }
 
 
