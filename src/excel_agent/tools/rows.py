@@ -254,13 +254,17 @@ def sort_rows(
                 available_columns=list(headers),
             )
 
+        # Nothing to sort is not a failure, any more than it is in Sheets:
+        # the sort is simply a no-op, and nothing is sent.
         if last_row <= header_row:
-            return _error(
-                "no_data_rows",
-                "There are no data rows to sort.",
-                spreadsheet=spreadsheet_name,
-                sheet=sheet_name,
-            )
+            return {
+                "ok": True,
+                "operation": "sort_rows",
+                "spreadsheet": spreadsheet_name,
+                "sheet": sheet_name,
+                "sorted_rows": 0,
+                "changed": False,
+            }
 
         width = max((len(one) for one in rows), default=len(headers))
 

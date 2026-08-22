@@ -311,13 +311,9 @@ def create_chart(
                 available_columns=list(headers),
             )
 
-        if last_row <= header_row:
-            return _error(
-                "no_data_rows",
-                "There are no data rows to chart.",
-                spreadsheet=spreadsheet_name,
-                sheet=sheet_name,
-            )
+        # A headers-only table used to be refused. Sheets draws the chart
+        # anyway, empty until the rows arrive, so this does too.
+        last_row = max(last_row, header_row + 1)
 
         used_value_columns = value_columns
 

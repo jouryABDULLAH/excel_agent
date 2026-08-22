@@ -1482,3 +1482,26 @@ def test_a_formula_goes_into_a_table_that_has_only_headers(a_writable_columns_sh
     # The first data row, with nothing under the header yet.
     assert (answer["first_row"], answer["last_row"]) == (2, 2)
     assert calls(sent, "repeat_cell")[0]["grid_range"]["startRowIndex"] == 1
+
+
+def test_sorting_a_table_with_no_rows_changes_nothing_and_says_so(
+    a_writable_sheet,
+):
+    """Sorting an empty selection is a no-op in Sheets, not an error."""
+    sent = a_writable_sheet(
+        rows=[
+            [
+                fake_sheets.text("Order ID"),
+                fake_sheets.text("Region"),
+                fake_sheets.text("Units"),
+                fake_sheets.text("Product"),
+            ]
+        ]
+    )
+
+    answer = row_tools.sort_rows.invoke({"column": "Region"})
+
+    assert answer["ok"] is True
+    assert answer["sorted_rows"] == 0
+    assert answer["changed"] is False
+    assert sent == []
