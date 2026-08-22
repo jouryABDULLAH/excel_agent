@@ -745,14 +745,29 @@ def test_moving_a_row_says_where_it_came_from_and_went_to(a_writable_sheet):
     assert (sent[0]["row"], sent[0]["to_row"]) == (2, 5)
 
 
-def test_a_row_that_does_not_exist_is_refused_and_nothing_is_sent(a_writable_sheet):
+def test_a_row_past_the_data_is_written_and_said_out_loud(a_writable_sheet):
+    """This used to be refused. Sheets lets anyone type in row 9999, so the
+    tool does too -- and says where the write landed, because a row number
+    that far out is usually a mistake and must not happen quietly."""
     sent = a_writable_sheet()
 
     answer = row_tools.update_row.invoke({"row": 9999, "values": {"Region": "EU"}})
 
-    assert answer["error"] == "row_not_found"
-    assert (answer["first_data_row"], answer["last_data_row"]) == (2, 6)
-    assert sent == []
+    assert answer["ok"] is True
+    assert answer["past_end_of_data"] is True
+    assert answer["empty_rows_above"] == 9992
+    assert answer["last_data_row"] == 6
+    assert written(sent) == {"'Sales Orders'!B9999:B9999": "EU"}
+
+
+def test_a_row_just_after_the_data_is_ordinary(a_writable_sheet):
+    a_writable_sheet()
+
+    answer = row_tools.update_row.invoke({"row": 7, "values": {"Region": "EU"}})
+
+    # The next row down is where an append lands; nothing to remark on.
+    assert answer["ok"] is True
+    assert "past_end_of_data" not in answer
 
 
 def test_the_header_row_is_not_a_row_that_can_be_changed(a_writable_sheet):
@@ -1395,3 +1410,51 @@ def test_sorting_by_a_column_that_is_not_there_is_refused(a_writable_sheet):
     assert answer["error"] == "unknown_columns"
     assert answer["available_columns"] == ["Order ID", "Region", "Units", "Product"]
     assert sent == []
+
+
+# Reaching past the data, the way Sheets allows
+
+
+def test_a_row_inserted_far_below_the_data_grows_the_grid_first(
+    a_writable_sheet, monkeypatch
+):
+    """This used to be invalid_insert_position. A person can insert a row
+    anywhere in Sheets, so the tool does too, making the room it needs."""
+    from excel_agent.services.spreadsheet import spreadsheet_service
+
+    sent = a_writable_sheet()
+
+    monkeypatch.setattr(
+        spreadsheet_service,
+        "resolve_sheet",
+        lambda id, name=None: {
+            "title": "Sales Orders",
+            "sheetId": 0,
+            "gridProperties": {"rowCount": 10, "columnCount": 10},
+        },
+    )
+
+    answer = row_tools.insert_row.invoke(
+        {"row": 30, "values": {"Region": "EU"}}
+    )
+
+    assert answer["ok"] is True
+    assert answer["past_end_of_data"] is True
+    assert answer["empty_rows_above"] == 23
+
+    grown = calls(sent, "insert_rows")[0]
+    assert (grown["start_row"], grown["count"]) == (11, 20)
+
+
+def test_a_column_can_be_created_past_the_last_named_one(
+    a_writable_columns_sheet,
+):
+    sent = a_writable_columns_sheet()
+
+    answer = columns.insert_column.invoke({"name": "Notes", "position": 9})
+
+    # Four named columns; position 9 used to be refused as outside the
+    # table, though the sheet itself is 26 columns wide.
+    assert answer["ok"] is True
+    assert answer["position"] == 9
+    assert calls(sent, "insert_columns")[0]["start_column"] == 9

@@ -386,10 +386,9 @@ def insert_column(
         if position is None:
             position = rightmost + 1
 
-        if (
-            position < 1
-            or position > rightmost + 1
-        ):
+        # Only a position of nought or less is impossible: a column may be
+        # created out past the last named one, as it can in Sheets.
+        if position < 1:
             return _error(
                 "invalid_position",
                 (

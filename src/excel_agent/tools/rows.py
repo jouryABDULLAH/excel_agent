@@ -67,6 +67,24 @@ def _one_or_many(
     return named, None
 
 
+def _far_from_data(row: int, last_row: int) -> dict:
+    """What to say about a row written past the end of the table.
+
+    Sheets lets anyone type in row 500 of a 51-row sheet, so the tools do
+    too. What replaces the old refusal is saying plainly where the write
+    landed, because a row number that far out is usually a mistake and the
+    only defence left is that it cannot happen quietly.
+    """
+    if row <= last_row + 1:
+        return {}
+
+    return {
+        "past_end_of_data": True,
+        "empty_rows_above": row - last_row - 1,
+        "last_data_row": last_row,
+    }
+
+
 def _runs(rows: list[int]) -> list[tuple[int, int]]:
     """Sorted rows as inclusive contiguous ranges: [3,4,5,9] -> (3,5),(9,9)."""
     ranges: list[tuple[int, int]] = []
@@ -509,15 +527,15 @@ def update_row(
                 header_row=header_row,
             )
 
-        missing = [
-            one for one in asked
-            if one <= header_row or one > last_row
-        ]
+        # Writing past the end of the data is legal, as it is in Sheets;
+        # writing over the header is not, because every tool that addresses
+        # a column by name depends on it.
+        missing = [one for one in asked if one <= header_row]
 
         if missing:
             return _error(
                 "row_not_found",
-                "One or more requested rows are not existing data rows. "
+                "One or more requested rows are the header row or above it. "
                 "Nothing was changed.",
                 spreadsheet=spreadsheet_name,
                 sheet=sheet_name,
@@ -553,6 +571,7 @@ def update_row(
             "spreadsheet": spreadsheet_name,
             "sheet": sheet_name,
             "rows": asked,
+            **_far_from_data(max(asked), last_row),
             "updated_columns": list(values),
             "updated_cells": response.get(
                 "totalUpdatedCells",
@@ -624,17 +643,17 @@ def insert_row(
                 header_row=header_row,
             )
 
-        # Existing data may be inserted into, or one row may be added
-        # immediately after the current final data row.
-        if row <= header_row or row > last_row + 1:
+        # Anywhere below the header: Sheets can insert a row at any
+        # position, and refusing past the data made "put this in row 100"
+        # impossible on a 51-row sheet.
+        if row <= header_row:
             return _error(
                 "invalid_insert_position",
-                "The requested row is not a valid insertion position.",
+                "A row cannot be inserted at or above the header row.",
                 spreadsheet=spreadsheet_name,
                 sheet=sheet_name,
                 row=row,
                 first_position=header_row + 1,
-                last_position=last_row + 1,
             )
 
         if values:
@@ -644,12 +663,28 @@ def insert_row(
                 invalid["sheet"] = sheet_name
                 return invalid
 
-        spreadsheet_service.insert_rows(
-            spreadsheet_id=spreadsheet_id,
-            sheet_id=properties["sheetId"],
-            start_row=row,
-            count=1,
+        grid_rows = (
+            properties
+            .get("gridProperties", {})
+            .get("rowCount")
         )
+
+        # Inserting at a row the grid does not reach yet needs the room
+        # made first; Sheets grows a sheet when a person scrolls past it.
+        if grid_rows is not None and row > grid_rows:
+            spreadsheet_service.insert_rows(
+                spreadsheet_id=spreadsheet_id,
+                sheet_id=properties["sheetId"],
+                start_row=grid_rows + 1,
+                count=row - grid_rows,
+            )
+        else:
+            spreadsheet_service.insert_rows(
+                spreadsheet_id=spreadsheet_id,
+                sheet_id=properties["sheetId"],
+                start_row=row,
+                count=1,
+            )
 
         updated_cells = 0
 
@@ -676,6 +711,7 @@ def insert_row(
             "spreadsheet": spreadsheet_name,
             "sheet": sheet_name,
             "row": row,
+            **_far_from_data(row, last_row),
             "values": values or {},
             "updated_cells": updated_cells,
             "row_numbers_changed": True,
@@ -890,6 +926,9 @@ def delete_row(
 
         sheet_name = properties["title"]
 
+        # Deleting is the one place the old bound stays: a row past the end
+        # of the data holds nothing to delete, so naming one is a mistake
+        # rather than a permitted reach.
         missing = [
             one for one in asked
             if one <= header_row or one > last_row
@@ -975,7 +1014,7 @@ def move_row(
 
         sheet_name = properties["title"]
 
-        if row <= header_row or row > last_row:
+        if row <= header_row or row > last_row:  # the row being moved must exist
             return _error(
                 "row_not_found",
                 "The source row is not an existing data row.",
