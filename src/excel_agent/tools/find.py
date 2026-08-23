@@ -25,6 +25,58 @@ from excel_agent.tools.inspect import _with_columns
 MATCH_LIMIT = 30
 
 
+# How a comparison is written, longest first so ">=" is not read as ">".
+COMPARISONS = (">=", "<=", "!=", ">", "<", "=")
+
+
+def _compared(wanted: str) -> tuple[str, float] | None:
+    """A numeric comparison the query asks for, or None.
+
+    "> 10" is a comparison; "10" on its own is text to look for, because
+    that is what someone searching an order number means.
+    """
+    asked = wanted.strip()
+
+    for sign in COMPARISONS:
+        if asked.startswith(sign):
+            try:
+                return sign, float(
+                    asked[len(sign):].strip().replace(",", "").lstrip("$")
+                )
+            except ValueError:
+                return None
+
+    return None
+
+
+def _number(one) -> float | None:
+    """A cell's value as a number, however the sheet displays it."""
+    if isinstance(one.value, bool):
+        return None
+
+    if isinstance(one.value, (int, float)):
+        return float(one.value)
+
+    try:
+        return float(
+            str(one.displayed or "").strip().replace(",", "").lstrip("$")
+        )
+    except ValueError:
+        return None
+
+
+def _passes(value: float, sign: str, against: float) -> bool:
+    """Whether one number stands in the asked relation to another."""
+    return {
+        ">": value > against,
+        "<": value < against,
+        ">=": value >= against,
+        "<=": value <= against,
+        "=": value == against,
+        "!=": value != against,
+    }[sign]
+
+
 def _matches(
     text: str,
     wanted: str,
@@ -83,10 +135,15 @@ def find_data(
     sheet: str | None = None,
     runtime: ToolRuntime = None,
 ) -> tuple[str, dict]:
-    """Find rows containing some displayed cell text.
+    """Find rows by their cell text, or by a numeric comparison.
+
+    Text is looked for inside a cell. A query beginning >, <, >=, <=, = or
+    != compares numbers instead: "> 10" finds every row whose value in the
+    searched column is greater than ten, and a cell that is not a number
+    never matches.
 
     Args:
-        text: Text/value to find.
+        text: Text to find, or a comparison such as "> 10" or "<= 2024".
         column: Optional column name to search only there.
         whole_cell: Require an exact whole-cell match when True.
         render_data: True when the user asked to see the matching rows
@@ -103,6 +160,10 @@ def find_data(
     # Left out, the file is the one the orchestrator handed this
     # specialist, which lives in its state rather than in a global.
     spreadsheet = spreadsheet or chosen(runtime)
+
+    # "> 10" compares; "10" is looked for as text, because a bare number is
+    # what someone searching for an order number types.
+    comparison = _compared(text)
 
     if is_blank(text):
         return _error(
@@ -187,10 +248,14 @@ def find_data(
                 headers[name],
             )
 
-            if _matches(
-                _shown(one),
-                text,
-                whole_cell,
+            if (
+                _passes(number, comparison[0], comparison[1])
+                if comparison and (number := _number(one)) is not None
+                else (
+                    False
+                    if comparison
+                    else _matches(_shown(one), text, whole_cell)
+                )
             ):
                 hits.append(
                     {

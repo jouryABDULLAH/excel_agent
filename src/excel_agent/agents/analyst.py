@@ -25,6 +25,8 @@ Rules:
   next_start_row while has_more is true.
 - Do not invent a row or value that a tool did not return.
 - Do not rewrite spreadsheet column names.
+- find_data compares numbers when the query starts with >, <, >=, <=,
+  = or !=: "> 10" finds every row above ten. A bare number is text.
 - A column can be named by its header or by its letter: "Region" or
   "B". The letter is how a column nobody named is read.
 - A count of data rows is NOT a spreadsheet row number. For example, 14 data

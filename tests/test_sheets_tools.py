@@ -1759,3 +1759,65 @@ def test_one_column_still_works_the_way_it_did(a_writable_columns_sheet):
     assert answer["ok"] is True
     assert answer["column"] == "Profit"
     assert answer["count"] == 1
+
+
+# Finding rows by a number rather than by text
+
+
+def found(**arguments):
+    """find_data's content, invoked the way the agent invokes it."""
+    return find.find_data.invoke(
+        {
+            "name": "find_data",
+            "args": arguments,
+            "id": "a-call",
+            "type": "tool_call",
+        }
+    ).content
+
+
+def test_rows_can_be_found_by_a_number_being_greater(a_sheet):
+    a_sheet(fake_sheets.orders(), module=find)
+
+    answer = found(text="> 3", column="Units")
+
+    # Units are 1..5, so 4 and 5 match and nothing else does.
+    assert "ORD-1004" in answer and "ORD-1005" in answer
+    assert "ORD-1001" not in answer
+
+
+def test_the_other_comparisons_read_the_way_they_look(a_sheet):
+    a_sheet(fake_sheets.orders(), module=find)
+
+    assert "ORD-1001" in found(text="<= 2", column="Units")
+    assert "ORD-1005" not in found(text="<= 2", column="Units")
+    assert "ORD-1003" in found(text="= 3", column="Units")
+    assert "ORD-1003" not in found(text="!= 3", column="Units")
+
+
+def test_a_bare_number_is_still_looked_for_as_text(a_sheet):
+    a_sheet(fake_sheets.orders(), module=find)
+
+    # Someone searching an order number types it plainly, and must not have
+    # it read as a comparison.
+    assert "ORD-1002" in found(text="1002")
+
+
+def test_a_cell_that_is_not_a_number_never_matches_a_comparison(a_sheet):
+    a_sheet(fake_sheets.orders(), module=find)
+
+    answer = found(text="> 0", column="Product")
+
+    # Every product is text, so nothing is greater than nought.
+    assert "Nothing" in answer
+
+
+def test_a_comparison_that_is_not_a_number_is_taken_as_text(a_sheet):
+    a_sheet(fake_sheets.orders(), module=find)
+
+    # "> north" is not a comparison anyone can make, so it is a search --
+    # and no cell holds that text either.
+    answer = found(text="> north")
+
+    assert "Nothing" in answer
+    assert '"> north"' in answer
