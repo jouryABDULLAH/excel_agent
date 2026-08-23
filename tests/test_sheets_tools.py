@@ -392,7 +392,7 @@ def test_a_column_of_numbers_gets_its_range_and_total(a_sheet):
 
     assert '"Units" in Sales Orders in TEST - Sales Orders' in answer
     assert "5 filled, 0 blank, 5 different" in answer
-    assert "1 to 5, adding up to 15." in answer
+    assert "1 to 5, adding up to 15, averaging 3, middle value 3." in answer
 
 
 def test_money_keeps_its_symbol_at_the_ends_of_the_range(a_sheet):
@@ -407,7 +407,7 @@ def test_money_keeps_its_symbol_at_the_ends_of_the_range(a_sheet):
 
     # The ends are shown the way the sheet shows them; the total is worked out
     # from the numbers underneath, where the formatting cannot reach.
-    assert "$55.00 to $1,200.00, adding up to 1255." in answer
+    assert "$55.00 to $1,200.00, adding up to 1255, averaging 627.5" in answer
 
 
 def test_a_column_of_dates_gets_a_range_and_no_total(a_sheet):
@@ -465,7 +465,7 @@ def test_a_calculated_column_says_how_many_the_sheet_works_out(a_sheet):
     # Unlike the local backend, Google has already worked these out, so they
     # can be summarised. Saying they are calculated matters because they must
     # not be written to.
-    assert "50 to 100, adding up to 150." in answer
+    assert "50 to 100, adding up to 150, averaging 75, middle value 75." in answer
     assert "2 of them are worked out by a formula" in answer
 
 
@@ -1662,3 +1662,24 @@ def test_row_one_of_a_headerless_sheet_can_be_changed(a_writable_sheet):
     # With no header there is no header to protect, so row 1 is ordinary.
     assert answer["ok"] is True
     assert written(sent) == {"'Sales Orders'!A1:A1": 99}
+
+
+def test_a_number_column_is_averaged_and_its_middle_found(a_sheet):
+    """An average is the most obvious question to ask of a column, and the
+    analyst had to work it out itself, which is the hallucination path."""
+    a_sheet(fake_sheets.orders(), module=stats)
+
+    message = stats.sheet_stats.invoke(
+        {
+            "name": "sheet_stats",
+            "args": {"column": "Units"},
+            "id": "a-call",
+            "type": "tool_call",
+        }
+    )
+
+    # Units are 1, 2, 3, 4, 5.
+    assert "averaging 3" in message.content
+    assert "middle value 3" in message.content
+    assert message.artifact["average"] == 3
+    assert message.artifact["median"] == 3

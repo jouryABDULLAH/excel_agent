@@ -1,5 +1,7 @@
 """Tool for summarising one spreadsheet column."""
 
+from statistics import median
+
 from collections import Counter
 from typing import Any
 
@@ -252,10 +254,11 @@ def sheet_stats(
             key=lambda one: one.value,
         )
 
-        total = sum(
-            one.value
-            for one in filled
-        )
+        numbers = [one.value for one in filled]
+
+        total = sum(numbers)
+        average = total / len(numbers)
+        middle = median(numbers)
 
         content = (
             f'"{column}" in {sheet_name} in '
@@ -264,7 +267,9 @@ def sheet_stats(
             f"{blank_count} blank, "
             f"{different} different. "
             f"{_shown(least)} to {_shown(greatest)}, "
-            f"adding up to {_rounded(total)}."
+            f"adding up to {_rounded(total)}, "
+            f"averaging {_rounded(average)}, "
+            f"middle value {_rounded(middle)}."
         )
 
         if formula_count:
@@ -285,6 +290,8 @@ def sheet_stats(
                 "displayed": _shown(greatest),
             },
             "total": _rounded(total),
+            "average": _rounded(average),
+            "median": _rounded(middle),
             "rendered": content,
         }
 
