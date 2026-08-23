@@ -39,7 +39,9 @@ class State(AgentState):
     # Read by the runner rather than the last message.
     final_answer: str | None
 
-    # Turn-scoped, cleared by the supervisor when it finishes.
+    # Turn-scoped, cleared by the validator once the turn truly ends: the
+    # supervisor's answer has to be checkable against these reports, so they
+    # cannot be thrown away in the same update that writes it.
     worker_results: list[str]
 
     # The column names of each table the application drew this turn, one
