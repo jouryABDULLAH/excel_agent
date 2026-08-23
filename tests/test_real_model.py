@@ -613,3 +613,65 @@ def test_a_column_asked_for_by_its_letter_is_read(a_sheet, monkeypatch):
 
     # Column C is Units: 1+2+3+4+5.
     assert "15" in answer, answer
+
+
+def test_a_sheet_with_no_header_row_can_be_read_and_written(monkeypatch):
+    """A sheet of bare values used to be unusable: its first row was eaten
+    as column names, and every write refused with headers_not_found."""
+    from excel_agent.runner import Approval
+    from excel_agent.tools import inspect as inspect_tool_
+    from excel_agent.tools import rows as rows_tool
+
+    bare = [
+        [fake_sheets.number(1), fake_sheets.number(10)],
+        [fake_sheets.number(2), fake_sheets.number(20)],
+        [fake_sheets.number(3), fake_sheets.number(30)],
+    ]
+
+    for module in (inspect_tool_, rows_tool):
+        monkeypatch.setattr(
+            module,
+            "resolve_spreadsheet",
+            lambda name=None: ("an-id", name or SPREADSHEET),
+        )
+
+    monkeypatch.setattr(
+        spreadsheet_service,
+        "resolve_sheet",
+        lambda id, name=None: {
+            "title": "Sales Orders",
+            "sheetId": 0,
+            "gridProperties": {"rowCount": 100, "columnCount": 26},
+        },
+    )
+    monkeypatch.setattr(
+        spreadsheet_service, "read_sheet", lambda id, name: bare
+    )
+    monkeypatch.setattr(
+        spreadsheet_service, "list_charts", lambda id, name=None: []
+    )
+
+    written: list[dict] = []
+
+    monkeypatch.setattr(
+        spreadsheet_service,
+        "update_cells",
+        lambda **sent: written.append(sent) or {"totalUpdatedCells": 1},
+    )
+
+    session = Session(build_graph(build_model()))
+    session.use(SPREADSHEET)
+
+    waiting = [
+        one for one in session.ask("put 99 in column B of row 2")
+        if isinstance(one, Approval)
+    ]
+
+    assert waiting, "the write never asked to be allowed"
+
+    list(session.resume({"decisions": [{"type": "approve"}]}))
+
+    assert written, "a headerless sheet still refused the write"
+
+    ranges = [one["range"] for update in written for one in update["updates"]]
+    assert any("B2" in one for one in ranges), ranges

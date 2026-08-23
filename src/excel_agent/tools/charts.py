@@ -322,7 +322,10 @@ def create_chart(
             # Grid position is zero-based. The 1-based number of the final
             # named column is therefore already the first free zero-based
             # column index.
-            "columnIndex": max(headers.values()),
+            "columnIndex": max(
+                headers.values(),
+                default=headers.width,
+            ),
         }
 
         spec = _chart_spec(

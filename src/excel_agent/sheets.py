@@ -87,6 +87,13 @@ def find_header_row(rows: list[list[Cell]], search_depth: int = 10) -> int:
     Whether a cell is text is asked of its value and not of what it displays,
     because Google formats every cell into a string for display: a row of
     years would otherwise pass for a header.
+
+    Returns 0 when the sheet plainly has no header: nothing in it at all, or
+    a first row holding no text whatever, which no column is named by. Only
+    plain evidence counts, because a single-column sheet fails the two-cell
+    test while still being headed, and "Product | 2024 | 2025" is a header
+    with years for column names -- so anything merely unproven keeps its old
+    answer of row 1, and reads as it always did.
     """
     for index in range(min(search_depth, len(rows))):
         filled = [one for one in rows[index] if not is_blank(one.displayed)]
@@ -101,6 +108,24 @@ def find_header_row(rows: list[list[Cell]], search_depth: int = 10) -> int:
             continue
 
         return index + 1
+
+    if not any(
+        not is_blank(one.displayed) for row in rows for one in row
+    ):
+        return 0
+
+    for row in rows:
+        filled = [one for one in row if not is_blank(one.displayed)]
+
+        if not filled:
+            continue
+
+        # The first row holding anything decides, and only a row with no
+        # text in it at all counts as data: "Product | 2024 | 2025" is a
+        # header whose later columns are named by their year.
+        return 0 if not any(
+            isinstance(one.value, str) for one in filled
+        ) else 1
 
     return 1
 

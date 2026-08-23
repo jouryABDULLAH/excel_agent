@@ -208,8 +208,10 @@ def _format_area(
         first_column = min(first_number, last_number)
         last_column = max(first_number, last_number)
     else:
-        first_column = min(headers.values())
-        last_column = max(headers.values())
+        # No names means the whole width of the data: with nothing named,
+        # "every named column" is every column there is.
+        first_column = min(headers.values(), default=1)
+        last_column = max(headers.values(), default=headers.width or 1)
 
     grid_range = to_grid_range(
         properties["sheetId"],

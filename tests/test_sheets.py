@@ -439,3 +439,50 @@ def test_every_row_is_data_when_there_is_no_header():
 
     # Counting from the header down, with no header, is counting from row 1.
     assert last_data_row(rows, 0) == 2
+
+
+def test_a_sheet_starting_with_numbers_has_no_header():
+    """A first row of values is data. Called row 1 before, which lost that
+    row and named every column after one of its values."""
+    rows = [
+        [fake_sheets.number(1), fake_sheets.number(2)],
+        [fake_sheets.number(3), fake_sheets.number(4)],
+    ]
+
+    assert find_header_row(rows) == 0
+
+
+def test_a_sheet_with_nothing_in_it_has_no_header():
+    assert find_header_row([]) == 0
+    assert find_header_row([[fake_sheets.text("")]]) == 0
+
+
+def test_a_single_column_sheet_is_still_headed():
+    """One column fails the two-filled-cells test, so nothing proves it
+    headerless; it keeps the answer it always had."""
+    rows = [
+        [fake_sheets.text("Notes")],
+        [fake_sheets.text("first")],
+    ]
+
+    assert find_header_row(rows) == 1
+
+
+def test_a_sheet_of_text_with_no_row_below_is_left_alone():
+    # Unproven either way, so unchanged.
+    assert find_header_row([[fake_sheets.text("a"), fake_sheets.text("b")]]) == 1
+
+
+def test_a_header_of_years_beside_a_name_is_still_a_header():
+    """"Product | 2024 | 2025" names its later columns by their year. Only
+    a row with no text at all is data."""
+    rows = [
+        [
+            fake_sheets.text("Product"),
+            fake_sheets.number(2024),
+            fake_sheets.number(2025),
+        ],
+        [fake_sheets.text("Laptop"), fake_sheets.number(12), fake_sheets.number(15)],
+    ]
+
+    assert find_header_row(rows) == 1

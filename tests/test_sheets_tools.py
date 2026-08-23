@@ -1599,3 +1599,66 @@ def test_a_letter_past_the_edge_of_the_sheet_is_still_unknown(a_sheet):
     # 702 columns out. A word spelt in letters must not become an address.
     assert "do not exist" in answer
     assert "Order ID, Region, Units, Product" in answer
+
+
+# A sheet with no header row at all
+
+
+def headerless() -> list:
+    """Three rows of values, no column names anywhere.
+
+    No text in the first row, which is the plain evidence the heuristic
+    needs: a row with any text in it might be a header whose later columns
+    are named by their year, so it is left alone.
+    """
+    return [
+        [fake_sheets.number(1), fake_sheets.number(10), fake_sheets.number(100)],
+        [fake_sheets.number(2), fake_sheets.number(20), fake_sheets.number(200)],
+        [fake_sheets.number(3), fake_sheets.number(30), fake_sheets.number(300)],
+    ]
+
+
+def test_a_sheet_with_no_header_is_read_whole(a_sheet):
+    """Every row is data. The first used to be eaten as column names, which
+    lost a row and named the columns after its values."""
+    a_sheet(headerless(), module=inspect)
+
+    answer = inspect.inspect_sheet.invoke({})
+
+    assert "no header row -- name columns by letter" in answer
+    assert "3 rows of data" in answer
+    # Row 1 is data, and it is still there.
+    assert "| 1 | 1 | 10 | 100 |" in answer
+
+
+def test_a_headerless_column_is_written_by_its_letter(a_writable_sheet):
+    sent = a_writable_sheet(rows=headerless())
+
+    answer = row_tools.update_row.invoke({"row": 2, "values": {"B": 99}})
+
+    # This used to be headers_not_found; the sheet has no names, so the
+    # letter is the address.
+    assert answer["ok"] is True
+    assert written(sent) == {"'Sales Orders'!B2:B2": 99}
+
+
+def test_a_headerless_sheet_says_what_a_column_may_be_called(a_writable_sheet):
+    sent = a_writable_sheet(rows=headerless())
+
+    answer = row_tools.update_row.invoke({"row": 2, "values": {"Region": "West"}})
+
+    # "The sheet has: ." tells the model nothing. The letters do.
+    assert answer["ok"] is False
+    assert answer["error"] == "unknown_columns"
+    assert answer["available_columns"][:3] == ["A", "B", "C"]
+    assert sent == []
+
+
+def test_row_one_of_a_headerless_sheet_can_be_changed(a_writable_sheet):
+    sent = a_writable_sheet(rows=headerless())
+
+    answer = row_tools.update_row.invoke({"row": 1, "values": {"A": 99}})
+
+    # With no header there is no header to protect, so row 1 is ordinary.
+    assert answer["ok"] is True
+    assert written(sent) == {"'Sales Orders'!A1:A1": 99}

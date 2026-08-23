@@ -163,8 +163,12 @@ def inspect_sheet(
 
     # Physical layout from the first column through the rightmost named
     # column. Unlike header_map(), this preserves unnamed columns that
-    # appear between named columns.
-    rightmost_column = max(headers.values())
+    # appear between named columns. With no names at all the data itself
+    # says how wide the sheet is; max() of nothing raises.
+    rightmost_column = max(
+        headers.values(),
+        default=max((len(one) for one in rows), default=0),
+    )
 
     column_layout = []
 
