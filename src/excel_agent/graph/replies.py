@@ -158,6 +158,35 @@ def without_drawn_table(said: str, tables: list[list[str]] | None) -> str:
     return "\n".join(kept).strip()
 
 
+# Characters that take up no space and say nothing. A couple are ordinary
+# in Arabic and Hebrew, where they settle which way a bracket faces, so a
+# few are unremarkable; a run of them is the model coming apart.
+INVISIBLE = "​‌‍‎‏⁠﻿­"
+
+# Four or more, ordinary spaces between them allowed, which is the shape it
+# comes out in: "a ZWSP space ZWSP space" over and over.
+DEGENERATE = re.compile(f"(?:[{INVISIBLE}][ 	]*){{4,}}")
+
+
+def degenerate(said: str) -> bool:
+    """Whether the reply carries a run of characters that say nothing.
+
+    Seen live in an Arabic answer: a truncated sentence, then hundreds of
+    zero-width spaces, then the sentence again spelt differently. No answer
+    anyone would write looks like that.
+    """
+    return DEGENERATE.search(said) is not None
+
+
+def visible(said: str) -> str:
+    """The reply without the characters that take up no space.
+
+    A last resort for an answer that could not be rewritten: the characters
+    carry no meaning, so removing them changes nothing but the mess.
+    """
+    return DEGENERATE.sub(" ", said).strip()
+
+
 def arabic(said: str) -> bool:
     """Whether any of the text is written in Arabic script."""
     return any("؀" <= one <= "ۿ" for one in said)

@@ -328,3 +328,40 @@ def test_an_ordinary_answer_that_quotes_the_question_is_fine():
     )
 
     assert written["correction"] is None
+
+
+def test_an_answer_that_came_apart_goes_back_to_be_written_again():
+    """REGRESSION, seen live in Arabic: a truncated sentence, then hundreds
+    of zero-width spaces, then the same sentence spelt differently. The two
+    sentences differed in wording, so the repeat check could not see them."""
+    written = checked(
+        finished(
+            "الجدول التا"
+            "لي 201"
+            + "​ ​ ​ ​ ​ ​"
+            + " الجدول أدن"
+            "اه 2011.",
+            question="اعرض الجدول",
+        )
+    )
+
+    assert "came apart" in written["correction"]
+
+
+def test_ordinary_arabic_is_not_mistaken_for_coming_apart():
+    from excel_agent.graph.replies import degenerate
+
+    # A bidi mark or two is how Arabic settles which way a bracket faces.
+    assert not degenerate("يوجد ‏2011 صف.")
+    assert not degenerate("There are 51 rows of data.")
+
+
+def test_a_rewrite_that_came_apart_too_at_least_ships_without_the_mess():
+    state = finished("The table below shows the rows.")
+    state["correction"] = "- It came apart."
+    state["final_answer"] = "Here 201" + "​ ​ ​ ​ ​" + " 2011."
+
+    written = checked(state)
+
+    # The characters mean nothing, so whatever ships is at least readable.
+    assert "​" not in written["final_answer"]

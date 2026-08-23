@@ -9,7 +9,13 @@ is the supervisor's to make.
 
 from langchain_core.messages import AIMessage
 
-from excel_agent.graph.replies import arabic, asked_for, repeated_sentence
+from excel_agent.graph.replies import (
+    arabic,
+    asked_for,
+    degenerate,
+    repeated_sentence,
+    visible,
+)
 from excel_agent.graph.state import WORKERS, State
 
 
@@ -151,6 +157,13 @@ def problems(answer: str, question: str) -> list[str]:
             )
             break
 
+    if degenerate(answer):
+        found.append(
+            "The answer carries a long run of characters that take up no "
+            "space, which means it came apart while being written. Write "
+            "it again, plainly."
+        )
+
     repeat = repeated_sentence(answer)
 
     if repeat is not None:
@@ -228,6 +241,8 @@ def validator_node(model=None):
             # still beats saying nothing.
             else:
                 kept = original
+
+            kept = visible(kept)
 
             return {
                 **DONE,
