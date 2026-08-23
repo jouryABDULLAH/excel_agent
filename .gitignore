@@ -6,12 +6,7 @@ __pycache__/
 .claude
 *.egg-info/
 excel_agent-bundle.md
-*.sh
-data/
-data/sample.xlsx
-backups/
-model-shortcomings.txt
-credentials.json
+.langgraph_api/ 
 token.json
 traces/
 sheet_quickstart.py
@@ -23,3 +18,10 @@ sheet_quickstart.py
 inspect_langsmith_run.py
 langsmith_run.json
 *.pckl
+*.sh
+data/
+data/sample.xlsx
+backups/
+model-shortcomings.txt
+credentials.json
+.langgraph_api/ 
