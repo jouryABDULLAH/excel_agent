@@ -246,6 +246,8 @@ def format_range(
     underline: bool | None = None,
     strikethrough: bool | None = None,
 
+    font_size: int | None = None,
+
     font_color: str | None = None,
 
     background: str | None = None,
@@ -311,6 +313,7 @@ def format_range(
         italic: True to italicize text, False to remove italics.
         underline: True to underline text, False to remove underlining.
         strikethrough: True to strike through text, False to remove it.
+        font_size: Size of the text in points, for example 14.
         font_color: Text colour as a common name or "#RRGGBB".
         horizontal_alignment: LEFT, CENTER, or RIGHT.
         vertical_alignment: TOP, MIDDLE, or BOTTOM.
@@ -330,6 +333,7 @@ def format_range(
         and italic is None
         and underline is None
         and strikethrough is None
+        and font_size is None
         and font_color is None
         and background is None
         and not clear_background
@@ -546,6 +550,25 @@ def format_range(
             )
 
             changes["bold"] = bold
+
+
+        if font_size is not None:
+            if font_size < 1:
+                return _error(
+                    "invalid_font_size",
+                    "Font size must be at least 1.",
+                    spreadsheet=spreadsheet_name,
+                    sheet=sheet_name,
+                    font_size=font_size,
+                )
+
+            text_format["fontSize"] = font_size
+
+            fields.append(
+                "userEnteredFormat.textFormat.fontSize"
+            )
+
+            changes["font_size"] = font_size
 
 
         if italic is not None:
@@ -891,6 +914,153 @@ def copy_format(
             },
             "values_changed": False,
             "formulas_changed": False,
+        }
+
+    except ValueError as failure:
+        return _error(
+            "invalid_request",
+            str(failure),
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
+
+    except HttpError as failure:
+        return _error(
+            "google_api_error",
+            readable(failure),
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
+
+@tool
+def set_sheet_layout(
+    freeze_rows: int | None = None,
+    freeze_columns: int | None = None,
+    column: str | None = None,
+    last_column: str | None = None,
+    column_width: int | None = None,
+    fit_columns: bool = False,
+    spreadsheet: str | None = None,
+    sheet: str | None = None,
+    runtime: ToolRuntime = None,
+) -> dict:
+    """Freeze rows or columns, and set how wide columns are.
+
+    Freezing keeps the top rows or leftmost columns on screen while the rest
+    scrolls, which is how a header row is kept in view. Freeze 0 to unfreeze.
+
+    Width is given in pixels, or fit_columns makes each column exactly as
+    wide as its contents, the way double-clicking its edge does. Name one
+    column, or a span from column to last_column; leave both out for every
+    column in the sheet.
+
+    Args:
+        freeze_rows: How many rows to keep on screen. 1 is the header row.
+        freeze_columns: How many columns to keep on screen.
+        column: First column to resize, by header name or letter.
+        last_column: Final column to resize, for a span.
+        column_width: Width in pixels.
+        fit_columns: True to size the columns to their contents instead.
+        spreadsheet: Spreadsheet name, not an ID. Omit for the current
+            spreadsheet.
+        sheet: Sheet/tab name, not the spreadsheet name. Omit for the
+            first sheet.
+    """
+    # Left out, the file is the one the orchestrator handed this
+    # specialist, which lives in its state rather than in a global.
+    spreadsheet = spreadsheet or chosen(runtime)
+
+    sizing = column_width is not None or fit_columns
+
+    if freeze_rows is None and freeze_columns is None and not sizing:
+        return _error(
+            "no_layout_change",
+            "Give something to freeze or a width to set.",
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
+
+    if column_width is not None and fit_columns:
+        return _error(
+            "conflicting_width",
+            "Give either column_width or fit_columns, not both.",
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
+
+    try:
+        (
+            spreadsheet_id,
+            spreadsheet_name,
+            properties,
+            header_row,
+            headers,
+            end_of_data,
+        ) = _load_table(spreadsheet, sheet)
+
+        sheet_name = properties["title"]
+        changed: dict = {}
+
+        if freeze_rows is not None or freeze_columns is not None:
+            spreadsheet_service.freeze(
+                spreadsheet_id=spreadsheet_id,
+                sheet_id=properties["sheetId"],
+                rows=freeze_rows,
+                columns=freeze_columns,
+            )
+
+            if freeze_rows is not None:
+                changed["frozen_rows"] = freeze_rows
+
+            if freeze_columns is not None:
+                changed["frozen_columns"] = freeze_columns
+
+        if sizing:
+            unknown = [
+                one
+                for one in (column, last_column)
+                if one is not None and one not in headers
+            ]
+
+            if unknown:
+                return _error(
+                    "unknown_columns",
+                    "One or more requested columns do not exist.",
+                    spreadsheet=spreadsheet_name,
+                    sheet=sheet_name,
+                    unknown_columns=unknown,
+                    available_columns=addressable(headers),
+                )
+
+            width = headers.width or max(headers.values(), default=1)
+
+            first = headers[column] if column else 1
+            last = (
+                headers[last_column]
+                if last_column
+                else (first if column else width)
+            )
+
+            spreadsheet_service.size_columns(
+                spreadsheet_id=spreadsheet_id,
+                sheet_id=properties["sheetId"],
+                first_column=min(first, last),
+                last_column=max(first, last),
+                pixels=column_width,
+            )
+
+            changed["first_column"] = min(first, last)
+            changed["last_column"] = max(first, last)
+            changed["column_width"] = (
+                "fitted" if fit_columns else column_width
+            )
+
+        return {
+            "ok": True,
+            "operation": "set_sheet_layout",
+            "spreadsheet": spreadsheet_name,
+            "sheet": sheet_name,
+            **changed,
         }
 
     except ValueError as failure:

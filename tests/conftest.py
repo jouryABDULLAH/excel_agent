@@ -105,6 +105,8 @@ SERVICE_WRITES = (
     "repeat_cell",
     "batch_update",
     "format_range",
+    "freeze",
+    "size_columns",
     "add_chart",
     "update_chart_spec",
     "delete_chart",

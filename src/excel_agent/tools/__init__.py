@@ -37,6 +37,7 @@ from excel_agent.tools.stats import sheet_stats
 from excel_agent.tools.style import (
     copy_format,
     format_range,
+    set_sheet_layout,
 )
 TOOLS = [
     list_workbooks,
@@ -67,5 +68,6 @@ TOOLS = [
     delete_chart,
 
     format_range,
+    set_sheet_layout,
     copy_format,
 ]

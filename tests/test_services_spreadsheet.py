@@ -480,3 +480,76 @@ def test_a_sort_that_makes_no_sense_never_reaches_google(by_columns):
         service.sort_range("an-id", grid_range={"sheetId": 0}, by_columns=by_columns)
 
     assert pretend.spreadsheets_endpoint.calls == []
+
+
+# Freezing and sizing
+
+
+def test_freezing_names_only_what_it_changes():
+    service, pretend = a_service()
+
+    service.freeze("an-id", sheet_id=0, rows=1)
+
+    frozen = only_request(pretend)["updateSheetProperties"]
+    assert frozen["properties"]["gridProperties"] == {"frozenRowCount": 1}
+    # The mask must not name frozenColumnCount, or Google would set it to 0.
+    assert frozen["fields"] == "gridProperties.frozenRowCount"
+
+
+def test_freezing_both_directions_names_both():
+    service, pretend = a_service()
+
+    service.freeze("an-id", sheet_id=0, rows=2, columns=1)
+
+    frozen = only_request(pretend)["updateSheetProperties"]
+    assert frozen["properties"]["gridProperties"] == {
+        "frozenRowCount": 2,
+        "frozenColumnCount": 1,
+    }
+    assert "frozenColumnCount" in frozen["fields"]
+
+
+def test_a_width_in_pixels_sets_the_size():
+    service, pretend = a_service()
+
+    service.size_columns("an-id", sheet_id=0, first_column=2, last_column=4, pixels=150)
+
+    sized = only_request(pretend)["updateDimensionProperties"]
+    assert (sized["range"]["startIndex"], sized["range"]["endIndex"]) == (1, 4)
+    assert sized["properties"]["pixelSize"] == 150
+
+
+def test_no_width_given_fits_the_columns_to_their_contents():
+    service, pretend = a_service()
+
+    service.size_columns("an-id", sheet_id=0, first_column=1, last_column=3)
+
+    # What double-clicking the edge of a column does.
+    fitted = only_request(pretend)["autoResizeDimensions"]["dimensions"]
+    assert (fitted["startIndex"], fitted["endIndex"]) == (0, 3)
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"first_column": 0, "last_column": 2},
+        {"first_column": 3, "last_column": 1},
+        {"first_column": 1, "last_column": 2, "pixels": 0},
+    ],
+)
+def test_a_sizing_that_makes_no_sense_never_reaches_google(arguments):
+    service, pretend = a_service()
+
+    with pytest.raises(ValueError):
+        service.size_columns("an-id", sheet_id=0, **arguments)
+
+    assert pretend.spreadsheets_endpoint.calls == []
+
+
+def test_freezing_nothing_at_all_is_refused():
+    service, pretend = a_service()
+
+    with pytest.raises(ValueError):
+        service.freeze("an-id", sheet_id=0)
+
+    assert pretend.spreadsheets_endpoint.calls == []

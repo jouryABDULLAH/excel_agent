@@ -60,6 +60,8 @@ def a_sheet(monkeypatch):
             "delete_chart",
             "format_range",
             "copy_paste",
+            "freeze",
+            "size_columns",
         ):
             monkeypatch.setattr(spreadsheet_service, name, recording(name))
 
@@ -544,3 +546,91 @@ def test_a_span_naming_a_column_that_is_not_there_is_refused(a_sheet):
     assert answer["ok"] is False
     assert answer["unknown_columns"] == ["Nonsense"]
     assert pasted(sent) == []
+
+
+# Freezing and column widths
+
+
+def sent_calls(sent, name):
+    return [one for one in sent if one.get("call") == name]
+
+
+def test_the_header_row_can_be_frozen(a_sheet):
+    sent = a_sheet(style)
+
+    answer = style.set_sheet_layout.invoke({"freeze_rows": 1})
+
+    assert answer["ok"] is True
+    assert answer["frozen_rows"] == 1
+    frozen = sent_calls(sent, "freeze")[0]
+    assert (frozen["rows"], frozen["columns"]) == (1, None)
+
+
+def test_freezing_nothing_unfreezes(a_sheet):
+    sent = a_sheet(style)
+
+    answer = style.set_sheet_layout.invoke({"freeze_rows": 0})
+
+    # Zero is a real answer, not a missing one.
+    assert answer["ok"] is True
+    assert answer["frozen_rows"] == 0
+    assert sent_calls(sent, "freeze")[0]["rows"] == 0
+
+
+def test_a_span_of_columns_is_given_a_width(a_sheet):
+    sent = a_sheet(style)
+
+    answer = style.set_sheet_layout.invoke(
+        {
+            "column": "Order ID",
+            "last_column": "Units",
+            "column_width": 200,
+        }
+    )
+
+    assert answer["ok"] is True
+    sized = sent_calls(sent, "size_columns")[0]
+    assert (sized["first_column"], sized["last_column"]) == (1, 3)
+    assert sized["pixels"] == 200
+
+
+def test_columns_can_be_fitted_to_their_contents(a_sheet):
+    sent = a_sheet(style)
+
+    answer = style.set_sheet_layout.invoke({"fit_columns": True})
+
+    # No column named means every column, and no pixels means auto-fit.
+    assert answer["ok"] is True
+    assert answer["column_width"] == "fitted"
+    assert sent_calls(sent, "size_columns")[0]["pixels"] is None
+
+
+def test_a_width_and_a_fit_together_are_refused(a_sheet):
+    sent = a_sheet(style)
+
+    answer = style.set_sheet_layout.invoke(
+        {"column_width": 200, "fit_columns": True}
+    )
+
+    assert answer["error"] == "conflicting_width"
+    assert sent == []
+
+
+def test_asking_for_no_layout_change_says_so(a_sheet):
+    sent = a_sheet(style)
+
+    answer = style.set_sheet_layout.invoke({})
+
+    assert answer["error"] == "no_layout_change"
+    assert sent == []
+
+
+def test_text_can_be_given_a_size(a_sheet):
+    sent = a_sheet(style)
+
+    answer = style.format_range.invoke({"font_size": 14, "first_row": 1})
+
+    assert answer["ok"] is True
+    formatted = sent_calls(sent, "format_range")[0]
+    assert formatted["cell_format"]["textFormat"]["fontSize"] == 14
+    assert "userEnteredFormat.textFormat.fontSize" in formatted["fields"]

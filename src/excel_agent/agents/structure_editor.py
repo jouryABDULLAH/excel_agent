@@ -12,6 +12,7 @@ from excel_agent.agents._shared import (
 from excel_agent.prompts import CANNOT_DO, LANGUAGE_AND_SHEET_TEXT
 from excel_agent.tools import (
     copy_format,
+    set_sheet_layout,
     delete_column,
     format_range,
     insert_column,
@@ -37,6 +38,7 @@ Column tools:
 Formatting tools:
 - format_range
 - copy_format
+- set_sheet_layout: freeze rows or columns, and set column widths.
 
 Routing rules:
 - "same values", "same contents", or "copy the row data" is row work, not
@@ -83,6 +85,7 @@ TOOLS = (
     set_column_formula,
     format_range,
     copy_format,
+    set_sheet_layout,
 )
 
 

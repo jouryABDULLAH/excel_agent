@@ -592,6 +592,81 @@ class SpreadsheetService:
 
         return result
 
+    def freeze(
+        self,
+        spreadsheet_id: str,
+        sheet_id: int,
+        rows: int | None = None,
+        columns: int | None = None,
+    ) -> dict:
+        """Freeze a number of rows and columns so they stay on screen."""
+        grid: dict = {}
+
+        if rows is not None:
+            grid["frozenRowCount"] = rows
+
+        if columns is not None:
+            grid["frozenColumnCount"] = columns
+
+        if not grid:
+            raise ValueError("Nothing to freeze.")
+
+        return self.batch_update(
+            spreadsheet_id,
+            [
+                {
+                    "updateSheetProperties": {
+                        "properties": {
+                            "sheetId": sheet_id,
+                            "gridProperties": grid,
+                        },
+                        "fields": ",".join(
+                            f"gridProperties.{one}" for one in grid
+                        ),
+                    }
+                }
+            ],
+        )
+
+    def size_columns(
+        self,
+        spreadsheet_id: str,
+        sheet_id: int,
+        first_column: int,
+        last_column: int,
+        pixels: int | None = None,
+    ) -> dict:
+        """Set the width of a run of columns, or fit them to their contents.
+
+        pixels None means auto-fit, which is what double-clicking the edge
+        of a column does.
+        """
+        if first_column < 1 or last_column < first_column:
+            raise ValueError("Invalid column range.")
+
+        span = {
+            "sheetId": sheet_id,
+            "dimension": "COLUMNS",
+            "startIndex": first_column - 1,
+            "endIndex": last_column,
+        }
+
+        if pixels is None:
+            request = {"autoResizeDimensions": {"dimensions": span}}
+        else:
+            if pixels < 1:
+                raise ValueError("A column must be at least one pixel wide.")
+
+            request = {
+                "updateDimensionProperties": {
+                    "range": span,
+                    "properties": {"pixelSize": pixels},
+                    "fields": "pixelSize",
+                }
+            }
+
+        return self.batch_update(spreadsheet_id, [request])
+
     def format_range(
         self,
         spreadsheet_id: str,
