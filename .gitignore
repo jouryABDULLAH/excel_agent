@@ -22,3 +22,4 @@ sheet_quickstart.py
 # Trace-inspection scratch, may hold sheet data
 inspect_langsmith_run.py
 langsmith_run.json
+*.pckl
