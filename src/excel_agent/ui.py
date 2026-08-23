@@ -404,19 +404,8 @@ def draw_turn(
             expanded=False,
         )
 
-    # The status says what is happening while it happens; the actions expander
-    # below is the record of what happened. Left in place, both are drawn as
-    # collapsed grey bars and read as the same thing twice, so the placeholder
-    # the status was drawn in is emptied and the record takes its place. That
-    # also leaves the turn looking the same before and after a rerun, which
-    # redraws it from the transcript with no status in it.
     status_placeholder.empty()
 
-    # What the agent said, and nothing else. NO_ANSWER used to be stored in
-    # its place whenever the answer was empty, including on a turn whose
-    # whole point was the table it drew: the turn looked right, and the next
-    # rerun redrew it from here with "finished without a written response"
-    # sitting above that table.
     said = answer.strip()
 
     if said:
@@ -431,9 +420,6 @@ def draw_turn(
     if not said and not artifacts and not waiting:
         box.markdown(NO_ANSWER)
 
-    # Drawn here as well as in draw_transcript. Left to the transcript alone,
-    # the actions behind a turn only appeared once something else redrew the
-    # page, so the answer arrived and what produced it turned up later.
     draw_actions(
         calls,
         container=box,

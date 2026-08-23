@@ -1,8 +1,9 @@
 """Tests for the last look at an answer.
 
-The validator reads, decides, and at most sends the answer back once. What
-is pinned here is that one-visit contract: pass through untouched, or one
-rewrite pass and out, never a loop.
+The validator reads the finished answer and either lets it through or sends
+it back to the supervisor once. What it thinks of an answer is a judgment,
+so the judge here is scripted: these pin the contract around it -- pass
+through, one rewrite and out, never a loop -- rather than the judgment.
 """
 
 from langchain_core.messages import AIMessage, HumanMessage
@@ -13,9 +14,11 @@ from excel_agent.graph.validator import route_correction, validator_node
 from excel_agent.runner import Answer, Session
 
 
-# The judge is off here: these pin the deterministic checks and the one-visit
-# contract, which must hold with no model at all.
-checked = validator_node()
+def judging(*verdicts: str):
+    """A validator whose judge says these things, in order."""
+    return validator_node(
+        ScriptedModel(script=[AIMessage(one) for one in verdicts])
+    )
 
 
 def finished(answer, question="how many rows?", **state):
@@ -37,8 +40,8 @@ def finished(answer, question="how many rows?", **state):
 # Passing through
 
 
-def test_a_clean_answer_ends_the_turn_and_clears_it():
-    written = checked(finished("The sheet has 5 rows."))
+def test_an_answer_the_judge_accepts_ends_the_turn_and_clears_it():
+    written = judging("PASS")(finished("The sheet has 5 rows."))
 
     assert written["correction"] is None
     assert written["worker_results"] == []
@@ -49,19 +52,31 @@ def test_a_clean_answer_ends_the_turn_and_clears_it():
 
 
 def test_our_own_fallbacks_are_never_judged():
-    # We wrote this sentence; a rewrite could only make it worse.
-    written = checked(
+    # We wrote this sentence; a rewrite could only make it worse, so the
+    # judge is not even asked -- an empty script would raise if it were.
+    written = validator_node(ScriptedModel(script=[]))(
         finished("I could not produce an answer for that. Please try again.")
     )
 
     assert written["correction"] is None
 
 
+def test_a_judge_that_cannot_be_reached_never_blocks_an_answer():
+    class Broken(ScriptedModel):
+        def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+            raise RuntimeError("Groq said no")
+
+    written = validator_node(Broken(script=[]))(finished("Five rows."))
+
+    # A guard must not take the answer down with it.
+    assert written["correction"] is None
+
+
 # What gets sent back
 
 
-def test_an_english_answer_to_an_arabic_question_goes_back():
-    written = checked(
+def test_an_answer_the_judge_refuses_goes_back_with_the_reason():
+    written = judging("FAIL: You answered in English; they wrote in Arabic.")(
         finished("There are 5 rows.", question="كم عدد الصفوف؟")
     )
 
@@ -70,50 +85,23 @@ def test_an_english_answer_to_an_arabic_question_goes_back():
     assert "worker_results" not in written
 
 
-def test_an_arabic_answer_to_an_english_question_is_fine():
-    # Seen live and accepted, so only the reverse direction is a failure.
-    written = checked(finished("يوجد 5 صفوف."))
+def test_a_verdict_the_code_cannot_read_is_taken_as_a_pass():
+    written = judging("I think this is probably fine, mostly?")(
+        finished("Five rows.")
+    )
 
     assert written["correction"] is None
-
-
-def test_a_leaked_question_marker_goes_back():
-    written = checked(
-        finished("QUESTION: which column did you mean?")
-    )
-
-    assert "QUESTION:" in written["correction"]
-
-
-def test_naming_the_machinery_goes_back():
-    written = checked(
-        finished("The row_editor added your row.")
-    )
-
-    assert "row_editor" in written["correction"]
-
-
-def test_a_sentence_said_twice_goes_back():
-    written = checked(
-        finished(
-            "The highest rated book is Dune, with a rating of 5. "
-            "Some other sentence. "
-            "The highest rated book is Dune, with a rating of 5."
-        )
-    )
-
-    assert "more than once" in written["correction"]
 
 
 # The second visit
 
 
-def test_the_rewrite_is_kept_and_settles_the_thread():
+def test_a_rewrite_the_judge_accepts_is_kept_and_settles_the_thread():
     state = finished("There are 5 rows.", question="كم عدد الصفوف؟")
     state["correction"] = "- Reply in Arabic."
     state["final_answer"] = "يوجد 5 صفوف."
 
-    written = checked(state)
+    written = judging("PASS")(state)
 
     assert written["final_answer"] == "يوجد 5 صفوف."
     assert written["correction"] is None
@@ -124,26 +112,22 @@ def test_the_rewrite_is_kept_and_settles_the_thread():
     assert settled.id == state["messages"][-1].id
 
 
-def test_a_false_claim_never_ships_even_when_the_rewrite_fails():
-    """REGRESSION: "All rows have been deleted" was judged false, the rewrite
-    came back empty, and keeping "the original" shipped the very answer the
-    judge had rejected."""
+def test_a_rewrite_still_wrong_never_ships_the_fault():
+    """REGRESSION: a false claim was judged wrong, the rewrite failed too,
+    and keeping the original shipped the very answer the judge rejected."""
     state = finished("All rows have been deleted.")
     state["correction"] = "- No report confirms that deletion."
-    state["final_answer"] = ""
+    state["final_answer"] = "Every row is gone."
 
-    written = checked(state)
+    written = judging("FAIL: still claims a deletion no report shows.")(state)
 
-    # Nothing deterministic is wrong with the original, so it was sent back
-    # for its claims; what ships is what the reports establish instead.
     assert written["final_answer"] != "All rows have been deleted."
+    assert written["final_answer"] != "Every row is gone."
     assert "could not confirm" in written["final_answer"]
     assert "[analyst] 5 rows" in written["final_answer"]
 
 
-def test_an_honest_giving_up_beats_a_false_claim():
-    """The supervisor answering with its own fallback is it giving up
-    honestly, which is the right answer when the alternative is a lie."""
+def test_an_honest_giving_up_beats_a_wrong_answer():
     state = finished("All rows have been deleted.")
     state["correction"] = "- No report confirms that deletion."
     state["final_answer"] = (
@@ -151,25 +135,30 @@ def test_an_honest_giving_up_beats_a_false_claim():
         "- [analyst] 5 rows"
     )
 
-    written = checked(state)
+    written = judging("FAIL: it does not answer.")(state)
 
     assert written["final_answer"] == state["final_answer"]
-    (settled,) = written["messages"]
-    assert "could not write up" in settled.content
 
 
-def test_a_still_broken_rewrite_never_goes_around_again():
-    state = finished("QUESTION: which one?")
-    state["correction"] = "- Drop the marker."
-    state["final_answer"] = "QUESTION: which one?"
+def test_the_second_visit_always_ends_the_turn():
+    state = finished("Something wrong.")
+    state["correction"] = "- Wrong."
+    state["final_answer"] = "Still wrong."
 
-    written = checked(state)
+    written = judging("FAIL: still wrong.")(state)
 
-    # Second visit always ends the turn, however the rewrite came out; a
-    # wording fault means the original still beats saying nothing.
     assert written["correction"] is None
-    assert written["final_answer"] == "QUESTION: which one?"
     assert route_correction({**state, **written}) == "end"
+
+
+def test_whatever_ships_is_free_of_characters_that_say_nothing():
+    state = finished("The table below shows the rows.")
+    state["correction"] = "- It came apart."
+    state["final_answer"] = "Here 201" + "​ ​ ​ ​ ​" + " 2011."
+
+    written = judging("PASS")(state)
+
+    assert "​" not in written["final_answer"]
 
 
 def test_pending_feedback_routes_back_to_the_supervisor():
@@ -180,20 +169,28 @@ def test_pending_feedback_routes_back_to_the_supervisor():
 # The whole loop, through the graph
 
 
+def refusing_then_accepting():
+    """A judge that turns one answer back, then accepts its rewrite."""
+    return ScriptedModel(
+        script=[
+            AIMessage("FAIL: it leaks a marker that belongs to the machine."),
+            AIMessage("PASS"),
+        ]
+    )
+
+
 def test_a_bad_answer_is_rewritten_once_and_reaches_the_user_corrected():
     session = Session(
         build_graph(
             ScriptedModel(
                 script=[
                     calling("delegate", "1", next="analyst", task="count"),
-                    # The analyst has no sheet stubbed here; whatever it
-                    # reports, the supervisor's answer is what is under test.
                     AIMessage("done"),
                     AIMessage("QUESTION: which sheet did you mean?"),
                     AIMessage("Which sheet did you mean?"),
                 ]
             ),
-            judge=None,
+            judge=refusing_then_accepting(),
         )
     )
     session.use("TEST - Sales Orders")
@@ -216,7 +213,6 @@ def test_a_stray_delegation_during_the_rewrite_is_ignored_not_obeyed():
                     calling("delegate", "1", next="analyst", task="count"),
                     AIMessage("done"),
                     AIMessage("QUESTION: which sheet?"),
-                    # The rewrite arrives with a hallucinated call attached.
                     AIMessage(
                         content="Which sheet did you mean?",
                         tool_calls=[
@@ -230,7 +226,7 @@ def test_a_stray_delegation_during_the_rewrite_is_ignored_not_obeyed():
                     ),
                 ]
             ),
-            judge=None,
+            judge=refusing_then_accepting(),
         )
     )
     session.use("TEST - Sales Orders")
@@ -240,128 +236,4 @@ def test_a_stray_delegation_during_the_rewrite_is_ignored_not_obeyed():
         if isinstance(one, Answer)
     ]
 
-    # The text shipped and the call did not run: a script with no entry for
-    # a second analyst visit would have failed loudly here if it had.
     assert answers == ["Which sheet did you mean?"]
-
-
-class Judging(ScriptedModel):
-    """A judge with a verdict per call, standing in for the semantic check."""
-
-    def bind_tools(self, tools, **kwargs):
-        raise AssertionError("the judge never holds tools")
-
-
-def test_the_traced_false_deletion_turn_ends_honestly(monkeypatch):
-    """REGRESSION, replayed from the live trace: the supervisor answered
-    "All rows have been deleted" with no deletion delegated, the judge
-    caught it, the rewrite pass gave up -- and the lie still shipped."""
-    from langchain_core.messages import HumanMessage
-
-    judge = Judging(
-        script=[
-            AIMessage(
-                "FAIL: You claim the rows were deleted, but no specialist "
-                "report confirms that deletion succeeded."
-            ),
-        ]
-    )
-
-    supervisor = ScriptedModel(
-        script=[
-            calling("delegate", "1", next="analyst", task="show the rows"),
-            AIMessage("Here are the rows."),
-            AIMessage("All rows have been deleted."),
-            # The rewrite pass decides nothing, twice, which becomes the
-            # authored fallback -- exactly what the live turn did.
-            AIMessage(""),
-            AIMessage(""),
-        ]
-    )
-
-    session = Session(build_graph(supervisor, judge=judge))
-    session.use("TEST - Sales Orders")
-
-    answers = [
-        one.text for one in session.ask("delete all the rows")
-        if isinstance(one, Answer)
-    ]
-
-    assert len(answers) == 1
-    assert answers[0] != "All rows have been deleted."
-    assert "this much was done" in answers[0] or "could not confirm" in answers[0]
-
-
-def test_an_answer_that_echoes_an_arabic_question_is_still_english():
-    """REGRESSION, seen live: "اعرض الجدول\n\nThe table below is" passed the
-    language check, because the echoed question put Arabic script in an
-    answer that was written in English."""
-    written = checked(
-        finished(
-            "اعرض الجدول\n\nThe table below is",
-            question="اعرض الجدول",
-        )
-    )
-
-    assert "Arabic" in written["correction"]
-
-
-def test_an_answer_that_is_mostly_the_question_said_back_goes_show(
-):
-    written = checked(
-        finished(
-            "how many rows are there? Well.",
-            question="how many rows are there?",
-        )
-    )
-
-    assert "repeats the question" in written["correction"]
-
-
-def test_an_ordinary_answer_that_quotes_the_question_is_fine():
-    written = checked(
-        finished(
-            "You asked how many rows are there? There are 51 rows of data "
-            "in the sheet, counted from the header down.",
-            question="how many rows are there?",
-        )
-    )
-
-    assert written["correction"] is None
-
-
-def test_an_answer_that_came_apart_goes_back_to_be_written_again():
-    """REGRESSION, seen live in Arabic: a truncated sentence, then hundreds
-    of zero-width spaces, then the same sentence spelt differently. The two
-    sentences differed in wording, so the repeat check could not see them."""
-    written = checked(
-        finished(
-            "الجدول التا"
-            "لي 201"
-            + "​ ​ ​ ​ ​ ​"
-            + " الجدول أدن"
-            "اه 2011.",
-            question="اعرض الجدول",
-        )
-    )
-
-    assert "came apart" in written["correction"]
-
-
-def test_ordinary_arabic_is_not_mistaken_for_coming_apart():
-    from excel_agent.graph.replies import degenerate
-
-    # A bidi mark or two is how Arabic settles which way a bracket faces.
-    assert not degenerate("يوجد ‏2011 صف.")
-    assert not degenerate("There are 51 rows of data.")
-
-
-def test_a_rewrite_that_came_apart_too_at_least_ships_without_the_mess():
-    state = finished("The table below shows the rows.")
-    state["correction"] = "- It came apart."
-    state["final_answer"] = "Here 201" + "​ ​ ​ ​ ​" + " 2011."
-
-    written = checked(state)
-
-    # The characters mean nothing, so whatever ships is at least readable.
-    assert "​" not in written["final_answer"]

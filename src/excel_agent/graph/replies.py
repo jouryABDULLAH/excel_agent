@@ -9,6 +9,22 @@ import re
 from langchain_core.messages import HumanMessage
 
 
+def spoken(state, keep: int = 6) -> list[str]:
+    """The last few things the person wrote, oldest first.
+
+    The language of a conversation is not settled by its latest sentence:
+    someone writing Arabic who types one English question is still owed an
+    Arabic answer, and only their side of the thread shows that.
+    """
+    said = [
+        str(message.content)
+        for message in state.get("messages") or []
+        if isinstance(message, HumanMessage)
+    ]
+
+    return said[-keep:]
+
+
 def asked_for(state) -> str:
     """What the user actually wrote, which is also what says their language."""
     for message in reversed(state.get("messages") or []):
@@ -168,16 +184,6 @@ INVISIBLE = "​‌‍‎‏⁠﻿­"
 DEGENERATE = re.compile(f"(?:[{INVISIBLE}][ 	]*){{4,}}")
 
 
-def degenerate(said: str) -> bool:
-    """Whether the reply carries a run of characters that say nothing.
-
-    Seen live in an Arabic answer: a truncated sentence, then hundreds of
-    zero-width spaces, then the sentence again spelt differently. No answer
-    anyone would write looks like that.
-    """
-    return DEGENERATE.search(said) is not None
-
-
 def visible(said: str) -> str:
     """The reply without the characters that take up no space.
 
@@ -185,28 +191,3 @@ def visible(said: str) -> str:
     carry no meaning, so removing them changes nothing but the mess.
     """
     return DEGENERATE.sub(" ", said).strip()
-
-
-def arabic(said: str) -> bool:
-    """Whether any of the text is written in Arabic script."""
-    return any("؀" <= one <= "ۿ" for one in said)
-
-
-def repeated_sentence(said: str) -> str | None:
-    """A sentence the reply says more than once, or None.
-
-    Looser than undoubled, which is why it only ever reports: the repeat is
-    handed back to the model to rewrite rather than cut out of its answer.
-    """
-    counted: dict[str, str] = {}
-
-    for one in re.split(r"(?<=[.!?؟])\s+|\n+", said):
-        key = re.sub(r"[^\w]+", "", one, flags=re.UNICODE).casefold()
-
-        if len(key) > 8:
-            if key in counted:
-                return counted[key].strip()
-
-            counted[key] = one
-
-    return None

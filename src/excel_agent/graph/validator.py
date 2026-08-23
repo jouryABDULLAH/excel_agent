@@ -9,14 +9,8 @@ is the supervisor's to make.
 
 from langchain_core.messages import AIMessage
 
-from excel_agent.graph.replies import (
-    arabic,
-    asked_for,
-    degenerate,
-    repeated_sentence,
-    visible,
-)
-from excel_agent.graph.state import WORKERS, State
+from excel_agent.graph.replies import asked_for, spoken, visible
+from excel_agent.graph.state import State
 
 
 AUTHORED = (
@@ -25,10 +19,6 @@ AUTHORED = (
     "I could not write up an answer",
     "Something went wrong working that out:",
 )
-
-
-# Internal names cannot appear in ordinary prose.
-INTERNAL = (*WORKERS, "delegate tool", "specialist")
 
 
 # What ends the turn once the validator is done with it. The turn-scoped
@@ -46,22 +36,37 @@ DONE: dict = {
 
 
 JUDGING = """\
-You review one answer from a spreadsheet assistant before the user sees it.
-You are given the user's question, reports from the specialists that did the
-work, and the answer. Judge only these two things:
+You are the last reader of an answer from a spreadsheet assistant before the
+person who asked sees it. You are given their question, reports from the
+specialists that did the work, and the answer.
 
-1. UNSUPPORTED SUCCESS: the answer claims a change was made that no report
-   establishes. A report saying a change failed, partially succeeded, or
-   never happened means the answer must not claim it succeeded.
-2. SCOPE: the answer ignores what was asked and answers something else.
-   Extra helpful detail is fine; answering a different question is not.
-3. THINKING OUT LOUD: the answer contains the writer's own working rather
-   than the finished result - correcting itself mid-sentence, weighing what
-   to say, or talking to itself. "Emma, and Ulyshan... wait, the second book
-   is Ulysses" is the writer thinking; the reader should only ever see the
-   answer it arrived at.
+Judge one thing: is this a finished answer that person can read?
 
-Judge nothing else. Style, length, formatting and language are not yours.
+It is not, if any of these is true:
+- It claims a change was made that no report establishes. A report saying a
+  change failed, partly succeeded, or never happened means the answer must
+  not claim it succeeded.
+- It answers a different question than the one asked. Extra detail is fine;
+  answering something else is not.
+- It is written in a language the person has not used in this conversation.
+  Once they have written to you in a language, answering in that language is
+  right, even if a later question of theirs is in another one.
+- It shows the writer's working rather than the result: correcting itself
+  mid-sentence, weighing what to say, or talking to itself.
+- It says the same thing twice, or repeats the question back instead of
+  answering it.
+- It is garbled, cut off mid-word, or padded with characters that carry no
+  meaning.
+- It names the machinery: a specialist, an agent, a tool, or a marker such
+  as "QUESTION:" that belongs to the machine rather than the conversation.
+
+Asking the person a genuine question is a finished answer, when what they
+asked for cannot be done without knowing something only they know.
+
+When a table is named below as drawn, the person is already looking at those
+rows beneath the answer. The answer should introduce them in a sentence and
+must not list them again: "here are the first five rows" is finished, not
+unfinished.
 
 Reply with exactly one line:
 PASS
@@ -75,12 +80,19 @@ def authored(answer: str) -> bool:
     return answer.startswith(AUTHORED)
 
 
-def judged(model, answer: str, question: str, reports: list[str]) -> str | None:
+def judged(
+    model,
+    answer: str,
+    question: str,
+    reports: list[str],
+    tables: list[list[str]] | None = None,
+    history: list[str] | None = None,
+) -> str | None:
     """What the judge finds wrong, or None.
 
-    Prose in, one line out. Asked for the verdict inside a schema. Anything else it says is
-    treated as a pass, because an unreadable verdict must never block a good
-    answer.
+    Prose in, one line out: this model returned malformed JSON about half the
+    time when asked for a schema. Anything that is not a FAIL line is treated
+    as a pass, because an unreadable verdict must never block a good answer.
     """
     if model is None:
         return None
@@ -92,9 +104,18 @@ def judged(model, answer: str, question: str, reports: list[str]) -> str | None:
                 {
                     "role": "user",
                     "content": (
-                        f"QUESTION:\n{question}\n\n"
-                        "SPECIALIST REPORTS:\n"
+                        "EVERYTHING THEY HAVE WRITTEN, OLDEST FIRST:\n"
+                        + ("\n".join(history) if history else question)
+                        + f"\n\nTHEIR QUESTION NOW:\n{question}\n\n"
+                        + "SPECIALIST REPORTS:\n"
                         + ("\n".join(reports) or "(none)")
+                        + "\n\nTABLES DRAWN BELOW THE ANSWER:\n"
+                        + (
+                            "\n".join(
+                                ", ".join(one) for one in tables or []
+                            )
+                            or "(none)"
+                        )
                         + f"\n\nANSWER:\n{answer}"
                     ),
                 },
@@ -111,77 +132,6 @@ def judged(model, answer: str, question: str, reports: list[str]) -> str | None:
         return verdict.split(":", 1)[-1].strip() or None
 
     return None
-
-
-def problems(answer: str, question: str) -> list[str]:
-    """Everything deterministically wrong with the answer, as feedback.
-
-    Each entry is written to the supervisor, which is who acts on it.
-    """
-    found = []
-
-    # The question is taken out first: an answer that opens by repeating
-    # "اعرض الجدول" and carries on in English contains Arabic script while
-    # being an English reply, and passed this check by echoing.
-    said_alone = answer.replace(question.strip(), "").strip()
-
-    # One-directional on purpose: an Arabic answer to an English question
-    # was seen and accepted, so only the reverse is a failure.
-    if arabic(question) and not arabic(said_alone):
-        found.append(
-            "The user wrote in Arabic but the answer contains no Arabic. "
-            "Reply in the user's language."
-        )
-
-    # An answer that is mostly the question said back is not an answer.
-    if said_alone and len(said_alone) < len(answer) / 3:
-        found.append(
-            "The answer repeats the question back and says almost nothing "
-            "else. Answer it instead."
-        )
-
-    if "QUESTION:" in answer:
-        found.append(
-            'The answer leaks the internal "QUESTION:" marker. Ask the '
-            "user plainly, without the marker."
-        )
-
-    said = answer.casefold()
-
-    for name in INTERNAL:
-        if name in said:
-            found.append(
-                f'The answer mentions "{name}", which is internal '
-                "machinery the user should never see. Say what happened "
-                "without naming who or what did it."
-            )
-            break
-
-    if degenerate(answer):
-        found.append(
-            "The answer carries a long run of characters that take up no "
-            "space, which means it came apart while being written. Write "
-            "it again, plainly."
-        )
-
-    repeat = repeated_sentence(answer)
-
-    if repeat is not None:
-        found.append(
-            f'The answer says "{repeat[:80]}" more than once. Say each '
-            "thing exactly once."
-        )
-
-    return found
-
-
-def acceptable(answer: str, question: str) -> bool:
-    """Whether a rewrite is worth shipping in place of the original."""
-    return (
-        bool(answer.strip())
-        and not authored(answer)
-        and not problems(answer, question)
-    )
 
 
 def unverified(state: State) -> str:
@@ -208,72 +158,61 @@ def unverified(state: State) -> str:
 
 
 def validator_node(model=None):
-    """The node, holding the judge it consults for the semantic checks."""
+    """The node, holding the judge that reads the answer."""
+
+    def verdict(state: State, answer: str) -> str | None:
+        """What is wrong with this answer, in a sentence, or nothing."""
+        return judged(
+            model,
+            answer,
+            asked_for(state),
+            state.get("worker_results") or [],
+            state.get("drawn_tables") or [],
+            spoken(state),
+        )
 
     def validate(state: State, config=None) -> dict:
         """Pass the answer, or send it back to the supervisor exactly once."""
         answer = str(state.get("final_answer") or "")
-        question = asked_for(state)
 
-        # The supervisor already rewrote once, so the loop ends here: the
-        # better of the two answers is kept, and the thread settled to match.
-        if state.get("correction") is not None:
-            last = (state.get("messages") or [None])[-1]
-            original = str(getattr(last, "content", "") or "")
+        if state.get("correction") is None:
+            # Our own fallback sentences are not the model's to be judged,
+            # and a rewrite could only make them worse.
+            if authored(answer):
+                return DONE
 
-            if acceptable(answer, question):
-                kept = answer
+            wrong = verdict(state, answer)
 
-            # No deterministic fault in the original means the judge sent it
-            # back: it claims work its reports do not show, and a known false
-            # claim must never ship. An authored rewrite is the supervisor
-            # honestly giving up, which is the truthful answer here; failing
-            # that, say only what the reports establish.
-            elif not problems(original, question):
-                kept = (
-                    answer
-                    if authored(answer) and answer.strip()
-                    else unverified(state)
-                )
+            # No cleanup on the way back: the supervisor needs the turn's
+            # evidence to rewrite from.
+            return DONE if wrong is None else {"correction": wrong}
 
-            # A deterministic fault -- a doubled sentence, the wrong
-            # language -- is a flaw of wording, not of fact, so the original
-            # still beats saying nothing.
-            else:
-                kept = original
+        # The supervisor has had its one rewrite, so the turn ends here
+        # whatever this answer looks like. An authored rewrite is it giving
+        # up honestly, which is worth shipping and worth not judging.
+        kept = answer if authored(answer) else None
 
-            kept = visible(kept)
-
-            return {
-                **DONE,
-                "final_answer": kept,
-                "messages": [AIMessage(kept, id=last.id)],
-            }
-
-        if authored(answer):
-            return DONE
-
-        found = problems(answer, question)
-
-        # The judge runs only when the cheap checks found nothing.
-        if not found:
-            semantic = judged(
-                model,
-                answer,
-                question,
-                state.get("worker_results") or [],
+        if kept is None:
+            kept = (
+                answer
+                if answer.strip() and verdict(state, answer) is None
+                # Still wrong, so say only what the reports establish
+                # rather than ship a fault the judge has named twice.
+                else unverified(state)
             )
 
-            if semantic is not None:
-                found = [semantic]
+        # The characters carry no meaning, so taking them out changes
+        # nothing but the mess.
+        kept = visible(kept)
 
-        if found:
-            # No cleanup: the supervisor needs the evidence to rewrite.
-            return {
-                "correction": "\n".join(f"- {one}" for one in found)
-            }
+        # Settled by id, so the thread holds what the user actually read.
+        last = (state.get("messages") or [None])[-1]
 
-        return DONE
+        return {
+            **DONE,
+            "final_answer": kept,
+            "messages": [AIMessage(kept, id=last.id)],
+        }
 
     return validate
 
