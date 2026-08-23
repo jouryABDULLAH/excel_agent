@@ -45,3 +45,28 @@ def calling(name: str, call_id: str, **arguments) -> AIMessage:
         content="",
         tool_calls=[{"name": name, "args": arguments, "id": call_id}],
     )
+
+
+class ScriptedJudge:
+    """A judge that hands back prepared verdicts instead of thinking.
+
+    The validator asks its model for structured output, so this stands in
+    for that shape alone: with_structured_output gives back itself, and
+    invoke returns the next prepared JudgeResult. An Exception in the list
+    is raised instead, which is how a judge that cannot be reached is put
+    into a test.
+    """
+
+    def __init__(self, results):
+        self.results = iter(results)
+
+    def with_structured_output(self, *arguments, **named):
+        return self
+
+    def invoke(self, messages):
+        result = next(self.results)
+
+        if isinstance(result, Exception):
+            raise result
+
+        return result

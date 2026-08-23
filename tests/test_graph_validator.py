@@ -7,18 +7,28 @@ through, one rewrite and out, never a loop -- rather than the judgment.
 """
 
 from langchain_core.messages import AIMessage, HumanMessage
-from scripted import ScriptedModel, calling
+from scripted import ScriptedJudge, ScriptedModel, calling
+
+from excel_agent.graph.validator import JudgeResult
 
 from excel_agent.graph.graph import build_graph
 from excel_agent.graph.validator import route_correction, validator_node
 from excel_agent.runner import Answer, Session
 
 
-def judging(*verdicts: str):
-    """A validator whose judge says these things, in order."""
-    return validator_node(
-        ScriptedModel(script=[AIMessage(one) for one in verdicts])
-    )
+def passes() -> JudgeResult:
+    """A judge's verdict that the answer is finished."""
+    return JudgeResult(verdict="PASS", issue=None, kind=None)
+
+
+def fails(issue: str, kind: str = "wrong_scope") -> JudgeResult:
+    """A judge's verdict that something is wrong, and what."""
+    return JudgeResult(verdict="FAIL", issue=issue, kind=kind)
+
+
+def judging(*verdicts):
+    """A validator whose judge returns these verdicts, in order."""
+    return validator_node(ScriptedJudge(verdicts))
 
 
 def finished(answer, question="how many rows?", **state):
@@ -41,7 +51,7 @@ def finished(answer, question="how many rows?", **state):
 
 
 def test_an_answer_the_judge_accepts_ends_the_turn_and_clears_it():
-    written = judging("PASS")(finished("The sheet has 5 rows."))
+    written = judging(passes())(finished("The sheet has 5 rows."))
 
     assert written["correction"] is None
     assert written["worker_results"] == []
@@ -54,7 +64,7 @@ def test_an_answer_the_judge_accepts_ends_the_turn_and_clears_it():
 def test_our_own_fallbacks_are_never_judged():
     # We wrote this sentence; a rewrite could only make it worse, so the
     # judge is not even asked -- an empty script would raise if it were.
-    written = validator_node(ScriptedModel(script=[]))(
+    written = validator_node(ScriptedJudge([]))(
         finished("I could not produce an answer for that. Please try again.")
     )
 
@@ -62,21 +72,41 @@ def test_our_own_fallbacks_are_never_judged():
 
 
 def test_a_judge_that_cannot_be_reached_never_blocks_an_answer():
-    class Broken(ScriptedModel):
-        def _generate(self, messages, stop=None, run_manager=None, **kwargs):
-            raise RuntimeError("Groq said no")
+    """Fail-open, deliberately: an answer the judge never read is far more
+    likely to be fine than not, and a guard that cannot be reached must not
+    take every turn down with it."""
+    written = validator_node(
+        ScriptedJudge([RuntimeError("Groq said no")])
+    )(finished("Five rows."))
 
-    written = validator_node(Broken(script=[]))(finished("Five rows."))
-
-    # A guard must not take the answer down with it.
     assert written["correction"] is None
+
+
+def test_our_own_fallbacks_never_reach_the_judge():
+    # An empty script raises if the judge is asked at all.
+    written = validator_node(ScriptedJudge([]))(
+        finished("I used every step this request is allowed before finishing.")
+    )
+
+    assert written["correction"] is None
+
+
+def test_what_kind_of_failure_it_was_reaches_the_supervisor():
+    written = judging(
+        fails("It claims rows were deleted that no report shows.",
+              "unsupported_claim")
+    )(finished("All rows have been deleted."))
+
+    # The sentence is what the supervisor rewrites from; the kind is for
+    # counting failures later, and must not be mistaken for another sort.
+    assert "deleted" in written["correction"]
 
 
 # What gets sent back
 
 
 def test_an_answer_the_judge_refuses_goes_back_with_the_reason():
-    written = judging("FAIL: You answered in English; they wrote in Arabic.")(
+    written = judging(fails("You answered in English; they wrote in Arabic.", "wrong_language"))(
         finished("There are 5 rows.", question="كم عدد الصفوف؟")
     )
 
@@ -85,12 +115,14 @@ def test_an_answer_the_judge_refuses_goes_back_with_the_reason():
     assert "worker_results" not in written
 
 
-def test_a_verdict_the_code_cannot_read_is_taken_as_a_pass():
-    written = judging("I think this is probably fine, mostly?")(
-        finished("Five rows.")
-    )
+def test_a_failing_verdict_with_no_sentence_still_says_something():
+    """The schema requires an issue on a FAIL, but a model can still send
+    an empty one, and the supervisor cannot rewrite from nothing."""
+    written = judging(
+        JudgeResult(verdict="FAIL", issue=None, kind="garbled")
+    )(finished("Five rows."))
 
-    assert written["correction"] is None
+    assert written["correction"]
 
 
 # The second visit
@@ -101,7 +133,7 @@ def test_a_rewrite_the_judge_accepts_is_kept_and_settles_the_thread():
     state["correction"] = "- Reply in Arabic."
     state["final_answer"] = "يوجد 5 صفوف."
 
-    written = judging("PASS")(state)
+    written = judging(passes())(state)
 
     assert written["final_answer"] == "يوجد 5 صفوف."
     assert written["correction"] is None
@@ -119,7 +151,7 @@ def test_a_rewrite_still_wrong_never_ships_the_fault():
     state["correction"] = "- No report confirms that deletion."
     state["final_answer"] = "Every row is gone."
 
-    written = judging("FAIL: still claims a deletion no report shows.")(state)
+    written = judging(fails("Still claims a deletion no report shows.", "unsupported_claim"))(state)
 
     assert written["final_answer"] != "All rows have been deleted."
     assert written["final_answer"] != "Every row is gone."
@@ -135,7 +167,7 @@ def test_an_honest_giving_up_beats_a_wrong_answer():
         "- [analyst] 5 rows"
     )
 
-    written = judging("FAIL: it does not answer.")(state)
+    written = judging(fails("It does not answer the question."))(state)
 
     assert written["final_answer"] == state["final_answer"]
 
@@ -145,7 +177,7 @@ def test_the_second_visit_always_ends_the_turn():
     state["correction"] = "- Wrong."
     state["final_answer"] = "Still wrong."
 
-    written = judging("FAIL: still wrong.")(state)
+    written = judging(fails("Still wrong."))(state)
 
     assert written["correction"] is None
     assert route_correction({**state, **written}) == "end"
@@ -156,7 +188,7 @@ def test_whatever_ships_is_free_of_characters_that_say_nothing():
     state["correction"] = "- It came apart."
     state["final_answer"] = "Here 201" + "​ ​ ​ ​ ​" + " 2011."
 
-    written = judging("PASS")(state)
+    written = judging(passes())(state)
 
     assert "​" not in written["final_answer"]
 
@@ -171,10 +203,13 @@ def test_pending_feedback_routes_back_to_the_supervisor():
 
 def refusing_then_accepting():
     """A judge that turns one answer back, then accepts its rewrite."""
-    return ScriptedModel(
-        script=[
-            AIMessage("FAIL: it leaks a marker that belongs to the machine."),
-            AIMessage("PASS"),
+    return ScriptedJudge(
+        [
+            fails(
+                "It leaks a marker that belongs to the machine.",
+                "internal_machinery",
+            ),
+            passes(),
         ]
     )
 
