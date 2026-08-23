@@ -581,19 +581,23 @@ def update_row(
 @tool
 def insert_row(
     row: int,
+    count: int = 1,
     values: dict[str, CellValue] | None = None,
     spreadsheet: str | None = None,
     sheet: str | None = None,
     runtime: ToolRuntime = None,
 ) -> dict:
-    """Insert a new row at a specific position.
+    """Insert one or more new rows at a position.
 
     The existing row currently at this number, and all rows below it, shift
-    down by one. Values are optional; omit them to insert an empty row.
+    down. Several rows is one call with count, never one call each. Values
+    are optional; omit them to insert empty rows, and any given are written
+    into every row inserted.
 
     Args:
-        row: Position of the new row.
-        values: Optional column names mapped to values for the new row.
+        row: Position of the first new row.
+        count: How many rows to insert. One by default.
+        values: Optional column names mapped to values for the new rows.
         spreadsheet: Spreadsheet name, not an ID. Omit to use the current
             spreadsheet.
         sheet: Sheet/tab name, not the spreadsheet name. Omit to use the
@@ -602,6 +606,15 @@ def insert_row(
     # Left out, the file is the one the orchestrator handed this
     # specialist, which lives in its state rather than in a global.
     spreadsheet = spreadsheet or chosen(runtime)
+
+    if count < 1:
+        return _error(
+            "invalid_count",
+            "count must be at least 1.",
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+            count=count,
+        )
 
     try:
         (
@@ -650,14 +663,14 @@ def insert_row(
                 spreadsheet_id=spreadsheet_id,
                 sheet_id=properties["sheetId"],
                 start_row=grid_rows + 1,
-                count=row - grid_rows,
+                count=row - grid_rows + count - 1,
             )
         else:
             spreadsheet_service.insert_rows(
                 spreadsheet_id=spreadsheet_id,
                 sheet_id=properties["sheetId"],
                 start_row=row,
-                count=1,
+                count=count,
             )
 
         updated_cells = 0
@@ -670,13 +683,14 @@ def insert_row(
                     row,
                     values,
                     headers,
+                    count,
                 ),
                 value_input_option="USER_ENTERED",
             )
 
             updated_cells = response.get(
                 "totalUpdatedCells",
-                len(values),
+                len(values) * count,
             )
 
         return {
@@ -685,6 +699,8 @@ def insert_row(
             "spreadsheet": spreadsheet_name,
             "sheet": sheet_name,
             "row": row,
+            "count": count,
+            "last_row_written": row + count - 1,
             **_far_from_data(row, last_row),
             "values": values or {},
             "updated_cells": updated_cells,

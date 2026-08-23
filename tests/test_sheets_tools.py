@@ -1683,3 +1683,79 @@ def test_a_number_column_is_averaged_and_its_middle_found(a_sheet):
     assert "middle value 3" in message.content
     assert message.artifact["average"] == 3
     assert message.artifact["median"] == 3
+
+
+# Adding several rows or columns at once
+
+
+def test_several_rows_are_inserted_in_one_call(a_writable_sheet):
+    sent = a_writable_sheet()
+
+    answer = row_tools.insert_row.invoke({"row": 3, "count": 4})
+
+    assert answer["ok"] is True
+    assert answer["count"] == 4
+    assert answer["last_row_written"] == 6
+    # One gap four rows wide, not four calls.
+    assert [one["call"] for one in sent] == ["insert_rows"]
+    assert calls(sent, "insert_rows")[0]["count"] == 4
+
+
+def test_values_fill_every_inserted_row(a_writable_sheet):
+    sent = a_writable_sheet()
+
+    answer = row_tools.insert_row.invoke(
+        {"row": 3, "count": 2, "values": {"Region": "West"}}
+    )
+
+    assert answer["ok"] is True
+    assert written(sent) == {"'Sales Orders'!B3:B4": "West"}
+
+
+def test_inserting_no_rows_is_refused(a_writable_sheet):
+    sent = a_writable_sheet()
+
+    answer = row_tools.insert_row.invoke({"row": 3, "count": 0})
+
+    assert answer["error"] == "invalid_count"
+    assert sent == []
+
+
+def test_several_columns_are_added_in_one_call(a_writable_columns_sheet):
+    sent = a_writable_columns_sheet()
+
+    answer = columns.insert_column.invoke(
+        {"names": ["Qty", "Price", "Notes"], "position": 5}
+    )
+
+    assert answer["ok"] is True
+    assert answer["columns"] == ["Qty", "Price", "Notes"]
+    assert answer["count"] == 3
+
+    # One gap three columns wide, and the three headers written together.
+    assert calls(sent, "insert_columns")[0]["count"] == 3
+    assert calls(sent, "update_cells")[0]["updates"] == [
+        {
+            "range": "'Sales Orders'!E1:G1",
+            "values": [["Qty", "Price", "Notes"]],
+        }
+    ]
+
+
+def test_naming_a_column_both_ways_at_once_is_refused(a_writable_columns_sheet):
+    sent = a_writable_columns_sheet()
+
+    answer = columns.insert_column.invoke({"name": "Qty", "names": ["Price"]})
+
+    assert answer["error"] == "conflicting_columns"
+    assert sent == []
+
+
+def test_one_column_still_works_the_way_it_did(a_writable_columns_sheet):
+    sent = a_writable_columns_sheet()
+
+    answer = columns.insert_column.invoke({"name": "Profit"})
+
+    assert answer["ok"] is True
+    assert answer["column"] == "Profit"
+    assert answer["count"] == 1

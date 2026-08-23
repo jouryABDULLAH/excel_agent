@@ -33,7 +33,8 @@ Tool choice:
   getting the same values is one call with rows - never one call per row.
 - fill_rows: write a block of consecutive rows that each get different
   values. Twenty rows is one call with twenty dicts, never twenty calls.
-- insert_row: create a row at a specific row number.
+- insert_row: create rows at a specific row number. Several rows is one
+  call with count, never one call each.
 - append_row: add a new record at the end. To repeat a row, one call
   with count - never one call per copy.
 - delete_row: delete existing rows. Several rows is one call with rows -

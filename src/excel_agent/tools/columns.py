@@ -317,12 +317,16 @@ def _resolve_column_target(
 @tool
 def insert_column(
     name: str | None = None,
+    names: list[str] | None = None,
     position: int | None = None,
     spreadsheet: str | None = None,
     sheet: str | None = None,
     runtime: ToolRuntime = None,
 ) -> dict:
-    """Insert a new column.
+    """Insert one or more new columns.
+
+    Several columns side by side are one call: names=["Qty", "Price"] adds
+    both, in that order, never one call each.
 
     The new column may be named or unnamed.
 
@@ -345,11 +349,30 @@ def insert_column(
     # specialist, which lives in its state rather than in a global.
     spreadsheet = spreadsheet or chosen(runtime)
 
-    if name is not None:
-        name = name.strip()
+    if name is not None and names:
+        return _error(
+            "conflicting_columns",
+            "Give either name or names, not both.",
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
 
-        if not name:
-            name = None
+    # One name and several are the same thing with a different count, so
+    # everything below works on the list.
+    wanted = [
+        one.strip()
+        for one in (names if names else [name] if name else [])
+    ]
+
+    if names is not None and not wanted:
+        return _error(
+            "no_values",
+            "No column names were supplied.",
+            spreadsheet=spreadsheet,
+            sheet=sheet,
+        )
+
+    count = max(len(wanted), 1)
 
     if position is not None and position < 1:
         return _error(
@@ -407,27 +430,29 @@ def insert_column(
                 last_position=rightmost + 1,
             )
 
+        # One gap of the whole width, so several columns are one request
+        # rather than one call each.
         spreadsheet_service.insert_columns(
             spreadsheet_id=spreadsheet_id,
             sheet_id=properties["sheetId"],
             start_column=position,
-            count=1,
+            count=count,
         )
 
-        # Only write a header when the caller supplied one.
-        if name is not None:
+        # Only write headers when the caller supplied them.
+        if wanted:
             spreadsheet_service.update_cells(
                 spreadsheet_id=spreadsheet_id,
                 updates=[
                     {
                         "range": a1(
                             sheet_name,
-                            first_row=header_row,
-                            last_row=header_row,
+                            first_row=header_row or 1,
+                            last_row=header_row or 1,
                             first_column=position,
-                            last_column=position,
+                            last_column=position + len(wanted) - 1,
                         ),
-                        "values": [[name]],
+                        "values": [wanted],
                     }
                 ],
                 value_input_option="RAW",
@@ -438,10 +463,12 @@ def insert_column(
             "operation": "insert_column",
             "spreadsheet": spreadsheet_name,
             "sheet": sheet_name,
-            "column": name,
+            "column": wanted[0] if wanted else None,
+            "columns": wanted,
             "position": position,
+            "count": count,
             "column_letter": column_letter(position),
-            "has_header": name is not None,
+            "has_header": bool(wanted),
             "column_positions_changed": (
                 bool(headers)
                 and position <= rightmost

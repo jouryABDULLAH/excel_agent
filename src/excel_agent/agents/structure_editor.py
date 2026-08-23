@@ -28,7 +28,7 @@ STRUCTURE_PROMPT = f"""\
 You change columns and cell formatting.
 
 Column tools:
-- insert_column
+- insert_column (several at once with names, never one call each)
 - rename_column
 - delete_column
 - move_column
