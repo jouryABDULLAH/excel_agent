@@ -105,74 +105,149 @@ def find_header_row(rows: list[list[Cell]], search_depth: int = 10) -> int:
     return 1
 
 
+def sheet_width(properties: dict) -> int | None:
+    """How many columns the sheet has, or None when Google did not say.
+
+    This is what bounds a column letter: a letter past the edge of the sheet
+    is not an address, it is a word that happens to be spelt in letters.
+    """
+    return (
+        properties.get("gridProperties", {}).get("columnCount")
+    )
+
+
+def column_number(letters: str) -> int | None:
+    """A column's letters as its number: A -> 1, AA -> 27. None if not letters."""
+    wanted = letters.strip().upper()
+
+    if not wanted or not wanted.isalpha() or not wanted.isascii():
+        return None
+
+    number = 0
+
+    for letter in wanted:
+        number = number * 26 + (ord(letter) - ord("A") + 1)
+
+    return number
+
+
 class Headers(dict):
     """Column names to column numbers, reached however they were written.
 
-    Capitalisation and surrounding spaces are how someone types a header,
-    not what tells two columns apart: "profit margin" means the "Profit
-    Margin" column. An exact match wins, so a sheet holding both spellings
-    still reaches the one actually named, and two columns differing only in
-    case are unreachable by a spelling that is neither -- which is a refusal
-    rather than a guess.
+    Three ways, in this order, and the order is the whole of the safety:
 
-    A dict subclass so that every tool reading `column in headers` or
-    `headers[column]` gets this without knowing it exists.
+    1. The exact header, so a sheet holding two spellings still reaches the
+       one actually named.
+    2. The same header written differently -- "profit margin" means the
+       "Profit Margin" column, because capitalisation and stray spaces are
+       how someone types a name, not what tells two columns apart. Two
+       columns differing only in case refuse a third spelling rather than
+       guessing between them.
+    3. The column's letter, so "E" reaches the fifth column and a column
+       nobody named can still be worked with.
+
+    Names beat letters, and a letter only counts inside the sheet: on a
+    26-column sheet "ID" is 238 and reaches nothing, which is what stops a
+    two-letter word being read as an address.
+
+    A dict subclass so every tool asking `column in headers` or
+    `headers[column]` gets all of this without knowing it exists.
     """
 
-    def _named(self, key) -> str | None:
-        """The real header a name reaches, or None."""
+    # How wide the sheet is, which bounds what a letter may mean.
+    width: int = 0
+
+    def _number(self, key) -> int | None:
+        """The column a name or a letter reaches, or None."""
         if dict.__contains__(self, key):
-            return key
+            return dict.__getitem__(self, key)
 
         if not isinstance(key, str):
             return None
 
         wanted = key.strip().casefold()
 
-        found = [
+        named = [
             name
             for name in self
             if name.strip().casefold() == wanted
         ]
 
-        return found[0] if len(found) == 1 else None
+        if named:
+            return (
+                dict.__getitem__(self, named[0])
+                if len(named) == 1
+                else None
+            )
+
+        number = column_number(key)
+
+        if number is not None and 1 <= number <= self.width:
+            return number
+
+        return None
 
     def __contains__(self, key) -> bool:
-        return self._named(key) is not None
+        return self._number(key) is not None
 
     def __getitem__(self, key) -> int:
-        found = self._named(key)
+        found = self._number(key)
 
         if found is None:
             raise KeyError(key)
 
-        return dict.__getitem__(self, found)
+        return found
 
     def get(self, key, default=None):
-        found = self._named(key)
+        found = self._number(key)
 
-        return (
-            dict.__getitem__(self, found)
-            if found is not None
-            else default
-        )
+        return default if found is None else found
 
 
-def header_map(rows: list[list[Cell]], header_row: int) -> Headers:
+def named(headers: "Headers", column: str) -> str:
+    """The sheet's own spelling of a column, given any way of reaching it.
+
+    A column asked for as "B" or "region" is shown to the user as "Region",
+    because a table headed by the letter someone typed is harder to read
+    than one headed by the name the sheet holds.
+    """
+    number = headers.get(column)
+
+    for name, found in headers.items():
+        if found == number:
+            return name
+
+    return column
+
+
+def header_map(
+    rows: list[list[Cell]],
+    header_row: int,
+    width: int | None = None,
+) -> Headers:
     """Map each column name to its column number, counting from 1.
 
     Looking columns up by name means no column letters are written down, so a
     column that moves does not break a tool. A cell with nothing in it names
-    no column and is left out.
-    """
-    if header_row > len(rows):
-        return Headers()
+    no column and is left out, though its letter still reaches it.
 
-    return Headers(
+    The width is the sheet's own, when the caller knows it; the data is only
+    a fallback, and a narrow one, since an unnamed column past the data is
+    exactly what a letter is for.
+    """
+    found = Headers(
         (str(one.displayed).strip(), number)
         for number, one in enumerate(rows[header_row - 1], start=1)
         if not is_blank(one.displayed)
+    ) if header_row <= len(rows) else Headers()
+
+    found.width = (
+        width
+        if width is not None
+        else max((len(one) for one in rows), default=0)
     )
+
+    return found
 
 
 def last_data_row(rows: list[list[Cell]], header_row: int) -> int:

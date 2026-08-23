@@ -12,6 +12,7 @@ from excel_agent.tools.runtime import chosen
 from excel_agent.sheets import (
     find_header_row,
     header_map,
+    sheet_width,
     last_data_row,
     resolve_spreadsheet,
     to_grid_range,
@@ -170,7 +171,7 @@ def _load_table(
     )
 
     header_row = find_header_row(rows)
-    headers = header_map(rows, header_row)
+    headers = header_map(rows, header_row, sheet_width(properties))
     last_row = last_data_row(rows, header_row)
 
     charts = spreadsheet_service.list_charts(

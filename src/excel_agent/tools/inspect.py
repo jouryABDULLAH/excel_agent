@@ -19,6 +19,8 @@ from excel_agent.sheets import (
     column_letter,
     find_header_row,
     header_map,
+    named,
+    sheet_width,
     last_data_row,
     resolve_spreadsheet,
 )
@@ -155,7 +157,7 @@ def inspect_sheet(
         )
 
     header_row = find_header_row(rows)
-    headers = header_map(rows, header_row)
+    headers = header_map(rows, header_row, sheet_width(properties))
 
     if not headers:
         return _error(
@@ -209,7 +211,11 @@ def inspect_sheet(
                 available_columns=available_columns,
             )
 
-        selected_columns = list(dict.fromkeys(columns))
+        # The sheet's own names, so a column reached by its letter is not
+        # then shown to the user headed by that letter.
+        selected_columns = list(
+            dict.fromkeys(named(headers, one) for one in columns)
+        )
 
     else:
         selected_columns = available_columns

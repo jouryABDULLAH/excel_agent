@@ -1576,3 +1576,26 @@ def test_a_row_still_cannot_be_moved_onto_the_header(a_writable_sheet):
     assert answer["ok"] is False
     assert answer["error"] == "invalid_destination"
     assert sent == []
+
+
+def test_a_column_is_read_by_its_letter(a_sheet):
+    """REGRESSION, from the traces: sheet_stats(column='E') answered
+    column_not_found. A letter is an address now, bounded by the sheet."""
+    a_sheet(fake_sheets.orders(), module=inspect)
+
+    answer = inspect.inspect_sheet.invoke({"columns": ["B", "Product"]})
+
+    # B is Region, named by letter alongside a header name -- and shown to
+    # the user under the name the sheet holds, not the letter typed.
+    assert "| row | Region | Product |" in answer
+    assert "| 2 | North | Laptop |" in answer
+
+
+def test_a_letter_past_the_edge_of_the_sheet_is_still_unknown(a_sheet):
+    a_sheet(fake_sheets.orders(), module=inspect)
+
+    answer = inspect.inspect_sheet.invoke({"columns": ["ZZ"]})
+
+    # 702 columns out. A word spelt in letters must not become an address.
+    assert "do not exist" in answer
+    assert "Order ID, Region, Units, Product" in answer

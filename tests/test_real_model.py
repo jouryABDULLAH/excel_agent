@@ -588,3 +588,28 @@ def test_sorting_reaches_the_editor_that_owns_it(a_sheet):
     assert "sort_rows" in tools + waiting, (
         f"sorting never reached sort_rows; called {tools}"
     )
+
+
+def test_a_column_asked_for_by_its_letter_is_read(a_sheet, monkeypatch):
+    """REGRESSION, from the traces: sheet_stats(column='E') and
+    find_data(column='title') both came back column_not_found. A letter is
+    an address now, and a name is matched however it was capitalised."""
+    from excel_agent.tools import stats as stats_tool
+
+    monkeypatch.setattr(
+        stats_tool,
+        "resolve_spreadsheet",
+        lambda name=None: ("an-id", name or SPREADSHEET),
+    )
+
+    session = Session(build_graph(build_model()))
+    session.use(SPREADSHEET)
+
+    answer = next(
+        one.text
+        for one in session.ask("what is the total of column C?")
+        if isinstance(one, Answer)
+    )
+
+    # Column C is Units: 1+2+3+4+5.
+    assert "15" in answer, answer

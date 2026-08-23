@@ -49,6 +49,9 @@ Rules:
 - A write may land anywhere below the header, however far past the data it
   is. The sheet grows by itself, so never add empty rows to reach a row:
   write to it directly.
+- A column can be named by its header or by its letter: "Region" or "B".
+  Prefer the header; use the letter for a column nobody named, which is
+  how an empty or unlabelled column is worked with.
 - You work with an existing table whose columns already have headers.
 - Do not treat A, B, C or A1, B1, C1 as column names unless those strings are
   literally headers in the spreadsheet.

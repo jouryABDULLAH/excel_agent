@@ -55,7 +55,8 @@ Formatting rules:
   can be copied.
 
 Column rules:
-- Existing columns are identified by their exact spreadsheet header.
+- Existing columns are identified by their header or by their letter;
+  a header may be written in any capitalisation.
 - Never guess a header.
 - Structural insert/delete/move operations can invalidate old positions.
 - set_column_formula takes mode="fill_down" for a formula computing one row,

@@ -352,3 +352,60 @@ def test_two_columns_differing_only_in_case_refuse_a_third_spelling():
 
     # Neither is what was written, so there is nothing to prefer.
     assert "REGION" not in headers
+
+
+# Reaching a column by its letter
+
+
+def a_wide_map(width=26):
+    return header_map(
+        [[fake_sheets.text("Order ID"), fake_sheets.text("Profit Margin")]],
+        1,
+        width,
+    )
+
+
+def test_a_column_letter_reaches_that_column():
+    """REGRESSION, from the traces: sheet_stats(column='E') came back
+    column_not_found, because a letter was not an address anywhere outside
+    the column tools."""
+    headers = a_wide_map()
+
+    assert "E" in headers
+    assert headers["E"] == 5
+    # However it was typed, spaces and case included.
+    assert headers["e"] == 5
+    assert headers[" e "] == 5
+
+
+def test_a_name_beats_a_letter_that_spells_it():
+    headers = header_map(
+        [[fake_sheets.text("E"), fake_sheets.text("Region")]],
+        1,
+        26,
+    )
+
+    # A column really called E is the first one, not the fifth.
+    assert headers["E"] == 1
+
+
+def test_a_word_spelt_in_letters_is_not_an_address():
+    """ID is column 238. On a 26-column sheet it is a word that missed."""
+    headers = a_wide_map()
+
+    assert "ID" not in headers
+    assert "AA" not in headers
+    assert headers.get("NO") is None
+
+
+def test_a_letter_inside_a_wider_sheet_still_counts():
+    headers = a_wide_map(width=300)
+
+    # The same two letters on a sheet wide enough to hold them.
+    assert headers["AA"] == 27
+
+
+def test_what_is_listed_back_is_still_the_real_names():
+    headers = a_wide_map()
+
+    assert list(headers) == ["Order ID", "Profit Margin"]
