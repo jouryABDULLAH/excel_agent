@@ -101,14 +101,10 @@ def run_worker(
             config,
         )
 
-    # A pause for approval is not a failure: it has to reach the graph so the
-    # turn can be resumed rather than reported as broken.
+    # A pause for approval 
     except GraphInterrupt:
         raise
 
-    # A specialist that falls over must not take the turn with it. Left to
-    # propagate, the exception escapes the graph and the user is shown the
-    # provider's raw JSON.
     except Exception as failure:  # noqa: BLE001
         return (
             f"could not finish: {_why(failure)}. Nothing it was asked to do "

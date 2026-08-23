@@ -24,9 +24,8 @@ def route_worker(state: State) -> str:
     return route
 
 
-# "the judge is the model" as a default that None can override: a scripted
-# test switches the judge off with judge=None, or a clean finish would hand
-# the script's next entry to the judge and quietly desync the test.
+# Tests can switch the judge off with judge=None.
+# not specifying judge in build_graph(.., judge=..) would set the judge to use the same model the orchestrator uses
 SAME_MODEL = object()
 
 
@@ -65,7 +64,6 @@ def build_graph(model=None, checkpointer=None, judge=SAME_MODEL):
         },
     )
 
-    # Once, at most: the second visit always leaves.
     builder.add_conditional_edges(
         "validator",
         route_correction,

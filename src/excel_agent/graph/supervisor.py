@@ -310,11 +310,8 @@ def _spent(state: State) -> str:
 
 
 def _one_call(supervisor, state: State, delegated: int, config=None):
-    """Ask the planner once.
-
-    The node's config goes with it, so the planner's model calls and its
-    middleware are recorded inside this node's run rather than beside it.
-    """
+    """Ask the planner once."""
+    
     return supervisor.invoke(
         {
             "messages": state["messages"],
@@ -337,12 +334,7 @@ def _decided_something(said) -> bool:
 
 
 def _said(supervisor, state: State, delegated: int, config=None):
-    """One supervisor call, retried once if it decides nothing.
-
-    The model sometimes returns a message with no tool call and no text --
-    neither a delegation nor an answer. Taken at face value that became an
-    empty reply, which the front end shows as a turn that said nothing.
-    """
+    """One supervisor call, retried once if it decides nothing."""
     said = _one_call(supervisor, state, delegated, config)
 
     if _decided_something(said):
