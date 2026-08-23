@@ -85,3 +85,31 @@ def test_a_table_is_cut_but_the_words_around_it_survive():
     said = "Here:\n| a | b |\n|---|---|\n| 1 | 2 |\nThat is all."
 
     assert table_free(said) == "Here:\nThat is all."
+
+
+def test_a_table_of_placeholders_goes_even_when_it_matches_nothing():
+    """REGRESSION, seen live: asked for columns B and D, the planner wrote
+    "| B | D |" over rows of "(data)" above the real drawn table. Its
+    heading named the letters, the drawn table named Author and Genre, so
+    nothing matched and the sketch reached the user."""
+    said = without_drawn_table(
+        "Here is the requested data from columns B and D:\n"
+        "| B | D |\n"
+        "|---|---|\n"
+        "| (data) | (data) |\n"
+        "| ... | ... |",
+        [["Author", "Genre"]],
+    )
+
+    assert "|" not in said
+    assert said == "Here is the requested data from columns B and D:"
+
+
+def test_a_table_with_real_rows_is_still_kept():
+    said = without_drawn_table(
+        "Two of them:\n| Author | Year |\n|---|---|\n| Austen | 1815 |",
+        [["Title", "Rating"]],
+    )
+
+    # Nothing drawn matches it and it holds real values, so it survives.
+    assert "Austen" in said

@@ -82,15 +82,50 @@ def _named(line: str) -> frozenset[str]:
     )
 
 
+# What a cell holds when the planner sketched the shape of a table rather
+# than its contents.
+PLACEHOLDER = frozenset(
+    {"(data)", "data", "...", "…", "-", "--", "—", "value", "(value)", ""}
+)
+
+
+def _sketch(block: list[str]) -> bool:
+    """Whether a markdown table has a shape but nothing in it.
+
+    Asked for columns B and D, the planner wrote "| B | D |" over two rows
+    of "(data)" and left the real rows to the drawn table. That is not a
+    duplicate of anything, so nothing matched it; it is a table with no
+    contents, which is never worth showing.
+    """
+    body = [
+        line
+        for line in block[1:]
+        if set(line.replace("|", "").replace(" ", "")) - {"-", ":"}
+    ]
+
+    if not body:
+        return False
+
+    return all(
+        all(
+            one.strip().strip("*_ ").casefold() in PLACEHOLDER
+            for one in line.strip().strip("|").split("|")
+        )
+        for line in body
+    )
+
+
 def without_drawn_table(said: str, tables: list[list[str]] | None) -> str:
     """The reply with only an already-drawn table removed.
 
     The planner cannot see the tables the application draws, and writing the
-    same rows out again shows the data twice. A prose table goes only when
-    its heading names exactly the columns of one drawn table: overlap used
-    to be enough, and two tables sharing a couple of column names cost the
-    user an answer the planner had written itself. A near miss now errs the
-    visible way -- a duplicate on screen, never a deleted answer.
+    same rows out again shows the data twice. A prose table goes when its
+    heading names exactly the columns of one drawn table -- overlap used to
+    be enough, and two tables sharing a couple of column names cost the user
+    an answer the planner had written itself -- or when it holds nothing but
+    placeholders, which is a table of no contents whatever it is headed. A
+    near miss otherwise errs the visible way: a duplicate on screen, never a
+    deleted answer.
     """
     drawn = {
         frozenset(one.strip().casefold() for one in table if one.strip())
@@ -105,7 +140,7 @@ def without_drawn_table(said: str, tables: list[list[str]] | None) -> str:
     block: list[str] = []
 
     def settle() -> None:
-        if block and _named(block[0]) not in drawn:
+        if block and _named(block[0]) not in drawn and not _sketch(block):
             kept.extend(block)
 
         block.clear()
