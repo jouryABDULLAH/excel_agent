@@ -409,3 +409,33 @@ def test_what_is_listed_back_is_still_the_real_names():
     headers = a_wide_map()
 
     assert list(headers) == ["Order ID", "Profit Margin"]
+
+
+# A sheet with no header row at all
+
+
+def test_no_header_row_names_no_columns():
+    """header_row 0 means there is no header. rows[0 - 1] is rows[-1], so
+    this used to make column names out of the last row of data."""
+    rows = [
+        [fake_sheets.number(1), fake_sheets.number(2)],
+        [fake_sheets.text("x"), fake_sheets.text("y")],
+    ]
+
+    headers = header_map(rows, 0, width=26)
+
+    assert list(headers) == []
+    # And the letters still reach the columns, which is what makes a sheet
+    # with no names workable at all.
+    assert headers["A"] == 1
+    assert headers["B"] == 2
+
+
+def test_every_row_is_data_when_there_is_no_header():
+    rows = [
+        [fake_sheets.number(1)],
+        [fake_sheets.number(2)],
+    ]
+
+    # Counting from the header down, with no header, is counting from row 1.
+    assert last_data_row(rows, 0) == 2

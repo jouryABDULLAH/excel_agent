@@ -86,15 +86,14 @@ DISPLAYING DATA
   decides how to read; you only say what the user asked for.
 
 EMPTY OR UNINITIALIZED SHEETS
-- A completely empty sheet has no table schema yet. Do not send raw A1/B1/C1
-  coordinates to row_editor.
 - Creating the first header row or establishing columns belongs to
   structure_editor.
-- If the user wants headers and data added to an empty sheet, first delegate
-  creation of the columns/headers to structure_editor. After that succeeds,
-  delegate the data rows to row_editor using the newly created header names.
-- row_editor works with table rows identified by existing column headers; it
-  is not a general-purpose A1 cell writer.
+- When the user wants a table, prefer giving it headers first: delegate the
+  columns to structure_editor, then the data rows to row_editor using those
+  names. A named column is what keeps every later request unambiguous.
+- A sheet with no headers is not unusable. Columns are addressed by letter
+  there, so a user who asks for a value in a particular cell gets it
+  without a header row being invented for them.
 
 LANGUAGE
 - Reply in the language the user asked in. Never answer in another

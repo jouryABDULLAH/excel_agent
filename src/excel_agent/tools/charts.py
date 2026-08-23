@@ -11,6 +11,7 @@ from excel_agent.services.spreadsheet import spreadsheet_service
 from excel_agent.tools.runtime import chosen
 from excel_agent.sheets import (
     find_header_row,
+    addressable,
     header_map,
     sheet_width,
     last_data_row,
@@ -283,13 +284,6 @@ def create_chart(
 
         sheet_name = properties["title"]
 
-        if not headers:
-            return _error(
-                "headers_not_found",
-                "No column headers were found.",
-                spreadsheet=spreadsheet_name,
-                sheet=sheet_name,
-            )
 
         requested = [
             labels_column,
@@ -309,7 +303,7 @@ def create_chart(
                 spreadsheet=spreadsheet_name,
                 sheet=sheet_name,
                 unknown_columns=unknown,
-                available_columns=list(headers),
+                available_columns=addressable(headers),
             )
 
         # A headers-only table used to be refused. Sheets draws the chart

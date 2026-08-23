@@ -18,6 +18,7 @@ from excel_agent.sheets import (
     chart_title,
     column_letter,
     find_header_row,
+    addressable,
     header_map,
     named,
     sheet_width,
@@ -159,14 +160,6 @@ def inspect_sheet(
     header_row = find_header_row(rows)
     headers = header_map(rows, header_row, sheet_width(properties))
 
-    if not headers:
-        return _error(
-            "headers_not_found",
-            "No column headers were found.",
-            spreadsheet=spreadsheet_name,
-            sheet=sheet_name,
-            header_row=header_row,
-        )
 
     # Physical layout from the first column through the rightmost named
     # column. Unlike header_map(), this preserves unnamed columns that
@@ -192,7 +185,7 @@ def inspect_sheet(
             }
         )
 
-    available_columns = list(headers)
+    available_columns = addressable(headers)
 
     if columns:
         unknown = [
@@ -247,7 +240,11 @@ def inspect_sheet(
             [
                 (
                     f"Sheet: {sheet_name} in {spreadsheet_name}. "
-                    "It has column names but no rows of data."
+                    + (
+                        "It has column names but no rows of data."
+                        if header_row
+                        else "It is empty."
+                    )
                 ),
                 "",
                 *layout_lines,
@@ -320,8 +317,15 @@ def inspect_sheet(
     lines = [
         (
             f"Sheet: {sheet_name} in {spreadsheet_name} "
-            f"({total_rows} rows of data, headers in row {header_row}, "
-            f"last data row is {last_row})."
+            f"({total_rows} rows of data, "
+            + (
+                f"headers in row {header_row}, "
+                if header_row
+                # Said plainly, so the model addresses by letter rather
+                # than inventing names for a sheet that has none.
+                else "no header row -- name columns by letter, "
+            )
+            + f"last data row is {last_row})."
         ),
         "",
         *layout_lines,

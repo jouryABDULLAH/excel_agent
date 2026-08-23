@@ -52,7 +52,9 @@ Rules:
 - A column can be named by its header or by its letter: "Region" or "B".
   Prefer the header; use the letter for a column nobody named, which is
   how an empty or unlabelled column is worked with.
-- You work with an existing table whose columns already have headers.
+- Most sheets have a header row, and columns are named by it. A sheet
+  with no header row is still workable: every column is addressed by
+  its letter, and every row is data.
 - Do not treat A, B, C or A1, B1, C1 as column names unless those strings are
   literally headers in the spreadsheet.
 - If the sheet has no headers yet, do not try to construct the first header

@@ -204,6 +204,19 @@ class Headers(dict):
         return default if found is None else found
 
 
+def addressable(headers: "Headers") -> list[str]:
+    """What a column may be called on this sheet.
+
+    The names when there are any; otherwise the letters, because a sheet
+    with no header row is worked with by letter and a bare empty list tells
+    the model nothing it can act on.
+    """
+    if headers:
+        return list(headers)
+
+    return [column_letter(one) for one in range(1, headers.width + 1)]
+
+
 def named(headers: "Headers", column: str) -> str:
     """The sheet's own spelling of a column, given any way of reaching it.
 
@@ -235,11 +248,13 @@ def header_map(
     a fallback, and a narrow one, since an unnamed column past the data is
     exactly what a letter is for.
     """
+    # Bounded on both sides: header_row 0 means the sheet has no header, and
+    # rows[-1] would quietly make column names out of the last row of data.
     found = Headers(
         (str(one.displayed).strip(), number)
         for number, one in enumerate(rows[header_row - 1], start=1)
         if not is_blank(one.displayed)
-    ) if header_row <= len(rows) else Headers()
+    ) if 1 <= header_row <= len(rows) else Headers()
 
     found.width = (
         width

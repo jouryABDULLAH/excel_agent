@@ -13,6 +13,7 @@ from excel_agent.sheets import (
     a1,
     to_grid_range,
     find_header_row,
+    addressable,
     header_map,
     sheet_width,
     last_data_row,
@@ -178,7 +179,7 @@ def _validate_values(
             "unknown_columns",
             "One or more column names do not exist.",
             unknown_columns=unknown,
-            available_columns=list(headers),
+            available_columns=addressable(headers),
         )
 
     return None
@@ -227,14 +228,6 @@ def sort_rows(
 
         sheet_name = properties["title"]
 
-        if not headers:
-            return _error(
-                "headers_not_found",
-                "No column headers were found.",
-                spreadsheet=spreadsheet_name,
-                sheet=sheet_name,
-                header_row=header_row,
-            )
 
         asked = [(column, descending)]
 
@@ -252,7 +245,7 @@ def sort_rows(
                 spreadsheet=spreadsheet_name,
                 sheet=sheet_name,
                 unknown_columns=unknown,
-                available_columns=list(headers),
+                available_columns=addressable(headers),
             )
 
         # Nothing to sort is not a failure, any more than it is in Sheets:
@@ -371,14 +364,6 @@ def fill_rows(
 
         sheet_name = properties["title"]
 
-        if not headers:
-            return _error(
-                "headers_not_found",
-                "No column headers were found.",
-                spreadsheet=spreadsheet_name,
-                sheet=sheet_name,
-                header_row=header_row,
-            )
 
         if start_row <= header_row:
             return _error(
@@ -523,14 +508,6 @@ def update_row(
 
         sheet_name = properties["title"]
 
-        if not headers:
-            return _error(
-                "headers_not_found",
-                "No column headers were found.",
-                spreadsheet=spreadsheet_name,
-                sheet=sheet_name,
-                header_row=header_row,
-            )
 
         # Writing past the end of the data is legal, as it is in Sheets;
         # writing over the header is not, because every tool that addresses
@@ -639,14 +616,6 @@ def insert_row(
 
         sheet_name = properties["title"]
 
-        if not headers:
-            return _error(
-                "headers_not_found",
-                "No column headers were found.",
-                spreadsheet=spreadsheet_name,
-                sheet=sheet_name,
-                header_row=header_row,
-            )
 
         # Anywhere below the header: Sheets can insert a row at any
         # position, and refusing past the data made "put this in row 100"
@@ -779,14 +748,6 @@ def append_row(
 
         sheet_name = properties["title"]
 
-        if not headers:
-            return _error(
-                "headers_not_found",
-                "No column headers were found.",
-                spreadsheet=spreadsheet_name,
-                sheet=sheet_name,
-                header_row=header_row,
-            )
 
         invalid = _validate_values(values, headers)
         if invalid:

@@ -12,6 +12,7 @@ from excel_agent.tools.runtime import chosen
 from excel_agent.sheets import (
     cell,
     find_header_row,
+    addressable,
     header_map,
     sheet_width,
     is_blank,
@@ -147,15 +148,8 @@ def find_data(
     header_row = find_header_row(rows)
     headers = header_map(rows, header_row, sheet_width(properties))
 
-    if not headers:
-        return _error(
-            "headers_not_found",
-            "No column headers were found.",
-            spreadsheet=spreadsheet_name,
-            sheet=sheet_name,
-        )
 
-    available_columns = list(headers)
+    available_columns = addressable(headers)
 
     if column is not None:
         column = column.strip()

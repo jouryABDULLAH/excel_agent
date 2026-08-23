@@ -16,6 +16,7 @@ from excel_agent.tools.runtime import chosen
 from excel_agent.sheets import (
     cell,
     find_header_row,
+    addressable,
     header_map,
     sheet_width,
     is_blank,
@@ -144,13 +145,6 @@ def sheet_stats(
     header_row = find_header_row(rows)
     headers = header_map(rows, header_row, sheet_width(properties))
 
-    if not headers:
-        return _error(
-            "headers_not_found",
-            "No column headers were found.",
-            spreadsheet=spreadsheet_name,
-            sheet=sheet_name,
-        )
 
     if column not in headers:
         return _error(
@@ -159,7 +153,7 @@ def sheet_stats(
             spreadsheet=spreadsheet_name,
             sheet=sheet_name,
             column=column,
-            available_columns=list(headers),
+            available_columns=addressable(headers),
         )
 
     last_row = last_data_row(

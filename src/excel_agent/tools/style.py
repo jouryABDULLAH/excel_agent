@@ -10,6 +10,7 @@ from excel_agent.services.spreadsheet import spreadsheet_service
 from excel_agent.tools.runtime import chosen
 from excel_agent.sheets import (
     find_header_row,
+    addressable,
     header_map,
     sheet_width,
     last_data_row,
@@ -162,7 +163,8 @@ def _format_area(
         width.
     """
     if first_row is None:
-        first = header_row
+        # A sheet with no header starts at row 1, not row 0.
+        first = max(header_row, 1)
         end = end_of_data
     else:
         first = first_row
@@ -441,14 +443,6 @@ def format_range(
 
         sheet_name = properties["title"]
 
-        if not headers:
-            return _error(
-                "headers_not_found",
-                "No column headers were found.",
-                spreadsheet=spreadsheet_name,
-                sheet=sheet_name,
-                header_row=header_row,
-            )
 
         if columns:
             unknown = [
@@ -464,7 +458,7 @@ def format_range(
                     spreadsheet=spreadsheet_name,
                     sheet=sheet_name,
                     unknown_columns=unknown,
-                    available_columns=list(headers),
+                    available_columns=addressable(headers),
                 )
 
             selected_columns = list(dict.fromkeys(columns))
@@ -799,14 +793,6 @@ def copy_format(
 
         sheet_name = properties["title"]
 
-        if not headers:
-            return _error(
-                "headers_not_found",
-                "No column headers were found.",
-                spreadsheet=spreadsheet_name,
-                sheet=sheet_name,
-                header_row=header_row,
-            )
 
         unknown = [
             column
@@ -827,7 +813,7 @@ def copy_format(
                 spreadsheet=spreadsheet_name,
                 sheet=sheet_name,
                 unknown_columns=unknown,
-                available_columns=list(headers),
+                available_columns=addressable(headers),
             )
 
         (
