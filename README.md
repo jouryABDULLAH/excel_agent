@@ -74,16 +74,6 @@ On the page: pick a spreadsheet in the sidebar (or just ask for it by name),
 then talk. Changes that delete, overwrite or reorder data stop and show you
 an approval card first — nothing irreversible runs without your click.
 
-## Tests
-
-```powershell
-pytest              # the offline suite; touches no network, costs nothing
-pytest -m real      # real model calls against stubbed Google; costs money
-```
-
-The offline suite must stay offline: a test that reaches Google fails
-loudly by design, so nothing in CI can ever write to a real spreadsheet.
-
 ## Tracing
 
 Runs go to [LangSmith](https://smith.langchain.com/). LangChain sends them
