@@ -1,29 +1,67 @@
 # excel_agent
 
 An agentic system driven by natural language that translates text into actions
-(add, edit, remove) on the Google spreadsheets in your Drive.
+(add, edit, remove) on the Google spreadsheets in your Drive. Ask in plain
+words — English or Arabic — and it finds, reads, edits, formats and charts
+your data, asking for your approval before anything destructive.
 
-## Getting it running
+## What you need
+
+- Python 3.10 or newer
+- A Google account with spreadsheets in its Drive
+- A [Groq](https://console.groq.com/) API key (the model runs there)
+
+## Install
 
 ```powershell
 pip install -e .[ui,dev]
 ```
 
+`ui` brings Streamlit for the browser page; `dev` brings pytest. Leave either
+out if you don't need it.
+
+## Google credentials
+
 The agent works on Google Sheets and nothing else, so it needs to be allowed
-into your Drive before it can do anything. `google-api-setup-guide.md` walks
-through making the OAuth client; what it leaves you with is a
-`credentials.json` beside this file. The first run opens a browser to ask for
-consent and writes a `token.json` next to it, so later runs ask nothing.
+into your Drive before it can do anything. This is a one-time setup that
+leaves a `credentials.json` beside this file:
 
-Then the model, and the spreadsheet to start on:
+1. Go to the [Google Cloud Console](https://console.cloud.google.com/) and
+   create a project (any name).
+2. Under **APIs & Services → Library**, enable two APIs: **Google Sheets
+   API** and **Google Drive API**.
+3. Under **APIs & Services → OAuth consent screen**, configure the consent
+   screen: External, fill in the app name and your email, and add your own
+   Google account under **Test users**.
+4. Under **APIs & Services → Credentials**, create an **OAuth client ID** of
+   type **Desktop app**, and download its JSON.
+5. Save that file as `credentials.json` in this project's root folder,
+   next to this README.
 
-```powershell
-$env:GROQ_API_KEY = "your-key-here"
+The first run opens a browser asking for consent and writes a `token.json`
+next to it, so later runs ask nothing. Both files are gitignored — never
+commit them.
+
+Two things worth knowing:
+
+- **The token expires after 7 days** while the consent screen is in Testing
+  status. When that happens the app asks for consent again on the next
+  start — this is Google's policy for unpublished apps, not a bug. Publishing
+  the consent screen removes the limit.
+- **The scopes are deliberately minimal**: read-and-write on spreadsheet
+  contents, read-only on Drive. The agent can edit what's inside your
+  sheets, but it cannot create, delete or share files in your Drive.
+
+## Configure
+
+Copy `.env.example` to `.env` and fill it in. Only the model key is
+required:
+
+```
+GROQ_API_KEY=your-key-here
 ```
 
-`EXCEL_AGENT_SPREADSHEET` is optional. Without it the agent starts having
-chosen nothing, and says so until you pick something with `/use` or the
-sidebar.
+## Run
 
 Two ways in:
 
@@ -31,6 +69,20 @@ Two ways in:
 excel-agent                            # the command line
 streamlit run src/excel_agent/ui.py    # the page
 ```
+
+On the page: pick a spreadsheet in the sidebar (or just ask for it by name),
+then talk. Changes that delete, overwrite or reorder data stop and show you
+an approval card first — nothing irreversible runs without your click.
+
+## Tests
+
+```powershell
+pytest              # the offline suite; touches no network, costs nothing
+pytest -m real      # real model calls against stubbed Google; costs money
+```
+
+The offline suite must stay offline: a test that reaches Google fails
+loudly by design, so nothing in CI can ever write to a real spreadsheet.
 
 ## Tracing
 
@@ -52,12 +104,3 @@ LangSmith URL — `apac.api.smith.langchain.com` for an `apac.` workspace,
 ```powershell
 $env:LANGSMITH_ENDPOINT = "https://apac.api.smith.langchain.com"
 ```
-
-The shell wins over `.env` for any of these, so a stale value exported in the
-terminal you start from is used in preference to the file.
-
-A turn arrives as a tree: the question at the root, named for whichever agent
-answered it, each model call under that with the prompt it saw and what it
-cost, and each tool call with its arguments and what it returned. A
-specialist's whole conversation sits under its own node, named for the
-specialist that ran it.
