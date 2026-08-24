@@ -1,7 +1,10 @@
 .env
 .venv
 __pycache__/
+langsmith_run.json
 *.bak
+inspect_langsmith_run.py
+18-aug-additions.md
 *.writing
 .claude
 *.egg-info/
